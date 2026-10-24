@@ -19,6 +19,7 @@ public sealed class ScorebugElement
     public double FontSize { get; set; } = 32;
     public string Foreground { get; set; } = "#FFFFFFFF";
     public string Background { get; set; } = "#CC141D28";
+    public bool TransparentBackground { get; set; }
     public double Opacity { get; set; } = 1;
     public bool Visible { get; set; } = true;
     public ScorebugAnimation Animation { get; set; }

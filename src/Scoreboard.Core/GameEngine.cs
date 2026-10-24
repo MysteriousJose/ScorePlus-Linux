@@ -48,6 +48,19 @@ public sealed class GameState
     public int AwayYellowCards { get; set; }
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
+    public int Balls { get; set; }
+    public int Strikes { get; set; }
+    public int Outs { get; set; }
+    public int HomeHits { get; set; }
+    public int AwayHits { get; set; }
+    public int HomeYards { get; set; }
+    public int AwayYards { get; set; }
+    public int HomeTurnovers { get; set; }
+    public int AwayTurnovers { get; set; }
+    public int HomeShots { get; set; }
+    public int AwayShots { get; set; }
+    public int HomeCorners { get; set; }
+    public int AwayCorners { get; set; }
     public bool ClockRunning { get; set; }
     public bool ShotClockRunning { get; set; }
     public bool ClockCountsUp { get; set; }
@@ -121,7 +134,11 @@ public sealed class GameEngine
             State.ClockSeconds = State.ClockCountsUp ? State.ClockSeconds + elapsed : Math.Max(0, State.ClockSeconds - elapsed);
             if (State.ClockSeconds == 0 && !State.ClockCountsUp) { State.ClockRunning = false; Log("Clock", "Period ended"); }
         }
-        if (State.ShotClockRunning) State.ShotClockSeconds = Math.Max(0, State.ShotClockSeconds - elapsed);
+        if (State.ShotClockRunning)
+        {
+            State.ShotClockSeconds = Math.Max(0, State.ShotClockSeconds - elapsed);
+            if (State.ShotClockSeconds == 0) { State.ShotClockRunning = false; Log("Shot clock", "Shot clock expired"); }
+        }
         Changed?.Invoke();
     }
 
@@ -135,8 +152,19 @@ public sealed class GameEngine
     public void AdvanceDown() { if (State.SportId != "football") return; SaveUndo("Down"); if (State.Down >= 4) { State.Down=1; State.YardsToGo=10; State.YardsToGoal=Math.Max(0,State.YardsToGoal-State.YardsToGo); } else State.Down++; Log("Down", $"Down {State.Down}, {State.YardsToGo} to go"); Changed?.Invoke(); }
     public void SetFootballDistance(int yardsToGo,int? yardsToGoal=null) { if (State.SportId != "football") return; SaveUndo("Football distance"); State.YardsToGo=Math.Clamp(yardsToGo,1,99); if(yardsToGoal is not null)State.YardsToGoal=Math.Clamp(yardsToGoal.Value,0,99); Log("Yards", $"{State.YardsToGo} to go, ball at {State.YardsToGoal}"); Changed?.Invoke(); }
     public void AddCard(bool home,bool red=false) { if(State.SportId!="soccer")return; SaveUndo(red?"Red card":"Yellow card"); if(red){if(home)State.HomeRedCards++;else State.AwayRedCards++;}else{if(home)State.HomeYellowCards++;else State.AwayYellowCards++;} Log("Card",$"{(home?State.HomeTeam:State.AwayTeam)} {(red?"red":"yellow")} card");Changed?.Invoke(); }
+    public void BaseballBall() { if(State.SportId!="baseball")return; SaveUndo("Ball"); State.Balls++; if(State.Balls>=4){State.Balls=0;State.Strikes=0;Log("Count","Walk · count reset");}else Log("Count","Ball");Changed?.Invoke(); }
+    public void BaseballStrike(bool foul=false) { if(State.SportId!="baseball")return; SaveUndo(foul?"Foul ball":"Strike"); if(!foul||State.Strikes<2)State.Strikes++; if(State.Strikes>=3){State.Outs++;State.Balls=0;State.Strikes=0;Log("Count","Strikeout · batter out");}else Log("Count",foul?"Foul ball":"Strike");Changed?.Invoke(); }
+    public void BaseballOut() { if(State.SportId!="baseball")return; SaveUndo("Out"); State.Outs++; State.Balls=0; State.Strikes=0; Log("Out","Out recorded · count reset");Changed?.Invoke(); }
+    public void BaseballHit(bool home) { if(State.SportId!="baseball")return; SaveUndo("Hit"); if(home)State.HomeHits++;else State.AwayHits++; State.Balls=0;State.Strikes=0;Log("Hit",$"{(home?State.HomeTeam:State.AwayTeam)} hit");Changed?.Invoke(); }
     public void Timeout(bool home) { SaveUndo("Timeout"); if (home) State.HomeTimeouts = Math.Max(0, State.HomeTimeouts - 1); else State.AwayTimeouts = Math.Max(0, State.AwayTimeouts - 1); Log("Timeout", $"{(home ? State.HomeTeam : State.AwayTeam)} timeout"); Changed?.Invoke(); }
-    public void AddFoul(bool home) { SaveUndo("Foul"); if (home) State.HomeFouls++; else State.AwayFouls++; Log("Foul", $"{(home ? State.HomeTeam : State.AwayTeam)} foul"); Changed?.Invoke(); }
+    public void AddFoul(bool home) { if(State.SportId!="basketball")return; SaveUndo("Foul"); if (home) State.HomeFouls++; else State.AwayFouls++; Log("Foul", $"{(home ? State.HomeTeam : State.AwayTeam)} foul"); Changed?.Invoke(); }
+    public void SetShotClock(int seconds) { if(State.SportId!="basketball")return; SaveUndo("Shot clock");State.ShotClockSeconds=Math.Clamp(seconds,0,99);State.ShotClockRunning=false;Log("Shot clock",$"Shot clock set to {State.ShotClockSeconds}");Changed?.Invoke(); }
+    public void ToggleShotClock() { if(State.SportId!="basketball")return;SaveUndo("Shot clock");State.ShotClockRunning=!State.ShotClockRunning;_lastTick=_watch.ElapsedTicks;Log("Shot clock",State.ShotClockRunning?"Shot clock started":"Shot clock stopped");Changed?.Invoke(); }
+    public void ResetShotClock(int seconds=24) { if(State.SportId!="basketball")return;SaveUndo("Shot clock reset");State.ShotClockSeconds=Math.Clamp(seconds,1,99);State.ShotClockRunning=false;Log("Shot clock",$"Shot clock reset to {State.ShotClockSeconds}");Changed?.Invoke(); }
+    public void AddFootballYards(bool home,int yards) { if(State.SportId!="football")return;SaveUndo("Rushing/receiving yards");if(home)State.HomeYards=Math.Max(0,State.HomeYards+yards);else State.AwayYards=Math.Max(0,State.AwayYards+yards);Log("Yards",$"{(home?State.HomeTeam:State.AwayTeam)} {yards:+#;-#;0} yards");Changed?.Invoke(); }
+    public void AddTurnover(bool home) { if(State.SportId!="football")return;SaveUndo("Turnover");if(home)State.HomeTurnovers++;else State.AwayTurnovers++;Log("Turnover",$"{(home?State.HomeTeam:State.AwayTeam)} turnover");Changed?.Invoke(); }
+    public void AddSoccerShot(bool home) { if(State.SportId!="soccer")return;SaveUndo("Shot");if(home)State.HomeShots++;else State.AwayShots++;Log("Shot",$"{(home?State.HomeTeam:State.AwayTeam)} shot");Changed?.Invoke(); }
+    public void AddSoccerCorner(bool home) { if(State.SportId!="soccer")return;SaveUndo("Corner");if(home)State.HomeCorners++;else State.AwayCorners++;Log("Corner",$"{(home?State.HomeTeam:State.AwayTeam)} corner");Changed?.Invoke(); }
 
     public bool Undo()
     {
@@ -165,6 +193,20 @@ public sealed class GameEngine
     }
 
     public string ExportJson() => JsonSerializer.Serialize(State, JsonOptions);
+    public GameState CloneState() => JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(State, JsonOptions), JsonOptions)!;
+    public void LoadFromState(GameState state){State=JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state,JsonOptions),JsonOptions)!;_undo.Clear();_lastTick=_watch.ElapsedTicks;Changed?.Invoke();}
+    public bool UpdateLiveScoreClock(GameState source)
+    {
+        if (State.HomeScore == source.HomeScore && State.AwayScore == source.AwayScore &&
+            State.ClockSeconds == source.ClockSeconds && State.ClockRunning == source.ClockRunning &&
+            State.ClockCountsUp == source.ClockCountsUp && State.ShotClockSeconds == source.ShotClockSeconds &&
+            State.ShotClockRunning == source.ShotClockRunning) return false;
+        State.HomeScore=source.HomeScore;State.AwayScore=source.AwayScore;
+        State.ClockSeconds=source.ClockSeconds;State.ClockRunning=source.ClockRunning;State.ClockCountsUp=source.ClockCountsUp;
+        State.ShotClockSeconds=source.ShotClockSeconds;State.ShotClockRunning=source.ShotClockRunning;
+        Changed?.Invoke();
+        return true;
+    }
     void SaveUndo(string label) { _undo.Push(new GameSnapshot(JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(State, JsonOptions), JsonOptions)!, label)); if (_undo.Count > 100) { var keep = _undo.Reverse().TakeLast(100).ToArray(); _undo.Clear(); foreach (var x in keep) _undo.Push(x); } }
     void Log(string type, string description) => State.Events.Add(new GameEvent(DateTimeOffset.Now, type, description, State.HomeScore, State.AwayScore));
     static string Abbreviate(string value) => string.Concat(value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(3).Select(s => char.ToUpperInvariant(s[0])));
