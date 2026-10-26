@@ -1,31 +1,72 @@
-# Scoreboard — Desktop Live Production
+# ScorePlus
 
-A native Windows WPF desktop scoreboard starter focused on reliable game operation. The operator console and audience output are separate native windows; no browser, server, internet connection, or separately installed runtime is needed in the published Windows build.
+**ScorePlus** is a native Windows scoreboard for live production. It gives an operator a fast control panel for running a game and a separate audience output that displays the score, clock, and broadcast-style graphics — no browser, server, internet connection, or separately installed .NET runtime required.
 
-## Build and run
+Everything runs locally on one PC. Scores and clocks publish to the audience output as they change, so the operator never has to "refresh" the display mid-game.
 
-The latest prebuilt self-contained Windows x64 application is in `dist/Scoreboard-win-x64-theme-controls-fixes/`. Run `Scoreboard.exe`. The folder also includes required bundled WPF native components; keep the folder contents together. To rebuild on a development machine with the .NET 10 SDK and Windows desktop targeting pack, run:
+## Highlights
+
+- **Operator + audience windows.** A control panel for the operator and an independent, resizable audience window you can send fullscreen to a projector or capture card.
+- **Live score and clock.** Score, game clock, and shot clock update the audience instantly. **Update Output** publishes staged details such as down and distance when you want them to change.
+- **Multiple sports.** Basketball, American Football, Baseball, Soccer, Hockey, Lacrosse, Volleyball, Tennis, and Generic presets — each with its own period label, clock, scoring buttons, and timeout count.
+- **Editable sport profiles.** Change period length, number of periods, timeouts per team, scoring buttons, and count-up clocks. Built-in presets can be edited (stored as overrides you can reset), and you can duplicate, rename, or delete custom sports.
+- **Scorebug Studio.** Design the on-air graphic: text, logos, and shapes (rectangle/square, circle, triangle) positioned freely, layered, resized, and colored with a full custom color picker (hex, RGB/alpha sliders, palette). Bind live data with tokens like `{{HOME_SCORE}}`, `{{GAME_CLOCK}}`, `{{DOWNS}}`, or your own stats.
+- **Custom stats.** Add any stat — Turnovers, Penalties, Shots, Saves, or something unique — and track a running value. Show it on the scorebug with `{{STAT:Turnovers}}` and in the exported game report.
+- **Keybinds for everything.** Assign a key combination to any control-panel button; bindings persist between sessions.
+- **Multiple control panels.** Open as many as you need (second monitor, assistant operator) — they all drive the same game and stay in sync.
+- **Themes that leave graphics alone.** Light and dark themes restyle the operator windows only; scorebug and audience artwork keep their designed colors.
+- **Game safety.** 100-step undo, event history, portable save/load (`.scoreboard` JSON), and automatic recovery autosave every five seconds.
+
+## Getting started
+
+ScorePlus builds to a **single executable** — there are no loose DLLs to sort through. Build it (Windows with the .NET 10 SDK and desktop targeting pack):
 
 ```sh
-dotnet publish src/Scoreboard.Desktop/Scoreboard.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o dist/Scoreboard-win-x64-theme-controls-fixes
+dotnet publish src/Scoreboard.Desktop/Scoreboard.Desktop.csproj -c Release -r win-x64 --self-contained true -o dist/ScorePlus-win-x64
 ```
 
-Game files are portable JSON with the `.scoreboard` extension. Recovery autosaves are written under `%LOCALAPPDATA%\Scoreboard\recovery.scoreboard` every five seconds. Diagnostics are under `%LOCALAPPDATA%\Scoreboard\logs`.
+The result is `dist/ScorePlus-win-x64/ScorePlus.exe`; double-click it to launch. The desktop project is configured for single-file publishing (`PublishSingleFile`, `IncludeNativeLibrariesForSelfExtract`, embedded PDBs), so the output folder contains just that one file. No .NET runtime needs to be installed on the machine that runs it.
 
-## Implemented
+## A typical game
 
-- Native Windows operator application, dark control console, independent resizable audience-output window, and fullscreen audience output.
-- Built-in Basketball, American Football, Baseball, Soccer, Hockey, Lacrosse, Volleyball, Tennis, and Generic presets.
-- Home/away scoring and score correction, team names/abbreviations, period advance, timeout decrement, possession toggle, clock start/stop/correction, monotonic elapsed-time countdown, event history, 100-step undo, portable save/load, periodic recovery autosave.
-- Live in-app scoreboard preview and keyboard shortcuts (Space clock, Ctrl+Z undo, left/right score).
-- Scorebug Studio: persistent free-position elements, drag move/resize handles, team logos/images, text/shapes, layer order, visibility, preset color bars, live data tokens, pulse/drift animation, and shared operator/audience rendering.
-- Saved light/dark preferences and an optional detached operator control panel. Football controls include downs and yards; soccer controls track yellow/red cards per team; baseball controls track balls, strikes, outs, and team hits; basketball adds fouls and a separate shot clock; football tracks yards and turnovers; soccer tracks shots and corners in addition to cards. Sport-specific stats are available as scorebug tokens and in exported printable HTML game reports. These values are undoable and saved with the game.
-- Self-contained Windows x64 publish output; no installed .NET runtime required to run the published application.
+1. Pick the sport in the main window (or load a saved game).
+2. Open **Control Panel**. Score from the Score section, run the clock from Clock & Period, and use the sport-specific section for downs, cards, fouls, or at-bats.
+3. Open **Audience Output** and send it fullscreen to your display.
+4. Optionally open **Scorebug Studio** to lay out the on-air graphic and **Sport Profiles** to tune the rules.
+5. Assign shortcuts in **Keybinds…** so the actions you use most are one keystroke away.
 
-## Not yet implemented
+The clock can be set by typing `MM:SS` (for example `10:30`) or a plain number of seconds. The period label can read `Quarter 1`, `Q1`, or `1`.
 
-This is an initial working desktop foundation, not a complete production replacement for ProScoreboard. The sports presets currently share a generic score/period model; sport-specific scoring/statistics beyond football downs/yards/turnovers, basketball fouls/shot clock, soccer cards/shots/corners, and baseball counts/hits, advanced vector/animation authoring, teams/rosters/media/video, overlays, sponsor reporting, network remote controls, hardware controllers, multiple assigned outputs, broadcast transparency, installer/signing, extensive help/tutorials, configurable hotkeys, and broad integration/reliability testing remain future work. The current preset list does not imply those sport-specific features are complete. Output currently uses an original built-in layout and supports one additional audience window.
+## Where files live
 
-## Core tests
+| What | Location |
+| --- | --- |
+| Game files | Anywhere you choose — portable JSON with the `.scoreboard` extension |
+| Recovery autosave | `%LOCALAPPDATA%\Scoreboard\recovery.scoreboard` |
+| Preferences | `%LOCALAPPDATA%\Scoreboard\preferences.json` |
+| Sport profiles | `%LOCALAPPDATA%\Scoreboard\sports.json` |
+| Scorebug layout | `%LOCALAPPDATA%\Scoreboard\scorebug.json` |
+| Keybinds | `%LOCALAPPDATA%\Scoreboard\keybinds.json` |
+| Diagnostics | `%LOCALAPPDATA%\Scoreboard\logs` |
 
-Run `dotnet run --project tests/Scoreboard.Core.Tests/Scoreboard.Core.Tests.csproj -c Release` to exercise scoring, undo, clock behavior, period changes, sport identifiers, and portable game-file round trips.
+## Project layout
+
+```
+src/Scoreboard.Core     Game state, engine, sport catalog, scorebug model, tokens, reports
+src/Scoreboard.Desktop  WPF application: main window, control panel, audience, studio
+tests/Scoreboard.Core.Tests   Headless checks for scoring, clocks, stats, profiles, reports
+tests/UiSmoke                 Loads every window and exercises the operator flows
+```
+
+## Tests
+
+```sh
+dotnet run --project tests/Scoreboard.Core.Tests/Scoreboard.Core.Tests.csproj -c Release
+dotnet run --project tests/UiSmoke/UiSmoke.csproj -c Release
+```
+
+The core suite covers scoring, undo, clock behavior, period formats, sport profiles and overrides, custom stats and tokens, and report output. The UI smoke harness loads every window, edits a profile, drives keybinds, confirms multiple control panels stay in sync, and verifies theme changes never recolor scorebug artwork.
+
+## Status
+
+ScorePlus is an actively evolving production tool, not yet a complete replacement for a full broadcast package. Still ahead: advanced animation authoring, rosters and media, overlays, sponsor reporting, network and hardware control, multiple assigned outputs, broadcast transparency, an installer, and broader reliability testing. The audience output currently uses one built-in layout and supports a single additional output window.

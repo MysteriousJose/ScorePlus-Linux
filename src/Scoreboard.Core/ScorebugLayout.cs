@@ -4,12 +4,14 @@ namespace Scoreboard.Core;
 
 public enum ScorebugElementKind { Text, Logo, Shape }
 public enum ScorebugAnimation { None, Pulse, Drift }
+public enum ScorebugShape { Rectangle, Circle, Triangle }
 
 public sealed class ScorebugElement
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "Element";
     public ScorebugElementKind Kind { get; set; } = ScorebugElementKind.Text;
+    public ScorebugShape Shape { get; set; } = ScorebugShape.Rectangle;
     public string Content { get; set; } = "TEXT";
     public string? ImagePath { get; set; }
     public double X { get; set; } = 100;

@@ -6,10 +6,17 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>Scoreboard</AssemblyName>
+    <AssemblyName>ScorePlus</AssemblyName>
     <RootNamespace>Scoreboard.Desktop</RootNamespace>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Product>ScorePlus</Product>
+    <AssemblyTitle>ScorePlus</AssemblyTitle>
+    <Description>ScorePlus live production scoreboard</Description>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Scoreboard.Core/Scoreboard.Core.csproj" /></ItemGroup>
 </Project>

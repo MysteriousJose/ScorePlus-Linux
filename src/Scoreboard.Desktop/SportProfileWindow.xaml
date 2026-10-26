@@ -1,1 +1,64 @@
-<Window x:Class="Scoreboard.Desktop.SportProfileWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Sport Profiles" Width="660" Height="590" MinWidth="600" MinHeight="520" WindowStartupLocation="CenterOwner" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI"><Grid Margin="20"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><DockPanel Grid.Row="0" Margin="0,0,16,0"><TextBlock DockPanel.Dock="Top" Text="SPORT PROFILES" FontSize="14" FontWeight="Bold" Margin="4,0,0,10"/><ListBox x:Name="Profiles" Background="#171C25" Foreground="White" BorderBrush="#364151" SelectionChanged="Profiles_SelectionChanged"/></DockPanel><ScrollViewer Grid.Column="1" Grid.Row="0" VerticalScrollBarVisibility="Auto"><StackPanel><TextBlock Text="PROFILE SETTINGS" FontWeight="Bold" Margin="4,0,0,8"/><TextBlock Text="Display name" Foreground="#93A0B2"/><TextBox x:Name="NameInput"/><TextBlock Text="Period / segment label" Foreground="#93A0B2"/><TextBox x:Name="UnitInput"/><TextBlock Text="Number of periods" Foreground="#93A0B2"/><TextBox x:Name="PeriodsInput"/><TextBlock Text="Period length in minutes (0 = untimed)" Foreground="#93A0B2"/><TextBox x:Name="MinutesInput"/><CheckBox x:Name="CountUpInput" Content="Clock counts up" Foreground="White" Margin="8"/><TextBlock Text="Score buttons (comma-separated points)" Foreground="#93A0B2"/><TextBox x:Name="ScoringInput"/><TextBlock x:Name="BuiltInNote" Text="Built-in preset — duplicate it to customize without altering the original." TextWrapping="Wrap" Foreground="#93A0B2" Margin="6,8"/><TextBlock x:Name="ErrorText" Foreground="#FF7272" TextWrapping="Wrap" Margin="6"/><WrapPanel><Button x:Name="DuplicateButton" Content="Duplicate preset" Click="Duplicate_Click"/><Button x:Name="SaveButton" Content="Save custom sport" Click="Save_Click"/><Button x:Name="DeleteButton" Content="Delete custom" Click="Delete_Click"/></WrapPanel></StackPanel></ScrollViewer><DockPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,16,0,0"><TextBlock Text="User sports save locally and are available in every new game." VerticalAlignment="Center" Foreground="#93A0B2"/><Button DockPanel.Dock="Right" Content="Done" IsDefault="True" Click="Done_Click" Margin="4,0,0,0"/></DockPanel></Grid></Window>
+<Window x:Class="Scoreboard.Desktop.SportProfileWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ScorePlus — Sport Profiles" Width="720" Height="660" MinWidth="640" MinHeight="560" WindowStartupLocation="CenterOwner" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI">
+  <Grid Margin="18">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="220"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <DockPanel Grid.Row="0" Margin="0,0,14,0">
+      <TextBlock DockPanel.Dock="Top" Text="SPORT PROFILES" FontSize="14" FontWeight="Bold" Margin="4,0,0,8"/>
+      <TextBlock DockPanel.Dock="Bottom" Text="Built-in presets can be edited too — your changes are saved as an override." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="4,8,4,0"/>
+      <ListBox x:Name="Profiles" Background="#10151D" Foreground="White" BorderBrush="#364151" SelectionChanged="Profiles_SelectionChanged"/>
+    </DockPanel>
+
+    <Border Grid.Column="1" Grid.Row="0" Background="#171C25" CornerRadius="8" Padding="14">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Text="PROFILE SETTINGS" FontWeight="Bold" Margin="2,0,0,10"/>
+          <TextBlock Text="Display name" Foreground="#93A0B2" Margin="2,0,0,2"/>
+          <TextBox x:Name="NameInput"/>
+          <TextBlock Text="Period / segment label (Quarter, Half, Inning…)" Foreground="#93A0B2" Margin="2,6,0,2"/>
+          <TextBox x:Name="UnitInput"/>
+          <UniformGrid Columns="2">
+            <StackPanel>
+              <TextBlock Text="Number of periods" Foreground="#93A0B2" Margin="2,6,0,2"/>
+              <TextBox x:Name="PeriodsInput"/>
+            </StackPanel>
+            <StackPanel>
+              <TextBlock Text="Period length in minutes (0 = untimed)" Foreground="#93A0B2" Margin="2,6,0,2"/>
+              <TextBox x:Name="MinutesInput"/>
+            </StackPanel>
+          </UniformGrid>
+          <UniformGrid Columns="2">
+            <StackPanel>
+              <TextBlock Text="Timeouts per team" Foreground="#93A0B2" Margin="2,6,0,2"/>
+              <TextBox x:Name="TimeoutsInput"/>
+            </StackPanel>
+            <StackPanel>
+              <TextBlock Text="Score buttons (comma separated)" Foreground="#93A0B2" Margin="2,6,0,2"/>
+              <TextBox x:Name="ScoringInput"/>
+            </StackPanel>
+          </UniformGrid>
+          <CheckBox x:Name="CountUpInput" Content="Clock counts up instead of down" Foreground="White" Margin="6,10,0,0"/>
+          <TextBlock x:Name="BuiltInNote" Text="Built-in preset — saving stores your version as an override." TextWrapping="Wrap" Foreground="#93A0B2" Margin="4,10,4,0"/>
+          <TextBlock x:Name="ErrorText" Foreground="#FF7272" TextWrapping="Wrap" Margin="4,8,4,0"/>
+          <WrapPanel Margin="0,8,0,0">
+            <Button x:Name="SaveButton" Content="Save profile" Click="Save_Click"/>
+            <Button x:Name="DuplicateButton" Content="Duplicate" Click="Duplicate_Click"/>
+            <Button x:Name="ResetButton" Content="Reset to preset" Click="Reset_Click"/>
+            <Button x:Name="DeleteButton" Content="Delete" Click="Delete_Click"/>
+          </WrapPanel>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <DockPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,14,0,0">
+      <TextBlock Text="Profiles apply to every new game started with that sport." VerticalAlignment="Center" Foreground="#93A0B2"/>
+      <Button DockPanel.Dock="Right" Content="Done" IsDefault="True" Click="Done_Click" Margin="4,0,0,0"/>
+    </DockPanel>
+  </Grid>
+</Window>

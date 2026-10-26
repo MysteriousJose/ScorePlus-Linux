@@ -17,7 +17,8 @@ public partial class MainWindow : Window
     readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(40) };
     readonly DispatcherTimer _autosave = new() { Interval = TimeSpan.FromSeconds(5) };
     OutputWindow? _output;
-    GameControlWindow? _controlPanel;
+    readonly List<GameControlWindow> _controlPanels = [];
+    int _eventCount = -1;
     readonly UserPreferences _preferences = PreferencesStore.Load();
     readonly string _recoveryPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Scoreboard", "recovery.scoreboard");
     string? _projectPath;
@@ -59,20 +60,52 @@ public partial class MainWindow : Window
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Refresh); return; }
         var s = _engine.State;
         if (SportSelector.SelectedValue is not string selectedId || selectedId != s.SportId) SportSelector.SelectedValue = s.SportId;
-        EventList.ItemsSource = s.Events.AsEnumerable().Reverse().Take(100).Select(x => $"{x.At:HH:mm:ss}  {x.Type,-10} {x.Description}").ToArray();
+        // The log only needs rebuilding when an action was logged; rebuilding it on every clock tick caused visible lag.
+        if (s.Events.Count != _eventCount)
+        {
+            _eventCount = s.Events.Count;
+            EventList.ItemsSource = s.Events.AsEnumerable().Reverse().Take(100).Select(x => $"{x.At:HH:mm:ss}  {x.Type,-10} {x.Description}").ToArray();
+        }
     }
     static T? Find<T>(DependencyObject parent, string name) where T : FrameworkElement
     { for (var i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++) { var child=VisualTreeHelper.GetChild(parent,i); if(child is T item && item.Name==name)return item; var nested=Find<T>(child,name); if(nested!=null)return nested; } return null; }
     void RefreshSports() { SportSelector.ItemsSource = _engine.Sports.All; }
     void ScorebugStudio_Click(object sender,RoutedEventArgs e) { var studio=new ScorebugEditorWindow(_scorebug,_engine){Owner=this}; ThemeManager.Apply(studio,_preferences.Theme); studio.ShowDialog(); }
-    void Preferences_Click(object sender,RoutedEventArgs e){var dialog=new SettingsWindow(_preferences){Owner=this};ThemeManager.Apply(dialog,_preferences.Theme);dialog.ShowDialog();ThemeManager.Apply(this,_preferences.Theme);if(_controlPanel is {IsVisible:true})ThemeManager.Apply(_controlPanel,_preferences.Theme);if(_output is {IsVisible:true})_output.SetBroadcastTheme(_preferences.Theme);}
-    void ControlPanel_Click(object sender,RoutedEventArgs e){if(_controlPanel is {IsVisible:true}){_controlPanel.Activate();return;}        _controlPanel=new GameControlWindow(_engine,()=>PublishOutput(),enabled=>SetLiveScoreClock(enabled),()=>_liveScoreClock);ThemeManager.Apply(_controlPanel,_preferences.Theme);_controlPanel.Show();}
+    void Preferences_Click(object sender,RoutedEventArgs e)
+    {
+        var dialog=new SettingsWindow(_preferences){Owner=this};
+        ThemeManager.Apply(dialog,_preferences.Theme);
+        if(dialog.ShowDialog()!=true)return; // Cancel discards: nothing is applied or saved.
+        ThemeManager.Apply(this,_preferences.Theme);
+        foreach(var panel in _controlPanels.Where(p=>p.IsVisible))ThemeManager.Apply(panel,_preferences.Theme);
+        _output?.SetBroadcastTheme(_preferences.Theme);
+    }
+    void ControlPanel_Click(object sender,RoutedEventArgs e)
+    {
+        var existing=_controlPanels.LastOrDefault(p=>p.IsVisible);
+        if(existing is not null){existing.Activate();return;}
+        OpenControlPanel();
+    }
+    public void OpenControlPanel()
+    {
+        var panel=new GameControlWindow(_engine,()=>PublishOutput(),enabled=>SetLiveScoreClock(enabled),()=>_liveScoreClock);
+        panel.NewPanelRequested+=OpenControlPanel;
+        panel.Closed+=(_,_)=>_controlPanels.Remove(panel);
+        ThemeManager.Apply(panel,_preferences.Theme);
+        _controlPanels.Add(panel);
+        panel.Show();
+    }
     void SportProfiles_Click(object sender,RoutedEventArgs e) { var dialog=new SportProfileWindow(_engine.Sports){Owner=this}; ThemeManager.Apply(dialog,_preferences.Theme); dialog.ShowDialog(); var activeId=SportSelector.SelectedValue as string; RefreshSports(); if(_engine.Sports.Find(activeId) is not null)SportSelector.SelectedValue=activeId; }
     void Sport_Changed(object sender, SelectionChangedEventArgs e) { if (_initializing || SportSelector.SelectedValue is not string id) return; _engine.NewGame(id); StatusText.Text = $"NEW {_engine.Sport.Name.ToUpperInvariant()} GAME"; }
     void NewGame_Click(object sender,RoutedEventArgs e) { if(MessageBox.Show("Start a new game? This resets scores and the game clock.","New game",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return; _engine.NewGame(SportSelector.SelectedValue as string ?? "basketball"); StatusText.Text="NEW GAME"; }
 
     void Output_Click(object sender,RoutedEventArgs e) { if(_output is { IsVisible:true }) { _output.Activate(); return; } _output=new OutputWindow(_publishedEngine,_scorebug,_preferences.Theme); _output.Show(); if(_liveScoreClock)_output.UpdateLiveScoreClock(_engine.State);else _output.RefreshDisplay(); }
-    void SetLiveScoreClock(bool enabled){_liveScoreClock=enabled;if(enabled)PublishLiveValues();}
+    void SetLiveScoreClock(bool enabled)
+    {
+        _liveScoreClock=enabled;
+        foreach(var panel in _controlPanels)panel.SyncLiveState(enabled);
+        if(enabled)PublishLiveValues();
+    }
     void EngineChanged(){if(_liveScoreClock)PublishLiveValues();}
     void PublishLiveValues()
     {
@@ -88,7 +121,13 @@ public partial class MainWindow : Window
     void Open_Click(object sender,RoutedEventArgs e) { var d=new OpenFileDialog{Filter="Scoreboard Game (*.scoreboard;*.json)|*.scoreboard;*.json|All files (*.*)|*.*"}; if(d.ShowDialog()==true){try{_engine.Load(d.FileName);_projectPath=d.FileName;RefreshSports();SportSelector.SelectedValue=_engine.State.SportId;StatusText.Text="GAME LOADED";}catch(Exception ex){MessageBox.Show($"Could not load game: {ex.Message}");}} }
     void AutoSave() { try { _engine.Save(_recoveryPath); AutosaveText.Text=$"AUTOSAVED {DateTime.Now:HH:mm:ss}"; } catch(Exception ex){StatusText.Text=$"AUTOSAVE WARNING · {ex.Message}";} }
     void Window_KeyDown(object sender,KeyEventArgs e) { if(Keyboard.FocusedElement is TextBox)return; if(e.Key==Key.Z&&(Keyboard.Modifiers&ModifierKeys.Control)!=0){_engine.Undo();e.Handled=true;} }
-    protected override void OnClosed(EventArgs e) { _engine.Changed-=Refresh;_engine.Changed-=EngineChanged;_preview?.Dispose(); _controlPanel?.Close(); _output?.Close(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e)
+    {
+        _engine.Changed-=Refresh;_engine.Changed-=EngineChanged;_preview?.Dispose();
+        foreach(var panel in _controlPanels.ToArray())panel.Close();
+        _output?.Close();
+        base.OnClosed(e);
+    }
 }
 
 sealed class NumberDialog : Window

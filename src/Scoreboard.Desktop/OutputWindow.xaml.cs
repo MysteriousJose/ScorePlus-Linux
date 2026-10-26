@@ -20,8 +20,9 @@ public partial class OutputWindow : Window
         Update();_scorebugView.Refresh();
     }
     public void RefreshDisplay(){Update();_scorebugView.Refresh();}
-    public void SetBroadcastTheme(string theme){_broadcastTheme=theme;ThemeManager.Apply(this,theme);}
-    void Window_Loaded(object sender,RoutedEventArgs e){ThemeManager.Apply(this,_broadcastTheme);Update();_scorebugView.Refresh();}
+    // The audience window is intentionally never restyled by ThemeManager: a theme change must not recolor on-air graphics.
+    public void SetBroadcastTheme(string theme){_broadcastTheme=theme;Update();}
+    void Window_Loaded(object sender,RoutedEventArgs e){Update();_scorebugView.Refresh();}
     void Update()
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Update); return; }
@@ -29,13 +30,13 @@ public partial class OutputWindow : Window
         Background=ColorBrush(_broadcastTheme=="Light"?"#FFF3F5F8":"#FF000000");
         HomeLabel.Text = s.HomeAbbreviation; AwayLabel.Text = s.AwayAbbreviation;
         HomeScore.Text = s.HomeScore.ToString(); AwayScore.Text = s.AwayScore.ToString();
-        Period.Text = $"{s.PeriodLabel.ToUpperInvariant()} {s.Period}"; Clock.Text = GameEngine.FormatClock(s.ClockSeconds);
+        Period.Text = PeriodDisplay.Format(s).ToUpperInvariant(); Clock.Text = GameEngine.FormatClock(s.ClockSeconds);
         HomeExtraLabel.Text = AwayExtraLabel.Text = "TIMEOUTS";
         HomeExtraPanel.Visibility = AwayExtraPanel.Visibility = Visibility.Visible;
         HomeTimeouts.Text = Dots(s.HomeTimeouts); AwayTimeouts.Text = Dots(s.AwayTimeouts);
         Possession.Visibility = s.SportId is "basketball" or "football" ? Visibility.Visible : Visibility.Collapsed;
         Possession.Text = $"●  {(s.HomePossession ? s.HomeAbbreviation : s.AwayAbbreviation)} POSSESSION";
-        if(s.SportId=="football"){Period.Text=$"{s.PeriodLabel.ToUpperInvariant()} {s.Period} · {s.Down}{OrdinalSuffix(s.Down)} & {s.YardsToGo}";}
+        if(s.SportId=="football"){Period.Text=$"{PeriodDisplay.Format(s).ToUpperInvariant()} · {s.Down}{OrdinalSuffix(s.Down)} & {s.YardsToGo}";}
         if(s.SportId=="soccer")
         {
             HomeExtraLabel.Text = AwayExtraLabel.Text = "CARDS · SHOTS · CORNERS";

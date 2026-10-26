@@ -1,13 +1,24 @@
+using System.Text.RegularExpressions;
+
 namespace Scoreboard.Core;
 
 public static class ScoreboardTemplates
 {
-    public static string Bind(string content, GameState state) => content
+    static readonly Regex StatToken = new(@"\{\{STAT:(?<name>[^}]+)\}\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public static string Bind(string content, GameState state) => StatToken.Replace(ReplaceFixed(content, state), match =>
+    {
+        var name = match.Groups["name"].Value.Trim();
+        var stat = state.Stats.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+        return stat is null ? string.Empty : stat.Value.ToString();
+    });
+
+    static string ReplaceFixed(string content, GameState state) => content
         .Replace("{{HOME_TEAM}}", state.HomeAbbreviation)
         .Replace("{{AWAY_TEAM}}", state.AwayAbbreviation)
         .Replace("{{HOME_SCORE}}", state.HomeScore.ToString())
         .Replace("{{AWAY_SCORE}}", state.AwayScore.ToString())
-        .Replace("{{PERIOD}}", $"{state.PeriodLabel.ToUpperInvariant()} {state.Period}")
+        .Replace("{{PERIOD}}", PeriodDisplay.Format(state).ToUpperInvariant())
         .Replace("{{GAME_CLOCK}}", GameEngine.FormatClock(state.ClockSeconds))
         .Replace("{{DOWNS}}", $"{state.Down}{Ordinal(state.Down)} & {state.YardsToGo}")
         .Replace("{{BALL_SPOT}}", $"BALL {state.YardsToGoal}")

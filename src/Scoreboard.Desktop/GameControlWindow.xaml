@@ -1,1 +1,245 @@
-<Window x:Class="Scoreboard.Desktop.GameControlWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Game Control Panel" Width="720" Height="850" MinWidth="600" MinHeight="680" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI"><DockPanel><Border DockPanel.Dock="Top" Background="#171C25" Padding="16"><StackPanel><TextBlock Text="GAME CONTROL PANEL" FontSize="18" FontWeight="Bold"/><TextBlock Text="Scores and clocks publish live automatically. Update Output publishes staged game details such as down and distance. SPACE starts/stops the clock · Ctrl+Z undoes" TextWrapping="Wrap" Foreground="#93A0B2" Margin="0,5,0,0"/></StackPanel></Border><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12"><Border Background="#171C25" CornerRadius="8" Padding="14" Margin="0,0,0,8"><StackPanel><TextBlock Text="SCORE &amp; POSSESSION" FontWeight="Bold"/><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="HomeTitle" Text="HOME" HorizontalAlignment="Center" FontWeight="Bold" Margin="4"/><TextBlock x:Name="HomeScore" Text="0" FontSize="34" FontWeight="Bold" HorizontalAlignment="Center"/><UniformGrid Columns="4"><Button Content="+1" Tag="Score+1" Click="HomeScore_Click"/><Button Content="+2" Tag="Score+2" Click="HomeScore_Click"/><Button Content="+3" Tag="Score+3" Click="HomeScore_Click"/><Button x:Name="HomeTouchdownScore" Content="+6 TD" Tag="Score+6" Click="HomeScore_Click"/></UniformGrid><UniformGrid Columns="4"><Button Content="−1" Tag="Score-1" Click="HomeScore_Click"/><Button Content="−2" Tag="Score-2" Click="HomeScore_Click"/><Button Content="−3" Tag="Score-3" Click="HomeScore_Click"/><Button x:Name="HomeTouchdownSubtract" Content="−6" Tag="Score-6" Click="HomeScore_Click"/></UniformGrid><Button Tag="Timeout" Content="Timeout" Click="HomeTimeout_Click"/><TextBlock x:Name="HomeFouls" HorizontalAlignment="Center"/></StackPanel><StackPanel Grid.Column="1"><TextBlock x:Name="AwayTitle" Text="AWAY" HorizontalAlignment="Center" FontWeight="Bold" Margin="4"/><TextBlock x:Name="AwayScore" Text="0" FontSize="34" FontWeight="Bold" HorizontalAlignment="Center"/><UniformGrid Columns="4"><Button Content="+1" Tag="Score+1" Click="AwayScore_Click"/><Button Content="+2" Tag="Score+2" Click="AwayScore_Click"/><Button Content="+3" Tag="Score+3" Click="AwayScore_Click"/><Button x:Name="AwayTouchdownScore" Content="+6 TD" Tag="Score+6" Click="AwayScore_Click"/></UniformGrid><UniformGrid Columns="4"><Button Content="−1" Tag="Score-1" Click="AwayScore_Click"/><Button Content="−2" Tag="Score-2" Click="AwayScore_Click"/><Button Content="−3" Tag="Score-3" Click="AwayScore_Click"/><Button x:Name="AwayTouchdownSubtract" Content="−6" Tag="Score-6" Click="AwayScore_Click"/></UniformGrid><Button Tag="Timeout" Content="Timeout" Click="AwayTimeout_Click"/><TextBlock x:Name="AwayFouls" HorizontalAlignment="Center"/></StackPanel></Grid><Button Tag="Possession" Content="Toggle possession" Click="Possession_Click"/><ToggleButton x:Name="LiveOutputToggle" Content="Live score &amp; clock: ON" IsChecked="True" Checked="LiveOutput_Changed" Unchecked="LiveOutput_Changed" Margin="4" Padding="12,10"/><TextBlock x:Name="LiveOutputStatus" Text="MANUAL OUTPUT" Foreground="#93A0B2" HorizontalAlignment="Center"/><Button x:Name="UpdateScoreButton" Content="Update Output (publish current game state)" FontSize="16" Padding="14,14" Background="#087A5A" Click="UpdateScore_Click"/></StackPanel></Border><Border Background="#171C25" CornerRadius="8" Padding="14" Margin="0,0,0,8"><StackPanel><DockPanel><TextBlock Text="CLOCK &amp; PERIOD" FontWeight="Bold"/><TextBlock x:Name="PeriodLabel" DockPanel.Dock="Right" Foreground="#93A0B2"/></DockPanel><TextBlock x:Name="Clock" FontSize="42" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/><UniformGrid Columns="3"><Button x:Name="ClockToggle" Tag="Clock" Content="Start clock" Click="Clock_Click"/><Button Tag="ClockAdjust" Content="−1 min" Click="Minus_Click"/><Button Tag="ClockAdjust" Content="+1 min" Click="Plus_Click"/></UniformGrid><UniformGrid Columns="3"><Button Tag="ClockAdjust" Content="−1 sec" Click="MinusSecond_Click"/><Button Tag="ClockAdjust" Content="Set clock" Click="SetClock_Click"/><Button Tag="ClockAdjust" Content="+1 sec" Click="PlusSecond_Click"/></UniformGrid><Button Tag="NextPeriod" Content="Next period" Click="NextPeriod_Click"/></StackPanel></Border><Border x:Name="FootballPanel" Tag="Football" Background="#171C25" CornerRadius="8" Padding="14" Margin="0,0,0,8" Visibility="Collapsed"><StackPanel><TextBlock Text="AMERICAN FOOTBALL · DOWN &amp; DISTANCE" FontWeight="Bold"/><TextBlock x:Name="DownDisplay" FontSize="30" FontWeight="Bold" HorizontalAlignment="Center" Margin="4"/><TextBlock x:Name="BallDisplay" HorizontalAlignment="Center"/><UniformGrid Columns="3"><Button Content="Next down" Tag="NextDown" Click="NextDown_Click"/><Button Content="Distance −1 yd" Tag="DistanceMinus" Click="DistanceMinus_Click"/><Button Content="Distance +1 yd" Tag="DistancePlus" Click="DistancePlus_Click"/></UniformGrid><UniformGrid Columns="3"><Button Content="Ball −5 yd" Tag="BallMinus" Click="BallMinus_Click"/><Button Content="Ball +5 yd" Tag="BallPlus" Click="BallPlus_Click"/><Button Content="New series" Tag="NewSeries" Click="NewSeries_Click"/></UniformGrid><UniformGrid Columns="2"><Button Tag="FootballYards" Content="Home +10 yards"  Click="HomeYards_Click"/><Button Tag="FootballYards" Content="Away +10 yards"  Click="AwayYards_Click"/><Button Tag="Turnover" Content="Home turnover"  Click="HomeTurnover_Click"/><Button Tag="Turnover" Content="Away turnover"  Click="AwayTurnover_Click"/></UniformGrid><TextBlock x:Name="FootballStatsDisplay" HorizontalAlignment="Center" Margin="8"/></StackPanel></Border><Border x:Name="SoccerPanel" Tag="Soccer" Background="#171C25" CornerRadius="8" Padding="14" Margin="0,0,0,8" Visibility="Collapsed"><StackPanel><TextBlock Text="SOCCER · DISCIPLINE" FontWeight="Bold"/><UniformGrid Columns="2"><Button Tag="SoccerCard" Content="Home yellow card"  Click="HomeYellow_Click"/><Button Tag="SoccerCard" Content="Away yellow card"  Click="AwayYellow_Click"/><Button Tag="SoccerCard" Content="Home red card"  Click="HomeRed_Click"/><Button Tag="SoccerCard" Content="Away red card"  Click="AwayRed_Click"/></UniformGrid><UniformGrid Columns="2"><Button Tag="SoccerShot" Content="Home shot"  Click="HomeShot_Click"/><Button Tag="SoccerShot" Content="Away shot"  Click="AwayShot_Click"/><Button Tag="SoccerCorner" Content="Home corner"  Click="HomeCorner_Click"/><Button Tag="SoccerCorner" Content="Away corner"  Click="AwayCorner_Click"/></UniformGrid><TextBlock x:Name="SoccerStatsDisplay" HorizontalAlignment="Center" Margin="6"/><TextBlock x:Name="CardsDisplay" HorizontalAlignment="Center" FontSize="16" Margin="8"/></StackPanel></Border><Border x:Name="BasketballPanel" Tag="Basketball" Background="#171C25" CornerRadius="8" Padding="14" Margin="0,0,0,8" Visibility="Collapsed"><StackPanel><TextBlock Text="BASKETBALL · FOULS &amp; SHOT CLOCK" FontWeight="Bold"/><UniformGrid Columns="2"><Button Tag="Foul" Content="Home foul"  Click="HomeFoul_Click"/><Button Tag="Foul" Content="Away foul"  Click="AwayFoul_Click"/></UniformGrid><TextBlock x:Name="BasketballStatsDisplay" HorizontalAlignment="Center" Margin="6"/><UniformGrid Columns="3"><Button Tag="ShotClockToggle" Content="Start/stop"  Click="ShotClockToggle_Click"/><Button Tag="ShotClockReset" Content="Reset 24"  Click="ShotClockReset_Click"/><Button Tag="ShotClockSet" Content="Set shot clock"  Click="ShotClockSet_Click"/></UniformGrid></StackPanel></Border><Border x:Name="BaseballPanel" Tag="Baseball" Background="#171C25" CornerRadius="8" Padding="14" Margin="0,0,0,8" Visibility="Collapsed"><StackPanel><TextBlock Text="BASEBALL · AT-BAT &amp; HITS" FontWeight="Bold"/><TextBlock x:Name="CountDisplay" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" Margin="6"/><UniformGrid Columns="3"><Button Tag="BaseballCount" Content="Ball"  Click="BaseballBall_Click"/><Button Tag="BaseballCount" Content="Strike"  Click="BaseballStrike_Click"/><Button Tag="BaseballCount" Content="Foul ball"  Click="BaseballFoul_Click"/></UniformGrid><UniformGrid Columns="3"><Button Tag="BaseballCount" Content="Out"  Click="BaseballOut_Click"/><Button Tag="BaseballHit" Content="Home hit"  Click="HomeHit_Click"/><Button Tag="BaseballHit" Content="Away hit"  Click="AwayHit_Click"/></UniformGrid><TextBlock x:Name="HitsDisplay" HorizontalAlignment="Center" Margin="8"/></StackPanel></Border><Button Tag="Undo" Content="Undo last action  ·  Ctrl+Z" Click="Undo_Click"/></StackPanel></ScrollViewer></DockPanel></Window>
+<Window x:Class="Scoreboard.Desktop.GameControlWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ScorePlus — Control Panel" Width="780" Height="900" MinWidth="640" MinHeight="560" Background="#0B0F14" Foreground="#F4F7FB" FontFamily="Segoe UI">
+  <Window.Resources>
+    <Style x:Key="Section" TargetType="Border">
+      <Setter Property="Background" Value="#171C25"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Padding" Value="16"/>
+      <Setter Property="Margin" Value="0,0,0,10"/>
+    </Style>
+    <Style x:Key="SectionTitle" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Foreground" Value="#93A0B2"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="Accent" TargetType="Border">
+      <Setter Property="Width" Value="4"/>
+      <Setter Property="Height" Value="14"/>
+      <Setter Property="CornerRadius" Value="2"/>
+      <Setter Property="Background" Value="#38D7A3"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+    <Style x:Key="Compact" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Padding" Value="8,7"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Margin" Value="3"/>
+    </Style>
+    <Style x:Key="StatButton" TargetType="Button" BasedOn="{StaticResource Compact}">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Width" Value="28"/>
+      <Setter Property="Height" Value="26"/>
+      <Setter Property="FontSize" Value="14"/>
+    </Style>
+  </Window.Resources>
+
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Background="#111721" Padding="18,12">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Content="Keybinds…" Click="Keybinds_Click" ToolTip="Assign a key combination to any button on this panel"/>
+          <Button Content="New panel" Click="NewPanel_Click" ToolTip="Open another control panel that stays in sync"/>
+        </StackPanel>
+        <StackPanel>
+          <TextBlock Text="SCOREPLUS · CONTROL PANEL" FontSize="16" FontWeight="Bold"/>
+          <TextBlock Text="Scores and clocks publish live. Update Output publishes staged details such as down and distance." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="0,4,0,0"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border DockPanel.Dock="Bottom" Background="#111721" Padding="12,10">
+      <DockPanel>
+        <Button DockPanel.Dock="Right" Tag="global.undo" Content="Undo  ·  Ctrl+Z" Click="Action_Click"/>
+        <TextBlock x:Name="StatusLine" Text="LIVE SCORE/CLOCK" Foreground="#93A0B2" VerticalAlignment="Center" FontSize="11"/>
+      </DockPanel>
+    </Border>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12,12,12,0">
+      <StackPanel>
+        <Border Style="{StaticResource Section}">
+          <StackPanel>
+            <DockPanel Margin="0,0,0,10">
+              <Border Style="{StaticResource Accent}"/><TextBlock Text="SCORE" Style="{StaticResource SectionTitle}"/>
+              <TextBlock Text="Tap to add or correct points · possession and timeouts" Foreground="#4E5D70" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </DockPanel>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+              <StackPanel Margin="0,0,6,0">
+                <TextBlock x:Name="HomeTitle" Text="HOME" HorizontalAlignment="Center" FontWeight="Bold" Foreground="#93A0B2" FontSize="12"/>
+                <TextBlock x:Name="HomeScore" Text="0" FontSize="46" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,-4,0,2"/>
+                <UniformGrid Columns="4">
+                  <Button Style="{StaticResource Compact}" Content="+1" Tag="home.score.plus1" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" Content="+2" Tag="home.score.plus2" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" Content="+3" Tag="home.score.plus3" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" x:Name="HomeTouchdownScore" Content="+6" Tag="home.score.plus6" Click="Action_Click"/>
+                </UniformGrid>
+                <UniformGrid Columns="4">
+                  <Button Style="{StaticResource Compact}" Content="−1" Tag="home.score.minus1" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" Content="−2" Tag="home.score.minus2" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" Content="−3" Tag="home.score.minus3" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" x:Name="HomeTouchdownSubtract" Content="−6" Tag="home.score.minus6" Click="Action_Click"/>
+                </UniformGrid>
+                <Button Style="{StaticResource Compact}" Tag="home.timeout" Content="Timeout" Click="Action_Click"/>
+                <TextBlock x:Name="HomeFouls" HorizontalAlignment="Center" Foreground="#93A0B2" FontSize="11"/>
+              </StackPanel>
+              <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                <TextBlock x:Name="AwayTitle" Text="AWAY" HorizontalAlignment="Center" FontWeight="Bold" Foreground="#93A0B2" FontSize="12"/>
+                <TextBlock x:Name="AwayScore" Text="0" FontSize="46" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,-4,0,2"/>
+                <UniformGrid Columns="4">
+                  <Button Style="{StaticResource Compact}" Content="+1" Tag="away.score.plus1" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" Content="+2" Tag="away.score.plus2" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" Content="+3" Tag="away.score.plus3" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" x:Name="AwayTouchdownScore" Content="+6" Tag="away.score.plus6" Click="Action_Click"/>
+                </UniformGrid>
+                <UniformGrid Columns="4">
+                  <Button Style="{StaticResource Compact}" Content="−1" Tag="away.score.minus1" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" Content="−2" Tag="away.score.minus2" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" Content="−3" Tag="away.score.minus3" Click="Action_Click"/>
+                  <Button Style="{StaticResource Compact}" x:Name="AwayTouchdownSubtract" Content="−6" Tag="away.score.minus6" Click="Action_Click"/>
+                </UniformGrid>
+                <Button Style="{StaticResource Compact}" Tag="away.timeout" Content="Timeout" Click="Action_Click"/>
+                <TextBlock x:Name="AwayFouls" HorizontalAlignment="Center" Foreground="#93A0B2" FontSize="11"/>
+              </StackPanel>
+            </Grid>
+            <Button Tag="possession.toggle" Content="Toggle possession" Click="Action_Click" Margin="3,10,3,3"/>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Section}">
+          <StackPanel>
+            <DockPanel Margin="0,0,0,6">
+              <Border Style="{StaticResource Accent}"/><TextBlock Text="CLOCK &amp; PERIOD" Style="{StaticResource SectionTitle}"/>
+              <TextBlock x:Name="PeriodLabel" DockPanel.Dock="Right" Foreground="#93A0B2" FontSize="12" VerticalAlignment="Center"/>
+            </DockPanel>
+            <TextBlock x:Name="Clock" Text="12:00" FontSize="54" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+            <UniformGrid Columns="3">
+              <Button Style="{StaticResource Compact}" x:Name="ClockToggle" Tag="clock.toggle" Content="Start clock" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="clock.minus60" Content="−1 min" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="clock.plus60" Content="+1 min" Click="Action_Click"/>
+            </UniformGrid>
+            <UniformGrid Columns="3">
+              <Button Style="{StaticResource Compact}" Tag="clock.minus1" Content="−1 sec" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="clock.set" Content="Set clock (MM:SS)" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="clock.plus1" Content="+1 sec" Click="Action_Click"/>
+            </UniformGrid>
+            <Button Style="{StaticResource Compact}" Tag="period.next" Content="Next period" Click="Action_Click"/>
+            <DockPanel Margin="4,8,4,0">
+              <TextBlock Text="Period format" Foreground="#93A0B2" VerticalAlignment="Center" FontSize="12"/>
+              <ComboBox x:Name="PeriodFormatSelector" DockPanel.Dock="Right" Width="160" SelectionChanged="PeriodFormat_Changed"/>
+            </DockPanel>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Section}" x:Name="FootballPanel" Tag="Football" Visibility="Collapsed">
+          <StackPanel>
+            <DockPanel Margin="0,0,0,6">
+              <Border Style="{StaticResource Accent}"/><TextBlock Text="FOOTBALL · DOWN &amp; DISTANCE" Style="{StaticResource SectionTitle}"/>
+            </DockPanel>
+            <TextBlock x:Name="DownDisplay" FontSize="30" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,2"/>
+            <TextBlock x:Name="BallDisplay" HorizontalAlignment="Center" Foreground="#93A0B2" FontSize="12" Margin="0,0,0,8"/>
+            <UniformGrid Columns="2">
+              <Button Style="{StaticResource Compact}" Content="Previous down" Tag="football.down.previous" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Content="Next down" Tag="football.down.next" Click="Action_Click"/>
+            </UniformGrid>
+            <UniformGrid Columns="2">
+              <Button Style="{StaticResource Compact}" Content="Distance −1 yd" Tag="football.distance.minus" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Content="Distance +1 yd" Tag="football.distance.plus" Click="Action_Click"/>
+            </UniformGrid>
+            <UniformGrid Columns="2">
+              <Button Style="{StaticResource Compact}" Content="Ball spot −1 yd" Tag="football.ball.minus" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Content="Ball spot +1 yd" Tag="football.ball.plus" Click="Action_Click"/>
+            </UniformGrid>
+            <Button Style="{StaticResource Compact}" Content="New series (down → 1st)" Tag="football.series.new" Click="Action_Click"/>
+            <UniformGrid Columns="2">
+              <Button Style="{StaticResource Compact}" Tag="football.yards.home" Content="Home +10 yards" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="football.yards.away" Content="Away +10 yards" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="football.turnover.home" Content="Home turnover" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="football.turnover.away" Content="Away turnover" Click="Action_Click"/>
+            </UniformGrid>
+            <TextBlock x:Name="FootballStatsDisplay" HorizontalAlignment="Center" Margin="6" Foreground="#93A0B2" FontSize="11"/>
+            <Button x:Name="UpdateScoreButton" Content="Update Output  ·  publish current game state" Tag="output.publish" FontSize="15" Padding="14,12" Background="#0B6B50" BorderBrush="#14A67C" Click="Action_Click" Margin="3,8,3,3"/>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Section}" x:Name="SoccerPanel" Tag="Soccer" Visibility="Collapsed">
+          <StackPanel>
+            <DockPanel Margin="0,0,0,6">
+              <Border Style="{StaticResource Accent}"/><TextBlock Text="SOCCER" Style="{StaticResource SectionTitle}"/>
+            </DockPanel>
+            <UniformGrid Columns="2">
+              <Button Style="{StaticResource Compact}" Tag="soccer.yellow.home" Content="Home yellow" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="soccer.yellow.away" Content="Away yellow" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="soccer.red.home" Content="Home red" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="soccer.red.away" Content="Away red" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="soccer.shot.home" Content="Home shot" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="soccer.shot.away" Content="Away shot" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="soccer.corner.home" Content="Home corner" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="soccer.corner.away" Content="Away corner" Click="Action_Click"/>
+            </UniformGrid>
+            <TextBlock x:Name="SoccerStatsDisplay" HorizontalAlignment="Center" Margin="6" Foreground="#93A0B2" FontSize="11"/>
+            <TextBlock x:Name="CardsDisplay" HorizontalAlignment="Center" FontSize="13" Margin="6"/>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Section}" x:Name="BasketballPanel" Tag="Basketball" Visibility="Collapsed">
+          <StackPanel>
+            <DockPanel Margin="0,0,0,6">
+              <Border Style="{StaticResource Accent}"/><TextBlock Text="BASKETBALL" Style="{StaticResource SectionTitle}"/>
+            </DockPanel>
+            <UniformGrid Columns="2">
+              <Button Style="{StaticResource Compact}" Tag="basketball.foul.home" Content="Home foul" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="basketball.foul.away" Content="Away foul" Click="Action_Click"/>
+            </UniformGrid>
+            <TextBlock x:Name="BasketballStatsDisplay" HorizontalAlignment="Center" Margin="6" Foreground="#93A0B2" FontSize="11"/>
+            <UniformGrid Columns="3">
+              <Button Style="{StaticResource Compact}" Tag="basketball.shotclock.toggle" Content="Shot clock start/stop" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="basketball.shotclock.reset" Content="Reset 24" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="basketball.shotclock.set" Content="Set shot clock" Click="Action_Click"/>
+            </UniformGrid>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Section}" x:Name="BaseballPanel" Tag="Baseball" Visibility="Collapsed">
+          <StackPanel>
+            <DockPanel Margin="0,0,0,6">
+              <Border Style="{StaticResource Accent}"/><TextBlock Text="BASEBALL" Style="{StaticResource SectionTitle}"/>
+            </DockPanel>
+            <TextBlock x:Name="CountDisplay" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" Margin="4"/>
+            <UniformGrid Columns="3">
+              <Button Style="{StaticResource Compact}" Tag="baseball.ball" Content="Ball" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="baseball.strike" Content="Strike" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="baseball.foul" Content="Foul ball" Click="Action_Click"/>
+            </UniformGrid>
+            <UniformGrid Columns="3">
+              <Button Style="{StaticResource Compact}" Tag="baseball.out" Content="Out" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="baseball.hit.home" Content="Home hit" Click="Action_Click"/>
+              <Button Style="{StaticResource Compact}" Tag="baseball.hit.away" Content="Away hit" Click="Action_Click"/>
+            </UniformGrid>
+            <TextBlock x:Name="HitsDisplay" HorizontalAlignment="Center" Margin="6" Foreground="#93A0B2" FontSize="11"/>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Section}">
+          <StackPanel>
+            <DockPanel Margin="0,0,0,8">
+              <Border Style="{StaticResource Accent}"/><TextBlock Text="CUSTOM STATS" Style="{StaticResource SectionTitle}"/>
+              <Button DockPanel.Dock="Right" Style="{StaticResource Compact}" Content="＋ Add stat" Click="AddStat_Click"/>
+            </DockPanel>
+            <TextBlock x:Name="StatsEmpty" Text="No custom stats yet. Add one — for example Turnovers or Penalties — then display it with the {{STAT:Turnovers}} scorebug token." TextWrapping="Wrap" Foreground="#4E5D70" FontSize="11" Margin="2,0,2,0"/>
+            <StackPanel x:Name="StatsHost"/>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Section}">
+          <StackPanel>
+            <DockPanel Margin="0,0,0,6">
+              <Border Style="{StaticResource Accent}"/><TextBlock Text="AUDIENCE OUTPUT" Style="{StaticResource SectionTitle}"/>
+            </DockPanel>
+            <Button x:Name="UpdateScoreGeneral" Content="Update Output  ·  publish current game state" Tag="output.publish" FontSize="15" Padding="14,12" Background="#0B6B50" BorderBrush="#14A67C" Click="Action_Click" Visibility="Collapsed" Margin="3"/>
+            <ToggleButton x:Name="LiveOutputToggle" Content="Live score &amp; clock: ON" IsChecked="True" Checked="LiveOutput_Changed" Unchecked="LiveOutput_Changed" Margin="3" Padding="12,10" HorizontalAlignment="Stretch"/>
+            <TextBlock x:Name="LiveOutputStatus" Text="MANUAL OUTPUT" Foreground="#93A0B2" HorizontalAlignment="Center" FontSize="11"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</Window>
