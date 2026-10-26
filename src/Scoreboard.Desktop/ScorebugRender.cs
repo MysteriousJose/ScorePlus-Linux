@@ -23,8 +23,9 @@ internal static class ScorebugRender
             ? Brushes.Transparent
             : ParseBrush(item.Background);
 
-    public static FrameworkElement CreateContent(ScorebugElement item, Func<GameState>? state)
+    public static FrameworkElement CreateContent(ScorebugElement item, Func<GameState>? state, MediaPlayback? playback = null, bool muteVideo = true)
     {
+        if (item.Kind == ScorebugElementKind.Video) return new VideoSurface(item, playback, muteVideo);
         if (item.Kind == ScorebugElementKind.Logo && !string.IsNullOrWhiteSpace(item.ImagePath) && File.Exists(item.ImagePath))
         {
             try { return new Image { Source = new BitmapImage(new Uri(item.ImagePath!)), Stretch = Stretch.Uniform }; }

@@ -12,5 +12,21 @@ public partial class App : Application
             args.Handled = true;
         };
         base.OnStartup(e);
+
+        // The launcher keeps the process alive until it decides which window to open.
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var launcher = new LauncherWindow();
+        if (launcher.ShowDialog() != true) { Shutdown(); return; }
+
+        MainWindow window;
+        try { window = new MainWindow(launcher.Mode, launcher.GamePath); }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"ScorePlus could not start: {ex.Message}", "ScorePlus", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown();
+            return;
+        }
+        window.Closed += (_, _) => Shutdown();
+        window.Show();
     }
 }

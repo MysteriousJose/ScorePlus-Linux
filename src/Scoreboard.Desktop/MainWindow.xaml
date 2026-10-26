@@ -1,10 +1,117 @@
-<Window x:Class="Scoreboard.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ScorePlus | Live Production" Width="1440" Height="900" MinWidth="900" MinHeight="620" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI" KeyDown="Window_KeyDown">
-<DockPanel>
-  <Border DockPanel.Dock="Top" Background="#171C25" Padding="14,8"><DockPanel><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="Preferences" Click="Preferences_Click"/><Button Content="Control Panel" Click="ControlPanel_Click"/><Button Content="Audience Output" Click="Output_Click"/><Button Content="Broadcast Fullscreen" Click="Fullscreen_Click"/><Button Content="Game Report" Click="GameReport_Click"/><Button Content="Save Game" Click="Save_Click"/><Button Content="Open Game" Click="Open_Click"/></StackPanel><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="●" Foreground="#38D7A3" FontSize="18" Margin="3,0,9,0"/><TextBlock Text="SCOREPLUS" FontSize="17" FontWeight="Bold"/><TextBlock Text="  /  LIVE PRODUCTION" Foreground="#93A0B2" FontSize="13" VerticalAlignment="Center"/></StackPanel></DockPanel></Border>
-  <StatusBar DockPanel.Dock="Bottom" Background="#171C25" Foreground="#93A0B2"><StatusBarItem><TextBlock x:Name="StatusText" Text="READY · Local autosave enabled"/></StatusBarItem><Separator/><StatusBarItem><TextBlock x:Name="AutosaveText" Text="Autosave —"/></StatusBarItem></StatusBar>
-  <Grid Margin="14"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="160"/></Grid.RowDefinitions>
-    <Border Background="#171C25" CornerRadius="8" Padding="12" Margin="0,0,0,12"><DockPanel><StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"><Button Content="Scorebug Studio" Click="ScorebugStudio_Click"/><Button Content="Sport Profiles" Click="SportProfiles_Click"/><Button Content="New Game" Click="NewGame_Click"/></StackPanel><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="SPORT" Foreground="#93A0B2" VerticalAlignment="Center" Margin="0,0,8,0"/><ComboBox x:Name="SportSelector" Width="220" SelectionChanged="Sport_Changed"><ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}"/></DataTemplate></ComboBox.ItemTemplate></ComboBox><TextBlock Text="   Choose a sport, then open the Control Panel to operate the game." Foreground="#93A0B2" VerticalAlignment="Center"/></StackPanel></DockPanel></Border>
-    <Border Grid.Row="1" Background="#171C25" CornerRadius="10" Padding="16" Margin="0,0,0,12"><DockPanel><StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="2,0,0,12"><TextBlock Text="PROGRAM PREVIEW" FontSize="13" FontWeight="Bold"/><TextBlock Text="   Audience output" Foreground="#38D7A3" FontSize="12" VerticalAlignment="Center"/></StackPanel><ContentControl x:Name="PreviewHost"/></DockPanel></Border>
-    <Border Grid.Row="2" Background="#171C25" CornerRadius="10" Padding="14"><DockPanel><StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6"><TextBlock Text="EVENT LOG" FontWeight="Bold"/><TextBlock Text="   Scoring, timing, and operator actions" Foreground="#93A0B2" Margin="8,0,0,0"/></StackPanel><ListBox x:Name="EventList" Background="#10151D" Foreground="#D6DCE5" BorderThickness="0" FontFamily="Consolas" FontSize="12"/></DockPanel></Border>
-  </Grid>
-</DockPanel></Window>
+<Window x:Class="Scoreboard.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:Scoreboard.Desktop" Title="ScorePlus | Live Production" Width="1520" Height="930" MinWidth="1280" MinHeight="800" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI">
+  <Window.Resources>
+    <Style x:Key="HeaderButton" TargetType="Button">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Padding" Value="9,7"/>
+      <Setter Property="Margin" Value="3"/>
+    </Style>
+    <Style x:Key="RailCard" TargetType="Border">
+      <Setter Property="Background" Value="#171C25"/>
+      <Setter Property="CornerRadius" Value="9"/>
+      <Setter Property="Padding" Value="10,8"/>
+      <Setter Property="Margin" Value="0,0,0,8"/>
+    </Style>
+    <Style x:Key="RailTitle" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Foreground" Value="#93A0B2"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="RailAccent" TargetType="Border">
+      <Setter Property="Width" Value="3"/>
+      <Setter Property="Height" Value="12"/>
+      <Setter Property="CornerRadius" Value="2"/>
+      <Setter Property="Background" Value="#38D7A3"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+    </Style>
+    <Style x:Key="SplitterStyle" TargetType="GridSplitter">
+      <Setter Property="Background" Value="#1E2630"/>
+      <Setter Property="ShowsPreview" Value="True"/>
+    </Style>
+  </Window.Resources>
+
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Background="#171C25" Padding="14,7">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Style="{StaticResource HeaderButton}" Content="New Panel" Click="NewPanel_Click" ToolTip="Open a detached control panel that stays in sync"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Keybinds…" Click="Keybinds_Click" ToolTip="Assign a key combination to any control"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Preferences" Click="Preferences_Click"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Audience Output" Click="Output_Click"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Broadcast Fullscreen" Click="Fullscreen_Click"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Event Log" Click="EventLog_Click" ToolTip="Open the event log in its own window"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Game Report" Click="GameReport_Click"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Save Game" Click="Save_Click"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Open Game" Click="Open_Click"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="●" Foreground="#38D7A3" FontSize="18" Margin="3,0,9,0"/>
+          <TextBlock Text="SCOREPLUS" FontSize="17" FontWeight="Bold"/>
+          <TextBlock Text="  /  LIVE PRODUCTION" Foreground="#93A0B2" FontSize="13" VerticalAlignment="Center"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border DockPanel.Dock="Top" Background="#12171F" Padding="14,6">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Style="{StaticResource HeaderButton}" Content="Scorebug Studio" Click="ScorebugStudio_Click"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Sport Profiles" Click="SportProfiles_Click"/>
+          <Button Style="{StaticResource HeaderButton}" Content="New Game" Click="NewGame_Click"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="SPORT" Foreground="#93A0B2" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
+          <ComboBox x:Name="SportSelector" Width="220" SelectionChanged="Sport_Changed">
+            <ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}"/></DataTemplate></ComboBox.ItemTemplate>
+          </ComboBox>
+          <TextBlock x:Name="SportHint" Text="Everything you need for the game is on this page." Foreground="#5C6B7E" VerticalAlignment="Center" Margin="12,0,0,0" FontSize="11" Visibility="Collapsed"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <StatusBar DockPanel.Dock="Bottom" Background="#171C25" Foreground="#93A0B2"><StatusBarItem><TextBlock x:Name="StatusText" Text="READY · Local autosave enabled"/></StatusBarItem><Separator/><StatusBarItem><TextBlock x:Name="AutosaveText" Text="Autosave —"/></StatusBarItem></StatusBar>
+
+    <Grid Margin="12">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="352" MinWidth="300"/>
+        <ColumnDefinition Width="7"/>
+        <ColumnDefinition Width="*" MinWidth="640"/>
+      </Grid.ColumnDefinitions>
+
+      <!-- Left rail: preview on top, one unified media dock below. Both rows and the rail width drag. -->
+      <Grid Grid.Column="0" Margin="0,0,6,0">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="172" MinHeight="130"/>
+          <RowDefinition Height="7"/>
+          <RowDefinition Height="*" MinHeight="180"/>
+        </Grid.RowDefinitions>
+
+        <Border Style="{StaticResource RailCard}" Grid.Row="0" Margin="0,0,0,0">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,6">
+              <TextBlock x:Name="PreviewAudienceHint" DockPanel.Dock="Right" Text="AUDIENCE" Foreground="#38D7A3" FontSize="9" FontWeight="Bold" VerticalAlignment="Center" Visibility="Collapsed"/>
+              <StackPanel Orientation="Horizontal">
+                <Border Style="{StaticResource RailAccent}"/>
+                <TextBlock Text="PROGRAM PREVIEW" Style="{StaticResource RailTitle}"/>
+              </StackPanel>
+            </DockPanel>
+            <ContentControl x:Name="PreviewHost" Grid.Row="1"/>
+          </Grid>
+        </Border>
+
+        <GridSplitter Grid.Row="1" Style="{StaticResource SplitterStyle}" Height="7" HorizontalAlignment="Stretch" VerticalAlignment="Center" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"/>
+
+        <local:MediaDock x:Name="MediaControl" Grid.Row="2"/>
+      </Grid>
+
+      <GridSplitter Grid.Column="1" Style="{StaticResource SplitterStyle}" Width="7" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"/>
+
+      <!-- Operator surface -->
+      <ContentControl x:Name="ControlHost" Grid.Column="2"/>
+    </Grid>
+  </DockPanel>
+</Window>

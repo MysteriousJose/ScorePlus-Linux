@@ -14,12 +14,22 @@ public static class ScoreboardTemplates
     });
 
     static string ReplaceFixed(string content, GameState state) => content
-        .Replace("{{HOME_TEAM}}", state.HomeAbbreviation)
-        .Replace("{{AWAY_TEAM}}", state.AwayAbbreviation)
+        // Team names render exactly as the operator typed them: full text, original case.
+        .Replace("{{HOME_TEAM}}", state.HomeTeam)
+        .Replace("{{AWAY_TEAM}}", state.AwayTeam)
+        .Replace("{{HOME_ABBR}}", state.HomeAbbreviation)
+        .Replace("{{AWAY_ABBR}}", state.AwayAbbreviation)
         .Replace("{{HOME_SCORE}}", state.HomeScore.ToString())
         .Replace("{{AWAY_SCORE}}", state.AwayScore.ToString())
         .Replace("{{PERIOD}}", PeriodDisplay.Format(state).ToUpperInvariant())
         .Replace("{{GAME_CLOCK}}", GameEngine.FormatClock(state.ClockSeconds))
+        .Replace("{{PLAY_CLOCK}}", state.PlayClockSeconds.ToString())
+        .Replace("{{TIMEOUT_CLOCK}}", GameEngine.FormatClock(state.TimeoutClockSeconds))
+        .Replace("{{TIMEOUTS}}", $"TOL {state.HomeTimeouts}–{state.AwayTimeouts}")
+        .Replace("{{POSSESSION}}", state.HomePossession ? state.HomeAbbreviation : state.AwayAbbreviation)
+        .Replace("{{DOWN}}", $"{state.Down}{Ordinal(state.Down)}")
+        .Replace("{{TO_GO}}", state.YardsToGo.ToString())
+        .Replace("{{BALL_ON}}", state.YardsToGoal.ToString())
         .Replace("{{DOWNS}}", $"{state.Down}{Ordinal(state.Down)} & {state.YardsToGo}")
         .Replace("{{BALL_SPOT}}", $"BALL {state.YardsToGoal}")
         .Replace("{{SPORT}}", state.SportId.ToUpperInvariant())

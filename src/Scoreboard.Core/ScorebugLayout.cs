@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Scoreboard.Core;
 
-public enum ScorebugElementKind { Text, Logo, Shape }
+public enum ScorebugElementKind { Text, Logo, Shape, Video }
 public enum ScorebugAnimation { None, Pulse, Drift }
 public enum ScorebugShape { Rectangle, Circle, Triangle }
 
@@ -14,6 +14,9 @@ public sealed class ScorebugElement
     public ScorebugShape Shape { get; set; } = ScorebugShape.Rectangle;
     public string Content { get; set; } = "TEXT";
     public string? ImagePath { get; set; }
+
+    /// <summary>For video elements: only media assigned to this tag plays inside the element.</summary>
+    public string MediaTag { get; set; } = "";
     public double X { get; set; } = 100;
     public double Y { get; set; } = 100;
     public double Width { get; set; } = 240;
@@ -29,8 +32,22 @@ public sealed class ScorebugElement
 
 public sealed class ScorebugLayout
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public string Name { get; set; } = "Broadcast Classic";
+
+    /// <summary>Design canvas size in pixels. Elements are positioned in this space and scaled to fit any output.</summary>
+    public int Width { get; set; } = 1280;
+    public int Height { get; set; } = 720;
+
+    public static readonly (string Name, int Width, int Height)[] SizePresets =
+    [
+        ("HD · 1280 × 720", 1280, 720),
+        ("Full HD · 1920 × 1080", 1920, 1080),
+        ("QHD · 2560 × 1440", 2560, 1440),
+        ("4K UHD · 3840 × 2160", 3840, 2160),
+        ("Vertical · 1080 × 1920", 1080, 1920),
+        ("Square · 1080 × 1080", 1080, 1080)
+    ];
     public List<ScorebugElement> Elements { get; set; } = [];
 
     public static ScorebugLayout Default() => new()
@@ -74,14 +91,40 @@ public sealed class ScorebugCatalog
     {
         Layout.Elements ??= [];
         if (Layout.Elements.Count > 100) Layout.Elements = Layout.Elements.Take(100).ToList();
+        Layout.Width = (int)Math.Clamp(Layout.Width, 320, 7680);
+        Layout.Height = (int)Math.Clamp(Layout.Height, 240, 7680);
         foreach (var item in Layout.Elements)
         {
-            item.X = Math.Clamp(double.IsFinite(item.X) ? item.X : 0, 0, 1280);
-            item.Y = Math.Clamp(double.IsFinite(item.Y) ? item.Y : 0, 0, 720);
-            item.Width = Math.Clamp(double.IsFinite(item.Width) ? item.Width : 100, 24, 1280);
-            item.Height = Math.Clamp(double.IsFinite(item.Height) ? item.Height : 50, 24, 720);
-            item.FontSize = Math.Clamp(double.IsFinite(item.FontSize) ? item.FontSize : 24, 8, 180);
+            item.X = Math.Clamp(double.IsFinite(item.X) ? item.X : 0, 0, Layout.Width);
+            item.Y = Math.Clamp(double.IsFinite(item.Y) ? item.Y : 0, 0, Layout.Height);
+            item.Width = Math.Clamp(double.IsFinite(item.Width) ? item.Width : 100, 24, Layout.Width);
+            item.Height = Math.Clamp(double.IsFinite(item.Height) ? item.Height : 50, 24, Layout.Height);
+            item.FontSize = Math.Clamp(double.IsFinite(item.FontSize) ? item.FontSize : 24, 8, 480);
             item.Opacity = Math.Clamp(double.IsFinite(item.Opacity) ? item.Opacity : 1, 0, 1);
         }
+    }
+
+    /// <summary>Re-sizes the canvas and scales every element with it, so a layout survives a move to 4K.</summary>
+    public void Resize(int width, int height)
+    {
+        width = (int)Math.Clamp(width, 320, 7680);
+        height = (int)Math.Clamp(height, 240, 7680);
+        if (width == Layout.Width && height == Layout.Height) return;
+        var scaleX = (double)width / Layout.Width;
+        var scaleY = (double)height / Layout.Height;
+        var scale = Math.Min(scaleX, scaleY);
+        Update(layout =>
+        {
+            foreach (var item in layout.Elements)
+            {
+                item.X *= scaleX;
+                item.Y *= scaleY;
+                item.Width *= scaleX;
+                item.Height *= scaleY;
+                item.FontSize *= scale;
+            }
+            layout.Width = width;
+            layout.Height = height;
+        });
     }
 }

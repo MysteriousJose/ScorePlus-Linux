@@ -12,15 +12,19 @@ public sealed class ScorebugCanvasView : Grid
     readonly GameEngine _engine;
     readonly Func<GameState> _stateProvider;
     readonly bool _live;
-    readonly Canvas _canvas = new() { Width=1280, Height=720, Background=new SolidColorBrush(Color.FromRgb(9,16,24)) };
+    readonly Canvas _canvas = new() { Background=new SolidColorBrush(Color.FromRgb(9,16,24)), ClipToBounds=true };
+    readonly MediaPlayback? _playback;
+    readonly bool _muteVideo;
     readonly Dictionary<string, (FrameworkElement Host, FrameworkElement Content)> _visuals = [];
+    readonly List<VideoSurface> _videoSurfaces = [];
     readonly Dictionary<string, (ScorebugAnimation Animation, double Opacity)> _animations = [];
     readonly Dictionary<string,string> _backgrounds = [];
     readonly Dictionary<string,bool> _transparentStates = [];
 
-    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null)
+    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true)
     {
         _catalog=catalog;_engine=engine;_live=stateProvider is null;_stateProvider=stateProvider??(()=>_engine.State);
+        _playback=playback;_muteVideo=muteVideo;
         Children.Add(new Viewbox { Stretch=Stretch.Uniform, Child=_canvas });
         _catalog.Changed+=Rebuild;
         if(stateProvider is null)_engine.Changed+=UpdateValues;else _engine.Changed+=UpdateClockValues;
@@ -30,15 +34,20 @@ public sealed class ScorebugCanvasView : Grid
     public void Rebuild()
     {
         if(!Dispatcher.CheckAccess()){Dispatcher.BeginInvoke(Rebuild);return;}
+        foreach(var surface in _videoSurfaces) surface.Dispose();
+        _videoSurfaces.Clear();
+        _canvas.Width=_catalog.Layout.Width;_canvas.Height=_catalog.Layout.Height;
         _canvas.Children.Clear();_visuals.Clear();_animations.Clear();_backgrounds.Clear();_transparentStates.Clear();
         foreach(var item in _catalog.Layout.Elements)
         {
-            var content=ScorebugRender.CreateContent(item,_stateProvider);
+            var content=ScorebugRender.CreateContent(item,_stateProvider,_playback,_muteVideo);
+            if(content is VideoSurface video) _videoSurfaces.Add(video);
             var host=new Border
             {
                 Width=item.Width,
                 Height=item.Height,
                 Opacity=item.Opacity,
+                ClipToBounds=true,
                 Background=ScorebugRender.HostBackground(item),
                 Child=content,
                 Visibility=item.Visible?Visibility.Visible:Visibility.Collapsed
@@ -81,6 +90,10 @@ public sealed class ScorebugCanvasView : Grid
         state.ShotClockSeconds=_engine.State.ShotClockSeconds;
         state.ClockRunning=_engine.State.ClockRunning;
         state.ShotClockRunning=_engine.State.ShotClockRunning;
+        state.PlayClockSeconds=_engine.State.PlayClockSeconds;
+        state.PlayClockRunning=_engine.State.PlayClockRunning;
+        state.TimeoutClockSeconds=_engine.State.TimeoutClockSeconds;
+        state.TimeoutClockRunning=_engine.State.TimeoutClockRunning;
         UpdateValues();
     }
 
@@ -109,10 +122,16 @@ public sealed class ScorebugCanvasView : Grid
                 var text=ScoreboardTemplates.Bind(item.Content,state);
                 if(block.Text!=text)block.Text=text;
             }
-            else ScorebugRender.ApplyToContent(visual.Content,item);
+            else if(visual.Content is not VideoSurface) ScorebugRender.ApplyToContent(visual.Content,item);
             ApplyAnimation(item,visual.Host);
         }
     }
 
-    public void Dispose(){_catalog.Changed-=Rebuild;if(_live)_engine.Changed-=UpdateValues;else _engine.Changed-=UpdateClockValues;}
+    public void Dispose()
+    {
+        _catalog.Changed-=Rebuild;
+        if(_live)_engine.Changed-=UpdateValues;else _engine.Changed-=UpdateClockValues;
+        foreach(var surface in _videoSurfaces) surface.Dispose();
+        _videoSurfaces.Clear();
+    }
 }

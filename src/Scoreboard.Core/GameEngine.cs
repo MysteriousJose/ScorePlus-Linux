@@ -49,6 +49,8 @@ public sealed class GameState
     public int AwayFouls { get; set; }
     public bool HomePossession { get; set; } = true;
     public int ClockSeconds { get; set; } = 720;
+    public int PlayClockSeconds { get; set; } = 40;
+    public int TimeoutClockSeconds { get; set; } = 60;
     public int PeriodSeconds { get; set; } = 720;
     public int TotalPeriods { get; set; } = 4;
     public string PeriodLabel { get; set; } = "Quarter";
@@ -78,6 +80,8 @@ public sealed class GameState
     public List<GameStat> Stats { get; set; } = [];
     public bool ClockRunning { get; set; }
     public bool ShotClockRunning { get; set; }
+    public bool PlayClockRunning { get; set; }
+    public bool TimeoutClockRunning { get; set; }
     public bool ClockCountsUp { get; set; }
     public DateTimeOffset SavedAt { get; set; } = DateTimeOffset.Now;
     public List<GameEvent> Events { get; set; } = [];
@@ -102,7 +106,7 @@ public sealed class GameEngine
     public void NewGame(string sportId)
     {
         var sport = Sports.Find(sportId) ?? SportDefinition.BuiltIns[^1];
-        State = new GameState { SportId = sport.Id, ClockSeconds = sport.PeriodSeconds, PeriodSeconds = sport.PeriodSeconds, TotalPeriods = sport.Periods, PeriodLabel = sport.Unit, ScoringOptions = sport.ScoringOptions.ToArray(), ClockCountsUp = sport.CountUp, HomeTimeouts = sport.Timeouts, AwayTimeouts = sport.Timeouts };
+        State = new GameState { SportId = sport.Id, ClockSeconds = sport.PeriodSeconds, PeriodSeconds = sport.PeriodSeconds, TotalPeriods = sport.Periods, PeriodLabel = sport.Unit, ScoringOptions = sport.ScoringOptions.ToArray(), ClockCountsUp = sport.CountUp, HomeTimeouts = sport.Timeouts, AwayTimeouts = sport.Timeouts, PlayClockSeconds = 40, TimeoutClockSeconds = 60 };
         _undo.Clear(); _lastTick = _watch.ElapsedTicks; Changed?.Invoke();
     }
 
@@ -155,8 +159,18 @@ public sealed class GameEngine
             State.ShotClockSeconds = Math.Max(0, State.ShotClockSeconds - elapsed);
             if (State.ShotClockSeconds == 0) { State.ShotClockRunning = false; Log("Shot clock", "Shot clock expired"); }
         }
+        if (State.PlayClockRunning)
+        {
+            State.PlayClockSeconds = Math.Max(0, State.PlayClockSeconds - elapsed);
+            if (State.PlayClockSeconds == 0) { State.PlayClockRunning = false; Log("Play clock", "Play clock expired"); }
+        }
+        if (State.TimeoutClockRunning)
+        {
+            State.TimeoutClockSeconds = Math.Max(0, State.TimeoutClockSeconds - elapsed);
+            if (State.TimeoutClockSeconds == 0) { State.TimeoutClockRunning = false; Log("Timeout clock", "Timeout clock expired"); }
+        }
         // Only notify the UI when a running clock actually advanced, so idle ticks cost nothing.
-        if (wasRunning || State.ClockRunning || State.ShotClockRunning) Changed?.Invoke();
+        if (wasRunning || State.ClockRunning || State.ShotClockRunning || State.PlayClockRunning || State.TimeoutClockRunning) Changed?.Invoke();
     }
 
     public void NextPeriod()
@@ -165,7 +179,73 @@ public sealed class GameEngine
         Log("Period", $"{State.PeriodLabel} {State.Period}"); Changed?.Invoke();
     }
 
+    public void SetPeriod(int period)
+    {
+        var value = Math.Clamp(period, 1, 99);
+        if (State.Period == value) return;
+        SaveUndo("Period"); State.Period = value;
+        Log("Period", $"{State.PeriodLabel} {State.Period}"); Changed?.Invoke();
+    }
+
+    public void PreviousPeriod()
+    {
+        if (State.Period <= 1) return;
+        SaveUndo("Period"); State.Period--; State.ClockSeconds = State.PeriodSeconds; State.ClockRunning = false;
+        Log("Period", $"{State.PeriodLabel} {State.Period}"); Changed?.Invoke();
+    }
+
     public void TogglePossession() { SaveUndo("Possession"); State.HomePossession = !State.HomePossession; Log("Possession", $"{(State.HomePossession ? State.HomeTeam : State.AwayTeam)} possession"); Changed?.Invoke(); }
+
+    public void SetPossession(bool home) { if (State.HomePossession == home) return; SaveUndo("Possession"); State.HomePossession = home; Log("Possession", $"{(home ? State.HomeTeam : State.AwayTeam)} possession"); Changed?.Invoke(); }
+
+    public void SetDown(int down) { if (State.SportId != "football") return; var value = Math.Clamp(down, 1, 4); if (State.Down == value) return; SaveUndo("Down"); State.Down = value; Log("Down", $"Down {State.Down}, {State.YardsToGo} to go"); Changed?.Invoke(); }
+
+    public void SetTimeoutCount(bool home, int value)
+    {
+        var clamped = Math.Clamp(value, 0, 99);
+        if ((home ? State.HomeTimeouts : State.AwayTimeouts) == clamped) return;
+        SaveUndo("Timeouts"); if (home) State.HomeTimeouts = clamped; else State.AwayTimeouts = clamped;
+        Log("Timeout", $"{(home ? State.HomeTeam : State.AwayTeam)} timeouts {clamped}"); Changed?.Invoke();
+    }
+
+    public void TogglePlayClock()
+    {
+        if (State.SportId != "football") return;
+        Tick(); SaveUndo("Play clock"); State.PlayClockRunning = !State.PlayClockRunning; _lastTick = _watch.ElapsedTicks;
+        Log("Play clock", State.PlayClockRunning ? "Play clock started" : "Play clock stopped"); Changed?.Invoke();
+    }
+
+    public void SetPlayClock(int seconds)
+    {
+        if (State.SportId != "football") return;
+        Tick(); SaveUndo("Play clock"); State.PlayClockSeconds = Math.Clamp(seconds, 0, 99); _lastTick = _watch.ElapsedTicks;
+        Log("Play clock", $"Play clock set to {State.PlayClockSeconds}"); Changed?.Invoke();
+    }
+
+    public void ResetPlayClock(int seconds = 40)
+    {
+        if (State.SportId != "football") return;
+        Tick(); SaveUndo("Play clock reset"); State.PlayClockSeconds = Math.Clamp(seconds, 1, 99); State.PlayClockRunning = false; _lastTick = _watch.ElapsedTicks;
+        Log("Play clock", $"Play clock reset to {State.PlayClockSeconds}"); Changed?.Invoke();
+    }
+
+    public void ToggleTimeoutClock()
+    {
+        Tick(); SaveUndo("Timeout clock"); State.TimeoutClockRunning = !State.TimeoutClockRunning; _lastTick = _watch.ElapsedTicks;
+        Log("Timeout clock", State.TimeoutClockRunning ? "Timeout clock started" : "Timeout clock stopped"); Changed?.Invoke();
+    }
+
+    public void SetTimeoutClock(int seconds)
+    {
+        Tick(); SaveUndo("Timeout clock"); State.TimeoutClockSeconds = Math.Clamp(seconds, 0, 599); _lastTick = _watch.ElapsedTicks;
+        Log("Timeout clock", $"Timeout clock set to {FormatClock(State.TimeoutClockSeconds)}"); Changed?.Invoke();
+    }
+
+    public void ResetTimeoutClock(int seconds = 60)
+    {
+        Tick(); SaveUndo("Timeout clock reset"); State.TimeoutClockSeconds = Math.Clamp(seconds, 1, 599); State.TimeoutClockRunning = false; _lastTick = _watch.ElapsedTicks;
+        Log("Timeout clock", $"Timeout clock reset to {FormatClock(State.TimeoutClockSeconds)}"); Changed?.Invoke();
+    }
     public void AdvanceDown() { if (State.SportId != "football") return; SaveUndo("Down"); if (State.Down >= 4) { State.Down=1; State.YardsToGo=10; State.YardsToGoal=Math.Max(0,State.YardsToGoal-State.YardsToGo); } else State.Down++; Log("Down", $"Down {State.Down}, {State.YardsToGo} to go"); Changed?.Invoke(); }
     public void PreviousDown() { if (State.SportId != "football") return; SaveUndo("Previous down"); if (State.Down > 1) State.Down--; Log("Down", $"Down {State.Down}, {State.YardsToGo} to go"); Changed?.Invoke(); }
     public void NewSeries() { if (State.SportId != "football") return; SaveUndo("New series"); State.Down = 1; State.YardsToGo = 10; Log("Series", "New series · 1st & 10"); Changed?.Invoke(); }
@@ -177,6 +257,7 @@ public sealed class GameEngine
     public void BaseballOut() { if(State.SportId!="baseball")return; SaveUndo("Out"); State.Outs++; State.Balls=0; State.Strikes=0; Log("Out","Out recorded · count reset");Changed?.Invoke(); }
     public void BaseballHit(bool home) { if(State.SportId!="baseball")return; SaveUndo("Hit"); if(home)State.HomeHits++;else State.AwayHits++; State.Balls=0;State.Strikes=0;Log("Hit",$"{(home?State.HomeTeam:State.AwayTeam)} hit");Changed?.Invoke(); }
     public void Timeout(bool home) { SaveUndo("Timeout"); if (home) State.HomeTimeouts = Math.Max(0, State.HomeTimeouts - 1); else State.AwayTimeouts = Math.Max(0, State.AwayTimeouts - 1); Log("Timeout", $"{(home ? State.HomeTeam : State.AwayTeam)} timeout"); Changed?.Invoke(); }
+    public void AdjustTimeouts(bool home, int delta) => SetTimeoutCount(home, (home ? State.HomeTimeouts : State.AwayTimeouts) + delta);
     public void AddFoul(bool home) { if(State.SportId!="basketball")return; SaveUndo("Foul"); if (home) State.HomeFouls++; else State.AwayFouls++; Log("Foul", $"{(home ? State.HomeTeam : State.AwayTeam)} foul"); Changed?.Invoke(); }
     public void SetShotClock(int seconds) { if(State.SportId!="basketball")return; SaveUndo("Shot clock");State.ShotClockSeconds=Math.Clamp(seconds,0,99);State.ShotClockRunning=false;Log("Shot clock",$"Shot clock set to {State.ShotClockSeconds}");Changed?.Invoke(); }
     public void ToggleShotClock() { if(State.SportId!="basketball")return;SaveUndo("Shot clock");State.ShotClockRunning=!State.ShotClockRunning;_lastTick=_watch.ElapsedTicks;Log("Shot clock",State.ShotClockRunning?"Shot clock started":"Shot clock stopped");Changed?.Invoke(); }
@@ -210,6 +291,18 @@ public sealed class GameEngine
         Log(stat.Name, $"{updated.Name}: {updated.Value}"); Changed?.Invoke();
     }
 
+    /// <summary>Sets a custom stat to an exact value, for the typed override in the control panel.</summary>
+    public void SetStat(string id, int value)
+    {
+        var stat = State.Stats.FirstOrDefault(s => s.Id == id); if (stat is null) return;
+        var clamped = Math.Max(0, value);
+        if (stat.Value == clamped) return;
+        SaveUndo(stat.Name); var index = State.Stats.IndexOf(stat);
+        var updated = stat with { Value = clamped };
+        State.Stats[index] = updated;
+        Log(stat.Name, $"{updated.Name}: {updated.Value}"); Changed?.Invoke();
+    }
+
     public bool Undo()
     {
         if (_undo.Count == 0) return false;
@@ -236,18 +329,41 @@ public sealed class GameEngine
         _undo.Clear(); _lastTick = _watch.ElapsedTicks; Changed?.Invoke();
     }
 
+    /// <summary>
+    /// Everything that is staged until Update Output is pressed. Score and the running clocks are
+    /// deliberately excluded: those publish live, so they never mark the output as out of date.
+    /// </summary>
+    public static string StagedSignature(GameState s) => string.Join('|',
+        s.SportId,
+        s.Period, s.TotalPeriods, s.PeriodLabel, s.QuarterDisplayFormat,
+        s.HomeTimeouts, s.AwayTimeouts, s.HomeFouls, s.AwayFouls, s.HomePossession,
+        s.Down, s.YardsToGo, s.YardsToGoal,
+        s.HomeYellowCards, s.AwayYellowCards, s.HomeRedCards, s.AwayRedCards,
+        s.Balls, s.Strikes, s.Outs, s.HomeHits, s.AwayHits,
+        s.HomeYards, s.AwayYards, s.HomeTurnovers, s.AwayTurnovers,
+        s.HomeShots, s.AwayShots, s.HomeCorners, s.AwayCorners,
+        string.Join(",", s.Stats.Select(x => $"{x.Name}={x.Value}")));
+
     public string ExportJson() => JsonSerializer.Serialize(State, JsonOptions);
     public GameState CloneState() => JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(State, JsonOptions), JsonOptions)!;
     public void LoadFromState(GameState state){State=JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state,JsonOptions),JsonOptions)!;_undo.Clear();_lastTick=_watch.ElapsedTicks;Changed?.Invoke();}
     public bool UpdateLiveScoreClock(GameState source)
     {
         if (State.HomeScore == source.HomeScore && State.AwayScore == source.AwayScore &&
+            State.HomeTeam == source.HomeTeam && State.AwayTeam == source.AwayTeam &&
+            State.HomeAbbreviation == source.HomeAbbreviation && State.AwayAbbreviation == source.AwayAbbreviation &&
             State.ClockSeconds == source.ClockSeconds && State.ClockRunning == source.ClockRunning &&
             State.ClockCountsUp == source.ClockCountsUp && State.ShotClockSeconds == source.ShotClockSeconds &&
-            State.ShotClockRunning == source.ShotClockRunning) return false;
+            State.ShotClockRunning == source.ShotClockRunning &&
+            State.PlayClockSeconds == source.PlayClockSeconds && State.PlayClockRunning == source.PlayClockRunning &&
+            State.TimeoutClockSeconds == source.TimeoutClockSeconds && State.TimeoutClockRunning == source.TimeoutClockRunning) return false;
         State.HomeScore=source.HomeScore;State.AwayScore=source.AwayScore;
+        State.HomeTeam=source.HomeTeam;State.AwayTeam=source.AwayTeam;
+        State.HomeAbbreviation=source.HomeAbbreviation;State.AwayAbbreviation=source.AwayAbbreviation;
         State.ClockSeconds=source.ClockSeconds;State.ClockRunning=source.ClockRunning;State.ClockCountsUp=source.ClockCountsUp;
         State.ShotClockSeconds=source.ShotClockSeconds;State.ShotClockRunning=source.ShotClockRunning;
+        State.PlayClockSeconds=source.PlayClockSeconds;State.PlayClockRunning=source.PlayClockRunning;
+        State.TimeoutClockSeconds=source.TimeoutClockSeconds;State.TimeoutClockRunning=source.TimeoutClockRunning;
         Changed?.Invoke();
         return true;
     }

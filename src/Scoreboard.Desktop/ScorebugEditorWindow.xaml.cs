@@ -13,6 +13,10 @@ public partial class ScorebugEditorWindow : Window
 {
     readonly ScorebugCatalog _catalog;
     readonly GameEngine _engine;
+    readonly MediaPlayback? _playback;
+    readonly string _theme;
+    readonly List<VideoSurface> _videoSurfaces = [];
+    bool _canvasLoading;
     readonly System.Windows.Threading.DispatcherTimer _propertySave = new() { Interval=TimeSpan.FromMilliseconds(350) };
     readonly Dictionary<string,(Border Host, FrameworkElement Content, Border Handle)> _visuals = [];
     readonly Dictionary<string,(ScorebugElementKind Kind, ScorebugShape Shape, string? Image, ScorebugAnimation Animation, double Opacity)> _applied = [];
@@ -25,11 +29,18 @@ public partial class ScorebugEditorWindow : Window
     Point _dragOffset;
     Point _listStart;
 
-    public ScorebugEditorWindow(ScorebugCatalog catalog, GameEngine engine)
+    public ScorebugEditorWindow(ScorebugCatalog catalog, GameEngine engine, MediaPlayback? playback=null, string theme="Dark")
     {
-        InitializeComponent(); _catalog=catalog; _engine=engine;
+        InitializeComponent(); _catalog=catalog; _engine=engine; _playback=playback; _theme=theme;
+        ThemeManager.Apply(this,theme);
         AnimationInput.ItemsSource=Enum.GetValues<ScorebugAnimation>();
         ShapeInput.ItemsSource=Enum.GetValues<ScorebugShape>();
+        CanvasPreset.ItemsSource=ScorebugLayout.SizePresets.Select(p=>p.Name).ToArray();
+        _canvasLoading=true;
+        CanvasPreset.SelectedIndex=PresetIndex(catalog.Layout.Width,catalog.Layout.Height);
+        CanvasWidthInput.Text=catalog.Layout.Width.ToString();
+        CanvasHeightInput.Text=catalog.Layout.Height.ToString();
+        _canvasLoading=false;
         _propertySave.Tick+=(_,_)=>{_propertySave.Stop();SaveProperties();RefreshAllVisuals();};
         _catalog.Changed += Render;
         _engine.Changed += RefreshBoundText;
@@ -48,6 +59,20 @@ public partial class ScorebugEditorWindow : Window
         Layers.ItemsSource=_catalog.Layout.Elements.Select(e=>new LayerItem(e)).ToArray();
         Layers.SelectedItem=Layers.Items.Cast<LayerItem>().FirstOrDefault(x=>x.Element.Id==_selectedId);
         _syncingLayers=false;
+        foreach(var surface in _videoSurfaces) surface.Dispose();
+        _videoSurfaces.Clear();
+        DesignCanvas.Width=_catalog.Layout.Width; DesignCanvas.Height=_catalog.Layout.Height;
+        // Elements (video especially) must never paint outside the artwork they belong to.
+        DesignCanvas.ClipToBounds=true;
+        CanvasInfo.Text=$"{_catalog.Layout.Width} × {_catalog.Layout.Height} · drag elements to reposition · bindings update live";
+        if(!_canvasLoading)
+        {
+            _canvasLoading=true;
+            CanvasWidthInput.Text=_catalog.Layout.Width.ToString();
+            CanvasHeightInput.Text=_catalog.Layout.Height.ToString();
+            CanvasPreset.SelectedIndex=PresetIndex(_catalog.Layout.Width,_catalog.Layout.Height);
+            _canvasLoading=false;
+        }
         DesignCanvas.Children.Clear(); _visuals.Clear(); _applied.Clear();
         foreach(var item in _catalog.Layout.Elements) DesignCanvas.Children.Add(CreateVisual(item));
         _loading=false;
@@ -56,7 +81,8 @@ public partial class ScorebugEditorWindow : Window
 
     Border CreateVisual(ScorebugElement item)
     {
-        var content=ScorebugRender.CreateContent(item,()=>_engine.State);
+        var content=ScorebugRender.CreateContent(item,()=>_engine.State,_playback,true);
+        if(content is VideoSurface videoSurface)_videoSurfaces.Add(videoSurface);
         var handle=new Border
         {
             Width=16, Height=16, Background=Brushes.DeepSkyBlue, BorderBrush=Brushes.White,
@@ -69,12 +95,15 @@ public partial class ScorebugEditorWindow : Window
         handle.PreviewMouseLeftButtonDown+=Resize_MouseDown;
         handle.PreviewMouseMove+=Resize_MouseMove;
         handle.PreviewMouseLeftButtonUp+=Resize_MouseUp;
+        // Clip the content to its own box so a playing video cannot bleed over neighbouring elements.
+        var clipped=new Border{Child=content,ClipToBounds=true};
         var stack=new Grid();
-        stack.Children.Add(content);
+        stack.Children.Add(clipped);
         stack.Children.Add(handle);
         var host=new Border
         {
             Width=item.Width, Height=item.Height, Background=ScorebugRender.HostBackground(item),
+            ClipToBounds=true,
             Opacity=item.Opacity, Cursor=Cursors.SizeAll, Tag=item, Child=stack,
             BorderBrush=item.Id==_selectedId?Brushes.DeepSkyBlue:Brushes.Transparent,
             BorderThickness=new Thickness(item.Id==_selectedId?2:1)
@@ -112,7 +141,7 @@ public partial class ScorebugEditorWindow : Window
             if(!_visuals.TryGetValue(item.Id,out var visual))continue;
             if(visual.Content is TextBlock)
                 ScorebugRender.ApplyToContent(visual.Content,item,ScoreboardTemplates.Bind(item.Content,_engine.State));
-            else
+            else if(visual.Content is not VideoSurface)
                 ScorebugRender.ApplyToContent(visual.Content,item);
             visual.Host.Width=item.Width; visual.Host.Height=item.Height;
             visual.Host.Background=ScorebugRender.HostBackground(item);
@@ -148,15 +177,17 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,ColorInput,BackgroundInput,AnimationInput,ShapeInput,VisibleInput,TransparentBackgroundInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,ColorInput,BackgroundInput,AnimationInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput})
             control.IsEnabled=has;
         ShapePanel.Visibility=e?.Kind==ScorebugElementKind.Shape?Visibility.Visible:Visibility.Collapsed;
+        VideoPanel.Visibility=e?.Kind==ScorebugElementKind.Video?Visibility.Visible:Visibility.Collapsed;
         if(has)
         {
             NameInput.Text=e!.Name; ContentInput.Text=e.Content; XInput.Text=e.X.ToString("0"); YInput.Text=e.Y.ToString("0");
             WidthInput.Text=e.Width.ToString("0"); HeightInput.Text=e.Height.ToString("0"); FontInput.Text=e.FontSize.ToString("0");
             ColorInput.Text=e.Foreground; BackgroundInput.Text=e.Background; AnimationInput.SelectedItem=e.Animation; ShapeInput.SelectedItem=e.Shape;
             VisibleInput.IsChecked=e.Visible; TransparentBackgroundInput.IsChecked=e.TransparentBackground;
+            MediaTagInput.Text=e.MediaTag;
             ImagePathText.Text=e.ImagePath??"No image selected";
         }
         _loading=false;
@@ -191,9 +222,11 @@ public partial class ScorebugEditorWindow : Window
         var animation=AnimationInput.SelectedItem is ScorebugAnimation a?a:item.Animation;
         var shape=ShapeInput.SelectedItem is ScorebugShape s?s:item.Shape;
         var visible=VisibleInput.IsChecked==true; var transparent=TransparentBackgroundInput.IsChecked==true;
+        var mediaTag=MediaTagInput.Text.Trim();
         if(item.Name==name&&item.Content==content&&(!xOk||item.X==x)&&(!yOk||item.Y==y)&&(!wOk||item.Width==w)&&(!hOk||item.Height==h)
             &&(!fOk||item.FontSize==f)&&(!foregroundOk||item.Foreground==ColorInput.Text)&&(!backgroundOk||item.Background==BackgroundInput.Text)
-            &&item.Animation==animation&&item.Shape==shape&&item.Visible==visible&&item.TransparentBackground==transparent)return;
+            &&item.Animation==animation&&item.Shape==shape&&item.Visible==visible&&item.TransparentBackground==transparent
+            &&item.MediaTag==mediaTag)return;
         var id=item.Id;
         _catalog.Update(layout=>{
             var target=layout.Elements.FirstOrDefault(z=>z.Id==id); if(target is null)return;
@@ -204,14 +237,16 @@ public partial class ScorebugEditorWindow : Window
             if(backgroundOk)target.Background=BackgroundInput.Text;
             target.Animation=animation; target.Shape=shape;
             target.Visible=visible; target.TransparentBackground=transparent;
+            target.MediaTag=mediaTag;
             if(target.Kind==ScorebugElementKind.Logo&&string.IsNullOrWhiteSpace(target.ImagePath))target.Content=$"LOGO · {target.Name}";
         });
     }
 
     static bool TryColor(string value,out Color color){try{color=(Color)ColorConverter.ConvertFromString(value)!;return true;}catch{color=Colors.White;return false;}}
 
-    void AddText_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New text",Content="EDIT TEXT",X=480,Y=470});
-    void AddLogo_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New logo",Kind=ScorebugElementKind.Logo,Content="LOGO",X=520,Y=470,Width=140,Height=90});
+    // New artwork starts with no background box so it lands clean on the canvas; turn one on in the properties if needed.
+    void AddText_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New text",Content="EDIT TEXT",X=480,Y=470,TransparentBackground=true});
+    void AddLogo_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New logo",Kind=ScorebugElementKind.Logo,Content="LOGO",X=520,Y=470,Width=140,Height=90,TransparentBackground=true});
     void AddShape_Click(object sender,RoutedEventArgs e)
     {
         var picker=new Window{Title="Add shape",Width=340,Height=190,ResizeMode=ResizeMode.NoResize,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
@@ -221,22 +256,72 @@ public partial class ScorebugEditorWindow : Window
         var add=new Button{Content="Add shape",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right};
         add.Click+=(_,_)=>{
             var kind=(ScorebugShape)(shape.SelectedItem??ScorebugShape.Rectangle);
-            Add(new ScorebugElement{Name=$"New {kind.ToString().ToLowerInvariant()}",Kind=ScorebugElementKind.Shape,Shape=kind,Content="",X=450,Y=470,Width=kind==ScorebugShape.Rectangle?200:140,Height=kind==ScorebugShape.Rectangle?100:140});
+            Add(new ScorebugElement{Name=$"New {kind.ToString().ToLowerInvariant()}",Kind=ScorebugElementKind.Shape,Shape=kind,Content="",X=450,Y=470,Width=kind==ScorebugShape.Rectangle?200:140,Height=kind==ScorebugShape.Rectangle?100:140,TransparentBackground=true});
             picker.DialogResult=true; picker.Close();
         };
-        panel.Children.Add(shape); panel.Children.Add(add); picker.Content=panel; picker.ShowDialog();
+        panel.Children.Add(shape); panel.Children.Add(add); picker.Content=panel; ThemeManager.Apply(picker,_theme); picker.ShowDialog();
     }
 
     void AddData_Click(object sender,RoutedEventArgs e)
     {
-        var choices=new List<(string,string)>{("Football · ball spot","{{BALL_SPOT}}"),("Football · down & distance","{{DOWNS}}"),("Football · yards to go","{{YARDS_TO_GO}}"),("Football · team yards","{{YARDS}}"),("Football · turnovers","{{TURNOVERS}}"),("Basketball · shot clock","{{SHOT_CLOCK}}"),("Basketball · fouls","{{BASKETBALL_FOULS}}"),("Baseball · count & outs","{{BASEBALL_COUNT}}"),("Baseball · hits","{{HITS}}"),("Soccer · cards","{{SOCCER_CARDS}}"),("Soccer · shots","{{SHOTS}}"),("Soccer · corners","{{CORNERS}}"),("Sport name","{{SPORT}}")};
+        var choices=new List<(string,string)>{("Football · ball spot","{{BALL_SPOT}}"),("Football · down & distance","{{DOWNS}}"),("Football · yards to go","{{YARDS_TO_GO}}"),("Football · team yards","{{YARDS}}"),("Football · turnovers","{{TURNOVERS}}"),("Football · play clock","{{PLAY_CLOCK}}"),("Football · timeout clock","{{TIMEOUT_CLOCK}}"),("Football · down","{{DOWN}}"),("Football · to go","{{TO_GO}}"),("Football · ball on","{{BALL_ON}}"),("Timeouts left","{{TIMEOUTS}}"),("Possession","{{POSSESSION}}"),("Basketball · shot clock","{{SHOT_CLOCK}}"),("Basketball · fouls","{{BASKETBALL_FOULS}}"),("Baseball · count & outs","{{BASEBALL_COUNT}}"),("Baseball · hits","{{HITS}}"),("Soccer · cards","{{SOCCER_CARDS}}"),("Soccer · shots","{{SHOTS}}"),("Soccer · corners","{{CORNERS}}"),("Sport name","{{SPORT}}")};
         foreach(var stat in _engine.State.Stats)choices.Add(($"Custom stat · {stat.Name}",$"{{{{STAT:{stat.Name}}}}}"));
         choices.Add(("Custom stat · any name","{{STAT:Name}}"));
         var picker=new Window{Title="Add sport data",Width=380,Height=470,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
         var list=new ListBox{ItemsSource=choices.Select(x=>x.Item1).ToArray(),Margin=new Thickness(10)};
-        var add=new Button{Content="Add selected data",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right};
-        add.Click+=(_,_)=>{if(list.SelectedIndex<0)return;var token=choices[list.SelectedIndex].Item2;Add(new ScorebugElement{Name=choices[list.SelectedIndex].Item1,Content=token,X=420,Y=470});picker.DialogResult=true;picker.Close();};
-        picker.Content=new DockPanel{Children={add,list}}; DockPanel.SetDock(add,Dock.Bottom); picker.ShowDialog();
+        var add=new Button{Content="Add selected data",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right};            add.Click+=(_,_)=>{if(list.SelectedIndex<0)return;var token=choices[list.SelectedIndex].Item2;Add(new ScorebugElement{Name=choices[list.SelectedIndex].Item1,Content=token,X=420,Y=470,TransparentBackground=true});picker.DialogResult=true;picker.Close();};
+        picker.Content=new DockPanel{Children={add,list}}; DockPanel.SetDock(add,Dock.Bottom); ThemeManager.Apply(picker,_theme); picker.ShowDialog();
+    }
+
+    /// <summary>A video box that only shows clips carrying its tag.</summary>
+    void AddVideo_Click(object sender,RoutedEventArgs e)
+    {
+        var picker=new Window{Title="Add video element",Width=380,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner,Background=new SolidColorBrush(Color.FromRgb(23,28,37)),Foreground=Brushes.White};
+        var panel=new StackPanel{Margin=new Thickness(14)};
+        panel.Children.Add(new TextBlock{Text="Which media tag should play inside this element?",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(4,0,4,8)});
+        var tag=new ComboBox{IsEditable=true,Text=MediaLibrary.DefaultTag,ItemsSource=MediaLibrary.SuggestedTags.ToArray(),Margin=new Thickness(4)};
+        panel.Children.Add(tag);
+        panel.Children.Add(new TextBlock{Text="Only clips assigned this tag appear. Leave it empty to show whichever clip is playing.",TextWrapping=TextWrapping.Wrap,FontSize=11,Margin=new Thickness(4,6,4,0)});
+        var add=new Button{Content="Add video box",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(4,12,4,0)};
+        add.Click+=(_,_)=>{
+            var width=Math.Round(_catalog.Layout.Width*0.36); var height=Math.Round(width*9/16);
+            Add(new ScorebugElement{
+                Name=$"Video · {MediaLibrary.NormalizeTag(tag.Text)}",Kind=ScorebugElementKind.Video,Content="",
+                MediaTag=MediaLibrary.NormalizeTag(tag.Text),
+                X=Math.Round((_catalog.Layout.Width-width)/2),Y=Math.Round((_catalog.Layout.Height-height)/2),
+                Width=width,Height=height,TransparentBackground=true});
+            picker.DialogResult=true; picker.Close();
+        };
+        panel.Children.Add(add); picker.Content=panel; ThemeManager.Apply(picker,_theme); picker.ShowDialog();
+    }
+
+    static int PresetIndex(int width,int height)
+    {
+        var index=Array.FindIndex(ScorebugLayout.SizePresets,p=>p.Width==width&&p.Height==height);
+        return index<0?0:index;
+    }
+
+    void CanvasPreset_Changed(object sender,SelectionChangedEventArgs e)
+    {
+        if(_canvasLoading||CanvasPreset.SelectedIndex<0)return;
+        var preset=ScorebugLayout.SizePresets[CanvasPreset.SelectedIndex];
+        ApplyCanvasSize(preset.Width,preset.Height);
+    }
+
+    void CanvasResize_Click(object sender,RoutedEventArgs e)
+    {
+        var width=int.TryParse(CanvasWidthInput.Text,out var w)?w:_catalog.Layout.Width;
+        var height=int.TryParse(CanvasHeightInput.Text,out var h)?h:_catalog.Layout.Height;
+        ApplyCanvasSize(width,height);
+    }
+
+    /// <summary>Changing the canvas size scales every element with it, so a 720p layout survives a move to 4K.</summary>
+    void ApplyCanvasSize(int width,int height)
+    {
+        if(width<320||height<240)return;
+        _catalog.Resize(width,height);
+        Render();
+        Fit_Click(this,new RoutedEventArgs());
     }
 
     void Add(ScorebugElement item)
@@ -295,8 +380,8 @@ public partial class ScorebugEditorWindow : Window
     {
         if(_resizing||_dragElement is null||e.LeftButton!=MouseButtonState.Pressed)return;
         var p=e.GetPosition(DesignCanvas);
-        var x=Math.Clamp(p.X-_dragOffset.X,0,Math.Max(0,1280-_dragElement.Width));
-        var y=Math.Clamp(p.Y-_dragOffset.Y,0,Math.Max(0,720-_dragElement.Height));
+        var x=Math.Clamp(p.X-_dragOffset.X,0,Math.Max(0,_catalog.Layout.Width-_dragElement.Width));
+        var y=Math.Clamp(p.Y-_dragOffset.Y,0,Math.Max(0,_catalog.Layout.Height-_dragElement.Height));
         _dragElement.X=x; _dragElement.Y=y;
         if(sender is Border host){Canvas.SetLeft(host,x);Canvas.SetTop(host,y);}
         if(!_loading){_loading=true;XInput.Text=x.ToString("0");YInput.Text=y.ToString("0");_loading=false;}
@@ -343,8 +428,8 @@ public partial class ScorebugEditorWindow : Window
     {
         if(_dragElement is null||!_resizing||e.LeftButton!=MouseButtonState.Pressed)return;
         var p=e.GetPosition(DesignCanvas);
-        var width=Math.Clamp(_resizeStartWidth+(p.X-_resizeStartX),24,Math.Max(24,1280-_dragElement.X));
-        var height=Math.Clamp(_resizeStartHeight+(p.Y-_resizeStartY),24,Math.Max(24,720-_dragElement.Y));
+        var width=Math.Clamp(_resizeStartWidth+(p.X-_resizeStartX),24,Math.Max(24,_catalog.Layout.Width-_dragElement.X));
+        var height=Math.Clamp(_resizeStartHeight+(p.Y-_resizeStartY),24,Math.Max(24,_catalog.Layout.Height-_dragElement.Y));
         _dragElement.Width=width; _dragElement.Height=height;
         if(_visuals.TryGetValue(_dragElement.Id,out var visual))
         {
@@ -362,7 +447,7 @@ public partial class ScorebugEditorWindow : Window
         {
             var id=item.Id; var w=item.Width; var h=item.Height;
             _dragElement=null; _resizing=false;
-            _catalog.Update(layout=>{var target=layout.Elements.FirstOrDefault(z=>z.Id==id);if(target is not null){target.Width=Math.Clamp(w,24,1280);target.Height=Math.Clamp(h,24,720);}});
+            _catalog.Update(layout=>{var target=layout.Elements.FirstOrDefault(z=>z.Id==id);if(target is not null){target.Width=Math.Clamp(w,24,layout.Width);target.Height=Math.Clamp(h,24,layout.Height);}});
         }
         _resizing=false;
         e.Handled=true;
@@ -408,7 +493,7 @@ public partial class ScorebugEditorWindow : Window
     void Fit_Click(object sender,RoutedEventArgs e)
     {
         if(CanvasFrame.ActualWidth<10||CanvasFrame.ActualHeight<10)return;
-        var scale=Math.Min((CanvasFrame.ActualWidth-8)/1280,(CanvasFrame.ActualHeight-8)/720);
+        var scale=Math.Min((CanvasFrame.ActualWidth-8)/_catalog.Layout.Width,(CanvasFrame.ActualHeight-8)/_catalog.Layout.Height);
         CanvasScale.ScaleX=CanvasScale.ScaleY=Math.Clamp(scale,.2,1);
     }
     void Done_Click(object sender,RoutedEventArgs e)=>Close();
@@ -427,6 +512,8 @@ public partial class ScorebugEditorWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _propertySave.Stop(); SaveProperties();
+        foreach(var surface in _videoSurfaces) surface.Dispose();
+        _videoSurfaces.Clear();
         _catalog.Changed-=Render; _engine.Changed-=RefreshBoundText;
         base.OnClosed(e);
     }

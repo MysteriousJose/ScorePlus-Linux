@@ -10,13 +10,17 @@ public partial class OutputWindow : Window
     readonly ScorebugCanvasView _scorebugView;
     string _broadcastTheme;
     WindowStyle _style; WindowState _state; bool _full;
-    public OutputWindow(GameEngine engine, ScorebugCatalog catalog,string broadcastTheme="Dark") {InitializeComponent(); _broadcastTheme=broadcastTheme; _engine = engine; _catalog=catalog; _displayState=engine.CloneState(); _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState); ScorebugHost.Children.Add(_scorebugView); _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update(); }
+    public OutputWindow(GameEngine engine, ScorebugCatalog catalog,string broadcastTheme="Dark",MediaPlayback? playback=null) {InitializeComponent(); _broadcastTheme=broadcastTheme; _engine = engine; _catalog=catalog; _displayState=engine.CloneState(); _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState,playback,muteVideo:false); ScorebugHost.Children.Add(_scorebugView); _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update(); }
     public void Publish(){_displayState=_engine.CloneState();Update();_scorebugView.Refresh();}
     public void UpdateLiveScoreClock(GameState source)
     {
         _displayState.HomeScore=source.HomeScore;_displayState.AwayScore=source.AwayScore;
+        _displayState.HomeTeam=source.HomeTeam;_displayState.AwayTeam=source.AwayTeam;
+        _displayState.HomeAbbreviation=source.HomeAbbreviation;_displayState.AwayAbbreviation=source.AwayAbbreviation;
         _displayState.ClockSeconds=source.ClockSeconds;_displayState.ClockRunning=source.ClockRunning;_displayState.ClockCountsUp=source.ClockCountsUp;
         _displayState.ShotClockSeconds=source.ShotClockSeconds;_displayState.ShotClockRunning=source.ShotClockRunning;
+        _displayState.PlayClockSeconds=source.PlayClockSeconds;_displayState.PlayClockRunning=source.PlayClockRunning;
+        _displayState.TimeoutClockSeconds=source.TimeoutClockSeconds;_displayState.TimeoutClockRunning=source.TimeoutClockRunning;
         Update();_scorebugView.Refresh();
     }
     public void RefreshDisplay(){Update();_scorebugView.Refresh();}
@@ -28,15 +32,19 @@ public partial class OutputWindow : Window
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Update); return; }
         var s = _displayState;
         Background=ColorBrush(_broadcastTheme=="Light"?"#FFF3F5F8":"#FF000000");
-        HomeLabel.Text = s.HomeAbbreviation; AwayLabel.Text = s.AwayAbbreviation;
+        HomeLabel.Text = s.HomeTeam; AwayLabel.Text = s.AwayTeam;
         HomeScore.Text = s.HomeScore.ToString(); AwayScore.Text = s.AwayScore.ToString();
         Period.Text = PeriodDisplay.Format(s).ToUpperInvariant(); Clock.Text = GameEngine.FormatClock(s.ClockSeconds);
         HomeExtraLabel.Text = AwayExtraLabel.Text = "TIMEOUTS";
         HomeExtraPanel.Visibility = AwayExtraPanel.Visibility = Visibility.Visible;
         HomeTimeouts.Text = Dots(s.HomeTimeouts); AwayTimeouts.Text = Dots(s.AwayTimeouts);
         Possession.Visibility = s.SportId is "basketball" or "football" ? Visibility.Visible : Visibility.Collapsed;
-        Possession.Text = $"●  {(s.HomePossession ? s.HomeAbbreviation : s.AwayAbbreviation)} POSSESSION";
-        if(s.SportId=="football"){Period.Text=$"{PeriodDisplay.Format(s).ToUpperInvariant()} · {s.Down}{OrdinalSuffix(s.Down)} & {s.YardsToGo}";}
+        Possession.Text = $"●  {(s.HomePossession ? s.HomeTeam : s.AwayTeam)} POSSESSION";
+        if(s.SportId=="football")
+        {
+            Period.Text=$"{PeriodDisplay.Format(s).ToUpperInvariant()} · {s.Down}{OrdinalSuffix(s.Down)} & {s.YardsToGo}";
+            Possession.Text=$"●  {(s.HomePossession?s.HomeTeam:s.AwayTeam)} POSSESSION   ·   PLAY CLOCK {s.PlayClockSeconds}   ·   TIMEOUT CLOCK {GameEngine.FormatClock(s.TimeoutClockSeconds)}";
+        }
         if(s.SportId=="soccer")
         {
             HomeExtraLabel.Text = AwayExtraLabel.Text = "CARDS · SHOTS · CORNERS";
@@ -47,7 +55,7 @@ public partial class OutputWindow : Window
         else if(s.SportId=="basketball")
         {
             HomeExtraLabel.Text=AwayExtraLabel.Text="FOULS";HomeTimeouts.Text=$"{s.HomeFouls} fouls";AwayTimeouts.Text=$"{s.AwayFouls} fouls";
-            Possession.Text=$"●  {(s.HomePossession?s.HomeAbbreviation:s.AwayAbbreviation)} POSSESSION   ·   SHOT CLOCK {s.ShotClockSeconds}";
+            Possession.Text=$"●  {(s.HomePossession?s.HomeTeam:s.AwayTeam)} POSSESSION   ·   SHOT CLOCK {s.ShotClockSeconds}";
         }
         else if(s.SportId=="baseball")
         {

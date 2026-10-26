@@ -1,0 +1,146 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+
+namespace Scoreboard.Desktop;
+
+/// <summary>
+/// One editable value with a stack of add buttons above it and subtract buttons below it,
+/// so a score or stat reads exactly like the broadcast console it replaces.
+/// The middle value can be clicked and typed over; Enter or leaving the field commits it.
+/// </summary>
+public sealed class Stepper : Grid
+{
+    public sealed record StepButton(string Text, int Delta, string? ActionId, string? Tip = null);
+
+    readonly TextBox _value = new();
+    readonly UniformGrid _plusRow = new();
+    readonly UniformGrid _minusRow = new();
+    bool _typing;
+
+    /// <summary>Raised when a +/− button is pressed, carrying that button's definition.</summary>
+    public event Action<StepButton>? Stepped;
+
+    /// <summary>Raised when the middle value is typed over and committed.</summary>
+    public event Action<int>? Committed;
+
+    public Stepper(string? caption = null, double fontSize = 40)
+    {
+        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        if (!string.IsNullOrWhiteSpace(caption))
+        {
+            var label = new TextBlock
+            {
+                Text = caption.ToUpperInvariant(),
+                Foreground = new SolidColorBrush(Color.FromRgb(147, 160, 178)),
+                FontSize = 10,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+            SetRow(label, 0);
+            Children.Add(label);
+        }
+
+        _plusRow.Margin = new Thickness(0, 0, 0, 4);
+        SetRow(_plusRow, 1);
+        Children.Add(_plusRow);
+
+        _value.Text = "0";
+        _value.FontSize = fontSize;
+        _value.FontWeight = FontWeights.Bold;
+        _value.TextAlignment = TextAlignment.Center;
+        _value.Padding = new Thickness(2, 0, 2, 0);
+        _value.Margin = new Thickness(0, 1, 0, 1);
+        _value.VerticalContentAlignment = VerticalAlignment.Center;
+        _value.Cursor = Cursors.IBeam;
+        _value.BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+        _value.BorderThickness = new Thickness(1);
+        _value.ToolTip = "Click and type a value to set it exactly, then press Enter";
+        _value.GotKeyboardFocus += (_, _) => { _typing = true; _value.SelectAll(); };
+        _value.LostKeyboardFocus += (_, _) => { CommitTyped(); _typing = false; ShowValue(); };
+        _value.KeyDown += Value_KeyDown;
+        SetRow(_value, 2);
+        Children.Add(_value);
+
+        _minusRow.Margin = new Thickness(0, 4, 0, 0);
+        SetRow(_minusRow, 3);
+        Children.Add(_minusRow);
+    }
+
+    public int Value
+    {
+        get => int.TryParse(_value.Text, out var parsed) ? parsed : 0;
+        set { if (!_typing) _value.Text = value.ToString(); }
+    }
+
+    public string Text
+    {
+        get => _value.Text;
+        set { if (!_typing) _value.Text = value; }
+    }
+
+    public void ShowValue() => _value.Text = int.TryParse(_value.Text, out var parsed) ? parsed.ToString() : "0";
+
+    public void SetButtons(IEnumerable<StepButton> plus, IEnumerable<StepButton> minus)
+    {
+        Fill(_plusRow, plus);
+        Fill(_minusRow, minus);
+    }
+
+    void Fill(UniformGrid row, IEnumerable<StepButton> buttons)
+    {
+        row.Children.Clear();
+        var items = buttons.ToArray();
+        if (items.Length == 0) return;
+        row.Columns = items.Length;
+        foreach (var item in items)
+        {
+            var button = new Button
+            {
+                Content = item.Text,
+                FontSize = 13,
+                Padding = new Thickness(2, 4, 2, 4),
+                Margin = new Thickness(2, 0, 2, 0),
+                MinWidth = 0,
+                Tag = item.ActionId,
+                ToolTip = item.Tip
+            };
+            button.Click += (_, _) => Stepped?.Invoke(item);
+            row.Children.Add(button);
+        }
+    }
+
+    void Value_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitTyped();
+            _value.SelectAll();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            _typing = false;
+            ShowValue();
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+    }
+
+    void CommitTyped()
+    {
+        if (!_typing) return;
+        _typing = false;
+        var text = _value.Text.Trim();
+        if (!int.TryParse(text, out var parsed)) { ShowValue(); return; }
+        parsed = Math.Max(0, parsed);
+        _value.Text = parsed.ToString();
+        Committed?.Invoke(parsed);
+    }
+}

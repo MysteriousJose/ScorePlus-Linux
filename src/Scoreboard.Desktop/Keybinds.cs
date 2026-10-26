@@ -26,9 +26,13 @@ public static class ControlActions
         new("away.score.minus2","Score","Away score −2"),
         new("away.score.minus3","Score","Away score −3"),
         new("away.score.minus6","Score","Away touchdown −6"),
-        new("home.timeout","Score","Home timeout"),
-        new("away.timeout","Score","Away timeout"),
+        new("home.timeout","Score","Home timeout used"),
+        new("away.timeout","Score","Away timeout used"),
+        new("home.timeout.plus","Score","Home timeouts +1"),
+        new("away.timeout.plus","Score","Away timeouts +1"),
         new("possession.toggle","Score","Toggle possession"),
+        new("possession.away","Score","Visitors possession"),
+        new("possession.home","Score","Home possession"),
         new("clock.toggle","Clock","Start / stop clock"),
         new("clock.minus60","Clock","Clock −1 minute"),
         new("clock.plus60","Clock","Clock +1 minute"),
@@ -36,6 +40,13 @@ public static class ControlActions
         new("clock.plus1","Clock","Clock +1 second"),
         new("clock.set","Clock","Set clock"),
         new("period.next","Clock","Next period"),
+        new("period.previous","Clock","Previous period"),
+        new("football.playclock.toggle","Clock","Play clock start / stop"),
+        new("football.playclock.reset40","Clock","Play clock reset 40"),
+        new("football.playclock.reset25","Clock","Play clock reset 25"),
+        new("timeoutclock.toggle","Clock","Timeout clock start / stop"),
+        new("timeoutclock.reset","Clock","Timeout clock reset 1:00"),
+        new("timeoutclock.set","Clock","Set timeout clock"),
         new("football.down.next","Football","Next down"),
         new("football.down.previous","Football","Previous down"),
         new("football.distance.minus","Football","Distance −1 yard"),
@@ -47,7 +58,8 @@ public static class ControlActions
         new("football.yards.away","Football","Away +10 yards"),
         new("football.turnover.home","Football","Home turnover"),
         new("football.turnover.away","Football","Away turnover"),
-        new("output.publish","Football","Update Output"),
+        new("output.publish","Output","Update Output (publish staged changes)"),
+        new("output.live.toggle","Output","Live score & clocks on / off"),
         new("basketball.foul.home","Basketball","Home foul"),
         new("basketball.foul.away","Basketball","Away foul"),
         new("basketball.shotclock.toggle","Basketball","Shot clock start / stop"),
@@ -70,7 +82,20 @@ public static class ControlActions
         new("global.undo","General","Undo last action")
     };
 
-    public static string LabelFor(string id) => All.FirstOrDefault(a => a.Id == id)?.Label ?? id;
+    public static string LabelFor(string id) => All.FirstOrDefault(a => a.Id == id)?.Label ?? ScoreLabel(id) ?? id;
+
+    /// <summary>Score buttons are built from a sport's scoring options, so names like +7 exist without an entry above.</summary>
+    static string? ScoreLabel(string id)
+    {
+        foreach (var (prefix, team) in new[] { ("home.score.", "Home"), ("away.score.", "Away") })
+        {
+            if (!id.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            var rest = id[prefix.Length..];
+            if (rest.StartsWith("plus", StringComparison.Ordinal) && int.TryParse(rest[4..], out var plus)) return $"{team} score +{plus}";
+            if (rest.StartsWith("minus", StringComparison.Ordinal) && int.TryParse(rest[5..], out var minus)) return $"{team} score −{minus}";
+        }
+        return null;
+    }
 }
 
 public sealed class KeybindSettings

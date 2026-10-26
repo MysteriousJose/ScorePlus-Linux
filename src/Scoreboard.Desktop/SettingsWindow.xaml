@@ -16,7 +16,8 @@
         <Separator/>
         <TextBlock Text="OPERATOR WORKFLOW" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
         <CheckBox x:Name="SeparateControls" Content="Open the control panel in its own window" Checked="Controls_Changed" Unchecked="Controls_Changed"/>
-        <TextBlock Text="Open as many control panels as you like from the Control Panel window; they all stay in sync." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,8"/>
+        <CheckBox x:Name="ShowHints" Content="Show tips next to headings (for example 'scoring, timing, actions')" Checked="Controls_Changed" Unchecked="Controls_Changed"/>
+        <TextBlock Text="Off by default. Turning it on adds the small explanatory labels in the header, the media dock and the console cards." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,8"/>
       </StackPanel>
     </ScrollViewer>
   </DockPanel>

@@ -9,22 +9,74 @@ namespace Scoreboard.Desktop;
 
 public sealed class UserPreferences
 {
-    public string Theme { get; set; } = "Dark";
-    public bool SeparateControls { get; set; }
+    /// <summary>Bumped when the shipped defaults change, so older files take the new defaults once.</summary>
+    public int Schema { get; set; }
 
-    public UserPreferences Clone() => new() { Theme = Theme, SeparateControls = SeparateControls };
+    public string Theme { get; set; } = "Dark";
+    public bool SeparateControls { get; set; } = true;
+    public bool ShowHeadingHints { get; set; }
+
+    /// <summary>The sport the operator last ran, so a launcher "New Game" opens the game they expect.</summary>
+    public string LastSport { get; set; } = "football";
+
+    public List<MediaEntry> Media { get; set; } = [];
+
+    /// <summary>Older preference files stored plain paths; they are migrated into <see cref="Media"/> on load.</summary>
+    public List<string> MediaFiles { get; set; } = [];
+
+    public UserPreferences Clone() => new()
+    {
+        Schema = Schema,
+        Theme = Theme,
+        SeparateControls = SeparateControls,
+        ShowHeadingHints = ShowHeadingHints,
+        LastSport = LastSport,
+        Media = [.. Media],
+        MediaFiles = [.. MediaFiles]
+    };
 }
 
 public static class PreferencesStore
 {
-    static readonly string FilePath = Path.Combine(
+    static string? _overridePath;
+
+    /// <summary>Test hook: aim storage at a throwaway file so a suite can never rewrite the operator's real preferences.</summary>
+    public static void UsePath(string? path) => _overridePath = path;
+
+    static string FilePath => _overridePath ?? Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Scoreboard", "preferences.json");
 
     public static UserPreferences Load()
     {
-        try { return File.Exists(FilePath) ? JsonSerializer.Deserialize<UserPreferences>(File.ReadAllText(FilePath)) ?? new() : new(); }
+        try
+        {
+            if (!File.Exists(FilePath)) return new();
+            var loaded = JsonSerializer.Deserialize<UserPreferences>(File.ReadAllText(FilePath)) ?? new();
+            Migrate(loaded);
+            return loaded;
+        }
         catch { return new(); }
+    }
+
+    static void Migrate(UserPreferences preferences)
+    {
+        preferences.Media ??= [];
+        preferences.MediaFiles ??= [];
+        if (preferences.Media.Count == 0 && preferences.MediaFiles.Count > 0)
+            preferences.Media = preferences.MediaFiles.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => new MediaEntry(p)).ToList();
+        preferences.MediaFiles.Clear();
+
+        // Files written before the schema existed carried the old light default. Take the shipped
+        // defaults once (black theme, detached panel, no heading tips); later choices are respected.
+        if (preferences.Schema < 1)
+        {
+            preferences.Theme = "Dark";
+            preferences.SeparateControls = true;
+            preferences.ShowHeadingHints = false;
+            preferences.Schema = 1;
+            try { Save(preferences); } catch { }
+        }
     }
 
     public static void Save(UserPreferences preferences)
