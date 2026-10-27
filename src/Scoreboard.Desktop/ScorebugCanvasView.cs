@@ -12,6 +12,7 @@ public sealed class ScorebugCanvasView : Grid
     readonly GameEngine _engine;
     readonly Func<GameState> _stateProvider;
     readonly bool _live;
+    readonly bool _publishedLayout;
     readonly Canvas _canvas = new() { Background=new SolidColorBrush(Color.FromRgb(9,16,24)), ClipToBounds=true };
     readonly MediaPlayback? _playback;
     readonly bool _muteVideo;
@@ -21,9 +22,12 @@ public sealed class ScorebugCanvasView : Grid
     readonly Dictionary<string,string> _backgrounds = [];
     readonly Dictionary<string,bool> _transparentStates = [];
 
-    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true)
+    /// <param name="publishedLayout">True for the audience output: it follows the layout that was
+    /// actually published, not the one being designed in the preview.</param>
+    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true, bool publishedLayout=false)
     {
-        _catalog=catalog;_engine=engine;_live=stateProvider is null;_stateProvider=stateProvider??(()=>_engine.State);
+        _catalog=catalog;_engine=engine;_live=stateProvider is null;_publishedLayout=publishedLayout;
+        _stateProvider=stateProvider??(()=>_engine.State);
         _playback=playback;_muteVideo=muteVideo;
         Children.Add(new Viewbox { Stretch=Stretch.Uniform, Child=_canvas });
         _catalog.Changed+=Rebuild;
@@ -31,14 +35,18 @@ public sealed class ScorebugCanvasView : Grid
         Rebuild();
     }
 
+    /// <summary>The artwork this view is drawing: the design being previewed, or the published one.</summary>
+    public ScorebugLayout Layout => _publishedLayout ? _catalog.PublishedLayout : _catalog.Layout;
+
     public void Rebuild()
     {
         if(!Dispatcher.CheckAccess()){Dispatcher.BeginInvoke(Rebuild);return;}
         foreach(var surface in _videoSurfaces) surface.Dispose();
         _videoSurfaces.Clear();
-        _canvas.Width=_catalog.Layout.Width;_canvas.Height=_catalog.Layout.Height;
+        var layout = Layout;
+        _canvas.Width=layout.Width;_canvas.Height=layout.Height;
         _canvas.Children.Clear();_visuals.Clear();_animations.Clear();_backgrounds.Clear();_transparentStates.Clear();
-        foreach(var item in _catalog.Layout.Elements)
+        foreach(var item in layout.Elements)
         {
             // The preview and the audience screen stay empty when nothing is cued; the studio is
             // the only place the tag placeholder is drawn.
@@ -50,11 +58,11 @@ public sealed class ScorebugCanvasView : Grid
                 Height=item.Height,
                 Opacity=item.Opacity,
                 ClipToBounds=true,
-                Background=ScorebugRender.HostBackground(item),
+                Background=ScorebugRender.HostBackground(item,_stateProvider()),
                 Child=content,
                 Visibility=item.Visible?Visibility.Visible:Visibility.Collapsed
             };
-            Canvas.SetLeft(host,item.X);Canvas.SetTop(host,item.Y);Panel.SetZIndex(host,_catalog.Layout.Elements.IndexOf(item));
+            Canvas.SetLeft(host,item.X);Canvas.SetTop(host,item.Y);Panel.SetZIndex(host,layout.Elements.IndexOf(item));
             _canvas.Children.Add(host);_visuals[item.Id]=(host,content);
             ApplyAnimation(item,host);
         }
@@ -103,7 +111,8 @@ public sealed class ScorebugCanvasView : Grid
     {
         if(!Dispatcher.CheckAccess()){Dispatcher.BeginInvoke(UpdateValues);return;}
         var state=_stateProvider();
-        foreach(var item in _catalog.Layout.Elements)
+        var layout=Layout;
+        foreach(var item in layout.Elements)
         {
             if(!_visuals.TryGetValue(item.Id,out var visual))continue;
             var visibility=item.Visible?Visibility.Visible:Visibility.Collapsed;
@@ -111,20 +120,30 @@ public sealed class ScorebugCanvasView : Grid
             if(item.Animation!=ScorebugAnimation.Pulse&&Math.Abs(visual.Host.Opacity-item.Opacity)>0.0001)visual.Host.Opacity=item.Opacity;
             if(visual.Host is Border hostBorder)
             {
-                // Only touch the brush when the design changed; rebuilding brushes every tick made the output stutter.
-                if(!_backgrounds.TryGetValue(item.Id,out var applied)||applied!=item.Background||_transparentStates.GetValueOrDefault(item.Id)!=item.TransparentBackground)
+                // Only touch the brush when the design or the palette changed; rebuilding brushes
+                // every tick made the output stutter.
+                var resolved=ScorebugRender.ResolveBackground(item,state);
+                if(!_backgrounds.TryGetValue(item.Id,out var applied)||applied!=resolved||_transparentStates.GetValueOrDefault(item.Id)!=item.TransparentBackground)
                 {
-                    hostBorder.Background=ScorebugRender.HostBackground(item);
-                    _backgrounds[item.Id]=item.Background;
+                    hostBorder.Background=ScorebugRender.HostBackground(item,state);
+                    _backgrounds[item.Id]=resolved;
                     _transparentStates[item.Id]=item.TransparentBackground;
                 }
             }
-            if(visual.Content is TextBlock block)
+            if(visual.Content is ScorebugTextBlock block)
             {
                 var text=ScoreboardTemplates.Bind(item.Content,state,item.PeriodFormat);
-                if(block.Text!=text)block.Text=text;
+                block.ApplyStyle(item,state);
+                block.UpdateText(text,item.Transition);
             }
-            else if(visual.Content is not VideoSurface) ScorebugRender.ApplyToContent(visual.Content,item);
+            else if(visual.Content is ScorebugIconView icon)
+            {
+                icon.Update();
+            }
+            else if(visual.Content is not VideoSurface)
+            {
+                ScorebugRender.ApplyToContent(visual.Content,item,state);
+            }
             ApplyAnimation(item,visual.Host);
         }
     }

@@ -77,6 +77,8 @@ public partial class GameControlWindow : Window
         public bool LiveScoreClock { get => GetLive(); set => SetLive(value); }
         public bool HasStagedChanges => false;
         public void OpenNewPanel() => NewPanel();
+        public string LayoutLabel => "1 · Layout";
+        public void ShiftLayout(int delta) { }
     }
 }
 

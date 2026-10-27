@@ -40,6 +40,14 @@ public sealed class GameState
     public string AwayTeam { get; set; } = "VISITORS";
     public string HomeAbbreviation { get; set; } = "HOME";
     public string AwayAbbreviation { get; set; } = "AWAY";
+    /// <summary>Team logo imported from the control panel. Graphics draw it, the studio never edits it.</summary>
+    public string? HomeLogoPath { get; set; }
+    public string? AwayLogoPath { get; set; }
+    /// <summary>Team palette. Any colour on the scorebug can point at one of these four slots.</summary>
+    public string HomePrimaryColor { get; set; } = "#FF38D7A3";
+    public string HomeSecondaryColor { get; set; } = "#FF101820";
+    public string AwayPrimaryColor { get; set; } = "#FF4EA8FF";
+    public string AwaySecondaryColor { get; set; } = "#FF101820";
     public int HomeScore { get; set; }
     public int AwayScore { get; set; }
     public int Period { get; set; } = 1;
@@ -89,6 +97,23 @@ public sealed class GameState
     public bool ClockCountsUp { get; set; }
     public DateTimeOffset SavedAt { get; set; } = DateTimeOffset.Now;
     public List<GameEvent> Events { get; set; } = [];
+
+    /// <summary>The colour behind a team palette slot, or null for a fixed colour.</summary>
+    public string? ColorFor(ScorebugColorSource source) => source switch
+    {
+        ScorebugColorSource.HomePrimary => HomePrimaryColor,
+        ScorebugColorSource.HomeSecondary => HomeSecondaryColor,
+        ScorebugColorSource.AwayPrimary => AwayPrimaryColor,
+        ScorebugColorSource.AwaySecondary => AwaySecondaryColor,
+        _ => null
+    };
+
+    public string? LogoFor(ScorebugLogoSide side) => side switch
+    {
+        ScorebugLogoSide.Home => HomeLogoPath,
+        ScorebugLogoSide.Away => AwayLogoPath,
+        _ => null
+    };
 }
 
 public sealed record GameEvent(DateTimeOffset At, string Type, string Description, int? HomeScore = null, int? AwayScore = null);
@@ -118,6 +143,49 @@ public sealed class GameEngine
     {
         SaveUndo("Teams"); State.HomeTeam = home; State.AwayTeam = away;
         State.HomeAbbreviation = Abbreviate(home); State.AwayAbbreviation = Abbreviate(away); Log("Teams", $"{home} vs {away}"); Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Saves everything the control panel's team pop-up edits: name, abbreviation, logo and both
+    /// palette colours. Team identity publishes live like the score, so the graphic never waits.
+    /// </summary>
+    public void SetTeamIdentity(bool home, string name, string abbreviation, string? logoPath, string primary, string secondary)
+    {
+        name = name.Trim();
+        if (name.Length == 0) name = home ? State.HomeTeam : State.AwayTeam;
+        abbreviation = abbreviation.Trim().ToUpperInvariant();
+        if (abbreviation.Length == 0) abbreviation = Abbreviate(name);
+        primary = NormalizeColor(primary, home ? "#FF38D7A3" : "#FF4EA8FF");
+        secondary = NormalizeColor(secondary, "#FF101820");
+        if (home)
+        {
+            if (State.HomeTeam == name && State.HomeAbbreviation == abbreviation && State.HomeLogoPath == logoPath
+                && State.HomePrimaryColor == primary && State.HomeSecondaryColor == secondary) return;
+            SaveUndo("Home team details");
+            State.HomeTeam = name; State.HomeAbbreviation = abbreviation; State.HomeLogoPath = logoPath;
+            State.HomePrimaryColor = primary; State.HomeSecondaryColor = secondary;
+        }
+        else
+        {
+            if (State.AwayTeam == name && State.AwayAbbreviation == abbreviation && State.AwayLogoPath == logoPath
+                && State.AwayPrimaryColor == primary && State.AwaySecondaryColor == secondary) return;
+            SaveUndo("Visitors team details");
+            State.AwayTeam = name; State.AwayAbbreviation = abbreviation; State.AwayLogoPath = logoPath;
+            State.AwayPrimaryColor = primary; State.AwaySecondaryColor = secondary;
+        }
+        Log("Teams", $"{State.HomeTeam} ({State.HomeAbbreviation}) vs {State.AwayTeam} ({State.AwayAbbreviation})");
+        Changed?.Invoke();
+    }
+
+    static string NormalizeColor(string? value, string fallback)
+    {
+        var text = (value ?? "").Trim();
+        if (text.Length == 0) return fallback;
+        // #RGB, #ARGB, #RRGGBB or #AARRGGBB. Parsed by the renderer; validated here so a bad
+        // entry can never break a graphic.
+        if (text[0] != '#') return fallback;
+        var digits = text[1..];
+        return digits.Length is 3 or 4 or 6 or 8 && digits.All(Uri.IsHexDigit) ? text : fallback;
     }
 
     public void Score(bool home, int amount)
@@ -368,6 +436,9 @@ public sealed class GameEngine
         if (State.HomeScore == source.HomeScore && State.AwayScore == source.AwayScore &&
             State.HomeTeam == source.HomeTeam && State.AwayTeam == source.AwayTeam &&
             State.HomeAbbreviation == source.HomeAbbreviation && State.AwayAbbreviation == source.AwayAbbreviation &&
+            State.HomeLogoPath == source.HomeLogoPath && State.AwayLogoPath == source.AwayLogoPath &&
+            State.HomePrimaryColor == source.HomePrimaryColor && State.HomeSecondaryColor == source.HomeSecondaryColor &&
+            State.AwayPrimaryColor == source.AwayPrimaryColor && State.AwaySecondaryColor == source.AwaySecondaryColor &&
             State.ClockSeconds == source.ClockSeconds && State.ClockRunning == source.ClockRunning &&
             State.ClockCountsUp == source.ClockCountsUp && State.ShotClockSeconds == source.ShotClockSeconds &&
             State.ShotClockRunning == source.ShotClockRunning &&
@@ -376,6 +447,9 @@ public sealed class GameEngine
         State.HomeScore=source.HomeScore;State.AwayScore=source.AwayScore;
         State.HomeTeam=source.HomeTeam;State.AwayTeam=source.AwayTeam;
         State.HomeAbbreviation=source.HomeAbbreviation;State.AwayAbbreviation=source.AwayAbbreviation;
+        State.HomeLogoPath=source.HomeLogoPath;State.AwayLogoPath=source.AwayLogoPath;
+        State.HomePrimaryColor=source.HomePrimaryColor;State.HomeSecondaryColor=source.HomeSecondaryColor;
+        State.AwayPrimaryColor=source.AwayPrimaryColor;State.AwaySecondaryColor=source.AwaySecondaryColor;
         State.ClockSeconds=source.ClockSeconds;State.ClockRunning=source.ClockRunning;State.ClockCountsUp=source.ClockCountsUp;
         State.ShotClockSeconds=source.ShotClockSeconds;State.ShotClockRunning=source.ShotClockRunning;
         State.PlayClockSeconds=source.PlayClockSeconds;State.PlayClockRunning=source.PlayClockRunning;

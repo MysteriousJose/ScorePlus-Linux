@@ -3,19 +3,37 @@ using System.IO;
 namespace Scoreboard.Desktop;
 
 /// <summary>
-/// One clip in the operator's media library. <see cref="Tag"/> is the folder-like bucket the clip
-/// belongs to; scorebug video elements only display clips whose tag they are watching.
+/// One clip in the operator's media library. <see cref="Tag"/> is the scorebug routing bucket
+/// (a video element only shows clips carrying its tag) and <see cref="Folder"/> is purely for
+/// organising the library. <see cref="Loop"/> restarts the clip when it ends.
 /// </summary>
-public sealed record MediaEntry(string Path, string Tag = MediaLibrary.DefaultTag)
+public sealed record MediaEntry(string Path, string Tag = MediaLibrary.DefaultTag, string Folder = "", bool Loop = false)
 {
     public string Label => System.IO.Path.GetFileName(Path);
     public bool IsVideo => MediaLibrary.IsVideoFile(Path);
     public string KindLabel => IsVideo ? "VIDEO" : "AUDIO";
+    public string FolderLabel => string.IsNullOrWhiteSpace(Folder) ? MediaLibrary.RootFolderLabel : Folder;
+    public string TagAndFolder => string.IsNullOrWhiteSpace(Folder) ? Tag : $"{Tag} · {Folder}";
+}
+
+/// <summary>A named, ordered set of clips that plays one after another.</summary>
+public sealed class MediaPlaylist
+{
+    public string Name { get; set; } = "Playlist";
+    public List<string> Paths { get; set; } = [];
+
+    /// <summary>Start again at the first clip when the last one ends.</summary>
+    public bool Loop { get; set; }
+
+    public int Count => Paths.Count;
 }
 
 public static class MediaLibrary
 {
     public const string DefaultTag = "General";
+
+    /// <summary>Clips with no folder still need a name in the filter list.</summary>
+    public const string RootFolderLabel = "Unfiled";
 
     public static readonly string[] SuggestedTags = ["General", "Ads", "Highlights", "Music", "Anthem", "Sponsors"];
 
@@ -28,12 +46,40 @@ public static class MediaLibrary
         return trimmed.Length == 0 ? DefaultTag : trimmed;
     }
 
+    /// <summary>An empty folder means "unfiled"; anything else is a path like Ads/2026.</summary>
+    public static string NormalizeFolder(string? folder) => (folder ?? "").Trim().Replace('\\', '/').Trim('/');
+
+    /// <summary>Every folder in use, sorted, with the unfiled bucket last.</summary>
+    public static IReadOnlyList<string> Folders(IEnumerable<MediaEntry> entries) =>
+        entries.Select(e => NormalizeFolder(e.Folder)).Where(f => f.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
+
     /// <summary>Moves a clip into a tag, in place, and returns the updated entry.</summary>
     public static MediaEntry? Retag(IList<MediaEntry> library, MediaEntry selected, string? tag)
     {
         var index = library.IndexOf(selected);
         if (index < 0) return null;
         var updated = selected with { Tag = NormalizeTag(tag) };
+        library[index] = updated;
+        return updated;
+    }
+
+    /// <summary>Moves a clip into a folder, in place, and returns the updated entry.</summary>
+    public static MediaEntry? MoveToFolder(IList<MediaEntry> library, MediaEntry selected, string? folder)
+    {
+        var index = library.IndexOf(selected);
+        if (index < 0) return null;
+        var updated = selected with { Folder = NormalizeFolder(folder) };
+        library[index] = updated;
+        return updated;
+    }
+
+    /// <summary>Flips the clip's own loop flag, in place.</summary>
+    public static MediaEntry? SetLoop(IList<MediaEntry> library, MediaEntry selected, bool loop)
+    {
+        var index = library.IndexOf(selected);
+        if (index < 0) return null;
+        var updated = selected with { Loop = loop };
         library[index] = updated;
         return updated;
     }

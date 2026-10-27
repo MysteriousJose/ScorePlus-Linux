@@ -59,6 +59,7 @@ public partial class MainWindow : Window, IControlPanelHost
 
         _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback);
         PreviewHost.Content = _preview;
+        RefreshLayoutIndicators();
 
         _panel = new ControlPanelView(_engine, this);
         ControlHost.Content = _panel;
@@ -103,6 +104,9 @@ public partial class MainWindow : Window, IControlPanelHost
     /// <summary>The console embedded in this window, exposed for the checks.</summary>
     public ControlPanelView Panel => _panel;
 
+    /// <summary>The scorebug layouts and design, exposed so the checks can drive the layout arrows.</summary>
+    public ScorebugCatalog Scorebug => _scorebug;
+
     // ---------- IControlPanelHost ----------
     public bool LiveScoreClock
     {
@@ -110,18 +114,53 @@ public partial class MainWindow : Window, IControlPanelHost
         set => SetLiveScoreClock(value);
     }
 
-    public bool HasStagedChanges => GameEngine.StagedSignature(_engine.State) != GameEngine.StagedSignature(_publishedEngine.State);
+    public bool HasStagedChanges =>
+        GameEngine.StagedSignature(_engine.State) != GameEngine.StagedSignature(_publishedEngine.State) ||
+        _scorebug.ActiveIndex != _scorebug.PublishedIndex;
+
+    /// <summary>The layout the preview is showing: the one that Update Output will publish.</summary>
+    public string LayoutLabel => $"{_scorebug.ActiveIndex + 1} · {_scorebug.Layout.Name}";
 
     public void OpenNewPanel() => OpenControlPanel();
 
     public void PublishOutput()
     {
+        // The chosen layout goes on air with the game data: the preview and output still read
+        // different copies, so the switch only happens here.
+        _scorebug.PublishLayout();
         _publishedEngine.LoadFromState(_engine.CloneState());
         _preview?.Refresh();
         _output?.Publish();
-        StatusText.Text = $"OUTPUT UPDATED · {DateTime.Now:HH:mm:ss}";
+        StatusText.Text = $"OUTPUT UPDATED · {_scorebug.Layout.Name.ToUpperInvariant()} · {DateTime.Now:HH:mm:ss}";
+        RefreshLayoutIndicators();
         _panel.Refresh();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
     }
+
+    /// <summary>Moves the previewed layout; nothing goes on air until Update Output is pressed.</summary>
+    public void ShiftLayout(int delta)
+    {
+        if (_scorebug.Layouts.Count == 0) return;
+        var next = (_scorebug.ActiveIndex + delta + _scorebug.Layouts.Count) % _scorebug.Layouts.Count;
+        _scorebug.SelectLayout(next);
+        _preview?.Rebuild();
+        RefreshLayoutIndicators();
+        StatusText.Text = _scorebug.PublishedIndex == _scorebug.ActiveIndex
+            ? $"LAYOUT · {LayoutLabel} · ON AIR"
+            : $"LAYOUT · {LayoutLabel} · preview only — press Update Output";
+        _panel.Refresh();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
+    }
+
+    void RefreshLayoutIndicators()
+    {
+        PreviewLayoutLabel.Text = LayoutLabel;
+        LayoutPrevButton.IsEnabled = LayoutNextButton.IsEnabled = _scorebug.Layouts.Count > 1;
+    }
+
+    void LayoutPrev_Click(object sender, RoutedEventArgs e) => ShiftLayout(-1);
+
+    void LayoutNext_Click(object sender, RoutedEventArgs e) => ShiftLayout(1);
 
     // ---------- window chrome ----------
     void Refresh()
@@ -159,7 +198,11 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         var studio = new ScorebugEditorWindow(_scorebug, _engine, _playback, _preferences.Theme) { Owner = this };
         studio.ShowDialog();
+        // The studio can add, delete or switch layouts; the preview and every panel follow.
         _preview?.Rebuild();
+        RefreshLayoutIndicators();
+        _panel.Refresh();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
     }
 
     void Preferences_Click(object sender, RoutedEventArgs e)

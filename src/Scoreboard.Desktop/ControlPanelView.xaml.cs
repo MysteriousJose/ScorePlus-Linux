@@ -1,7 +1,9 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Scoreboard.Core;
 
 namespace Scoreboard.Desktop;
@@ -13,6 +15,12 @@ public interface IControlPanelHost
     bool LiveScoreClock { get; set; }
     bool HasStagedChanges { get; }
     void OpenNewPanel();
+
+    /// <summary>"1 · Broadcast Classic" — the layout the preview is showing and would publish.</summary>
+    string LayoutLabel { get; }
+
+    /// <summary>Moves the previewed layout forward or back; Update Output puts it on air.</summary>
+    void ShiftLayout(int delta);
 }
 
 /// <summary>
@@ -28,9 +36,12 @@ public partial class ControlPanelView : UserControl
 
     readonly GameEngine _engine;
     readonly IControlPanelHost _host;
-    readonly Stepper _awayScore, _homeScore, _down, _toGo, _ballOn, _quarter, _awayTimeouts, _homeTimeouts;
+    readonly Stepper _awayScore, _homeScore, _down, _toGo, _ballOn, _awayTimeouts, _homeTimeouts;
+    readonly TextBox _quarterValue = new();
     readonly Button _ballSide;
     readonly Dictionary<string, Stepper> _statValues = [];
+    string? _awayLogoLoaded;
+    string? _homeLogoLoaded;
     string _scoreSignature = "";
     string _sportSignature = "";
     string _statsSignature = "";
@@ -83,13 +94,9 @@ public partial class ControlPanelView : UserControl
         ballColumn.Children.Add(_ballSide);
         BallOnHost.Content = ballColumn;
 
-        _quarter = new Stepper("Quarter", 26);
-        _quarter.SetButtons([new("+", 1, "period.next")], [new("−", -1, "period.previous")]);
-        _quarter.Stepped += Step;
-        _quarter.Committed += value => _engine.SetPeriod(value);
         // How the quarter prints (Quarter 1 / Q1 / 1) belongs to the graphic, not the console:
         // it is a property of the element in Scorebug Studio.
-        QuarterHost.Content = _quarter;
+        QuarterHost.Content = BuildQuarterControl();
 
         _awayTimeouts = BuildTimeoutStepper(false);
         _homeTimeouts = BuildTimeoutStepper(true);
@@ -129,6 +136,47 @@ public partial class ControlPanelView : UserControl
         stepper.Stepped += Step;
         stepper.Committed += value => _engine.SetTimeoutCount(home, value);
         return stepper;
+    }
+
+    /// <summary>A compact − / quarter / + row, built from the same full-size console buttons.</summary>
+    FrameworkElement BuildQuarterControl()
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var caption = new TextBlock { Text = "QUARTER", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+        caption.Style = (Style)FindResource("Caption");
+        grid.Children.Add(caption);
+        _quarterValue.FontFamily = new FontFamily("Consolas");
+        _quarterValue.FontSize = 22;
+        _quarterValue.FontWeight = FontWeights.Bold;
+        _quarterValue.TextAlignment = TextAlignment.Center;
+        _quarterValue.Background = Brushes.Transparent;
+        _quarterValue.BorderThickness = new Thickness(0);
+        _quarterValue.Margin = new Thickness(4, 0, 4, 0);
+        _quarterValue.ToolTip = "Type a period number and press Enter";
+        _quarterValue.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            if (int.TryParse(_quarterValue.Text.Trim(), out var period)) _engine.SetPeriod(period);
+            else _quarterValue.Text = _engine.State.Period.ToString();
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        };
+        _quarterValue.LostKeyboardFocus += (_, _) => _quarterValue.Text = _engine.State.Period.ToString();
+        Grid.SetColumn(_quarterValue, 1);
+        grid.Children.Add(_quarterValue);
+        var minus = new Button { Content = "−", Tag = "period.previous", Style = (Style)FindResource("Tiny"), MinWidth = 44 };
+        minus.Click += Action_Click;
+        Grid.SetColumn(minus, 2);
+        grid.Children.Add(minus);
+        var plus = new Button { Content = "+", Tag = "period.next", Style = (Style)FindResource("Tiny"), MinWidth = 44 };
+        plus.Click += Action_Click;
+        Grid.SetColumn(plus, 3);
+        grid.Children.Add(plus);
+        return grid;
     }
 
     /// <summary>Adds/subtracts through the action table so keybinds and buttons share one path.</summary>
@@ -173,7 +221,16 @@ public partial class ControlPanelView : UserControl
         _toGo.Value = s.YardsToGo;
         _ballOn.Value = s.YardsToGoal;
         _ballSide.Content = s.BallOnHomeSide ? "HOME ▶" : "◀ VISITORS";
-        _quarter.Value = s.Period;
+        if (!_quarterValue.IsKeyboardFocused) _quarterValue.Text = s.Period.ToString();
+
+        // Team identity: abbreviation, logo thumbnail and the two-colour bar under the name.
+        AwayAbbrText.Text = s.AwayAbbreviation;
+        HomeAbbrText.Text = s.HomeAbbreviation;
+        ApplyLogo(AwayLogoImage, ref _awayLogoLoaded, s.AwayLogoPath);
+        ApplyLogo(HomeLogoImage, ref _homeLogoLoaded, s.HomeLogoPath);
+        AwayColorBar.Background = TeamBar(s.AwayPrimaryColor, s.AwaySecondaryColor);
+        HomeColorBar.Background = TeamBar(s.HomePrimaryColor, s.HomeSecondaryColor);
+        LayoutLabel.Text = _host.LayoutLabel;
 
         if (!ClockValue.IsKeyboardFocused) ClockValue.Text = GameEngine.FormatClock(s.ClockSeconds);
         if (!PlayClockValue.IsKeyboardFocused) PlayClockValue.Text = s.PlayClockSeconds.ToString();
@@ -208,7 +265,8 @@ public partial class ControlPanelView : UserControl
         DetailCardHint.Text = football ? $"{Ordinal(s.Down)} & {s.YardsToGo} · ball on {(s.BallOnHomeSide ? "home" : "visitors")}' {s.YardsToGoal}" : string.Empty;
         DetailCardHint.Visibility = _showHints && football ? Visibility.Visible : Visibility.Collapsed;
         PlayClockRow.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
-        ShotClockRow.Visibility = _engine.Sport.HasShotClock ? Visibility.Visible : Visibility.Collapsed;
+        // Football has a play clock; showing a shot clock there as well only crowded the page.
+        ShotClockRow.Visibility = _engine.Sport.HasShotClock && !football ? Visibility.Visible : Visibility.Collapsed;
         RebuildSportButtons(s);
 
         var staged = _host.HasStagedChanges;
@@ -219,6 +277,67 @@ public partial class ControlPanelView : UserControl
 
         RefreshStats();
     }
+
+    /// <summary>Loads a team logo once per path; the console refreshes every clock tick.</summary>
+    void ApplyLogo(Image target, ref string? cache, string? path)
+    {
+        var wanted = File.Exists(path) ? path : null;
+        if (string.Equals(cache, wanted)) return;
+        cache = wanted;
+        if (wanted is null) { target.Source = null; return; }
+        try
+        {
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.UriSource = new Uri(wanted);
+            image.EndInit();
+            image.Freeze();
+            target.Source = image;
+        }
+        catch { target.Source = null; }
+    }
+
+    static Brush TeamBar(string primary, string secondary)
+    {
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0),
+            EndPoint = new Point(1, 0)
+        };
+        brush.GradientStops.Add(new GradientStop(SafeColor(primary), 0));
+        brush.GradientStops.Add(new GradientStop(SafeColor(primary), 0.55));
+        brush.GradientStops.Add(new GradientStop(SafeColor(secondary), 0.55));
+        brush.GradientStops.Add(new GradientStop(SafeColor(secondary), 1));
+        brush.Freeze();
+        return brush;
+    }
+
+    static Color SafeColor(string value)
+    {
+        try { return (Color)ColorConverter.ConvertFromString(value)!; }
+        catch { return Color.FromRgb(90, 100, 112); }
+    }
+
+    void AwayDetails_Click(object sender, RoutedEventArgs e) => EditTeam(false);
+    void HomeDetails_Click(object sender, RoutedEventArgs e) => EditTeam(true);
+
+    void EditTeam(bool home)
+    {
+        var dialog = new TeamIdentityWindow(_engine, home, PreferencesStore.Load().Theme) { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() == true) Refresh();
+    }
+
+    void LayoutPrev_Click(object sender, RoutedEventArgs e) => ShiftLayout(-1);
+    void LayoutNext_Click(object sender, RoutedEventArgs e) => ShiftLayout(1);
+
+    void ShiftLayout(int delta)
+    {
+        _host.ShiftLayout(delta);
+        Refresh();
+    }
+
+    void ShotClock14_Click(object sender, RoutedEventArgs e) => _engine.SetShotClock(14);
 
     void RebuildScoreButtons(GameState state)
     {
@@ -418,9 +537,15 @@ public partial class ControlPanelView : UserControl
             case "football.playclock.toggle": _engine.TogglePlayClock(); break;
             case "football.playclock.reset40": _engine.ResetPlayClock(40); break;
             case "football.playclock.reset25": _engine.ResetPlayClock(25); break;
-            case "football.playclock.set": _engine.SetPlayClock(_engine.State.PlayClockSeconds); break;
+            case "football.playclock.minus": _engine.SetPlayClock(_engine.State.PlayClockSeconds - 1); break;
+            case "football.playclock.plus": _engine.SetPlayClock(_engine.State.PlayClockSeconds + 1); break;
+            case "football.playclock.set": SetPlayClockDialog(); break;
             case "timeoutclock.toggle": _engine.ToggleTimeoutClock(); break;
             case "timeoutclock.reset": _engine.ResetTimeoutClock(60); break;
+            case "timeoutclock.minus10": _engine.SetTimeoutClock(_engine.State.TimeoutClockSeconds - 10); break;
+            case "timeoutclock.minus1": _engine.SetTimeoutClock(_engine.State.TimeoutClockSeconds - 1); break;
+            case "timeoutclock.plus1": _engine.SetTimeoutClock(_engine.State.TimeoutClockSeconds + 1); break;
+            case "timeoutclock.plus10": _engine.SetTimeoutClock(_engine.State.TimeoutClockSeconds + 10); break;
             case "timeoutclock.set": SetTimeoutClockDialog(); break;
             case "football.down.next": NextDown(); break;
             case "football.down.previous": _engine.PreviousDown(); break;
@@ -438,6 +563,8 @@ public partial class ControlPanelView : UserControl
             case "basketball.foul.away": _engine.AddFoul(false); break;
             case "basketball.shotclock.toggle": _engine.ToggleShotClock(); break;
             case "basketball.shotclock.reset": _engine.ResetShotClock(); break;
+            case "basketball.shotclock.minus": _engine.SetShotClock(_engine.State.ShotClockSeconds - 1); break;
+            case "basketball.shotclock.plus": _engine.SetShotClock(_engine.State.ShotClockSeconds + 1); break;
             case "basketball.shotclock.set": SetShotClockDialog(); break;
             case "baseball.ball": _engine.BaseballBall(); break;
             case "baseball.strike": _engine.BaseballStrike(); break;
@@ -496,6 +623,12 @@ public partial class ControlPanelView : UserControl
     {
         var dialog = new ClockTimeDialog("Set timeout clock", _engine.State.TimeoutClockSeconds) { Owner = Window.GetWindow(this) };
         if (dialog.ShowDialog() == true) _engine.SetTimeoutClock(dialog.Seconds);
+    }
+
+    void SetPlayClockDialog()
+    {
+        var dialog = new ClockTimeDialog("Set play clock", _engine.State.PlayClockSeconds) { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() == true) _engine.SetPlayClock(dialog.Seconds);
     }
 
     void SetShotClockDialog()

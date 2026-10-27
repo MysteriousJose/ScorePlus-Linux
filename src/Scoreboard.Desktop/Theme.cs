@@ -21,6 +21,9 @@ public sealed class UserPreferences
 
     public List<MediaEntry> Media { get; set; } = [];
 
+    /// <summary>Saved media playlists: an ordered run of clips that can repeat.</summary>
+    public List<MediaPlaylist> Playlists { get; set; } = [];
+
     /// <summary>Older preference files stored plain paths; they are migrated into <see cref="Media"/> on load.</summary>
     public List<string> MediaFiles { get; set; } = [];
 
@@ -31,6 +34,7 @@ public sealed class UserPreferences
         ShowHeadingHints = ShowHeadingHints,
         LastSport = LastSport,
         Media = [.. Media],
+        Playlists = Playlists.Select(p => new MediaPlaylist { Name = p.Name, Loop = p.Loop, Paths = p.Paths.ToList() }).ToList(),
         MediaFiles = [.. MediaFiles]
     };
 }
@@ -59,6 +63,7 @@ public static class PreferencesStore
     static void Migrate(UserPreferences preferences)
     {
         preferences.Media ??= [];
+        preferences.Playlists ??= [];
         preferences.MediaFiles ??= [];
         if (preferences.Media.Count == 0 && preferences.MediaFiles.Count > 0)
             preferences.Media = preferences.MediaFiles.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => new MediaEntry(p)).ToList();

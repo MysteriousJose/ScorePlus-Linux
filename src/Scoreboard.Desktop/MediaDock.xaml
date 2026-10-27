@@ -18,7 +18,7 @@
       <Setter Property="HorizontalAlignment" Value="Center"/>
       <Setter Property="VerticalAlignment" Value="Center"/>
     </Style>
-    <Style x:Key="TransportButton" TargetType="Button">
+    <Style x:Key="TransportButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
       <Setter Property="Width" Value="44"/>
       <Setter Property="Height" Value="34"/>
       <Setter Property="Padding" Value="0"/>
@@ -29,13 +29,35 @@
       <Setter Property="BorderBrush" Value="{DynamicResource DockBorder}"/>
       <Setter Property="Foreground" Value="{DynamicResource DockText}"/>
     </Style>
-    <Style x:Key="DockAction" TargetType="Button">
+    <Style x:Key="DockAction" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
       <Setter Property="FontSize" Value="11"/>
-      <Setter Property="Padding" Value="10,5"/>
-      <Setter Property="Margin" Value="4,0,0,0"/>
+      <Setter Property="Padding" Value="9,5"/>
+      <Setter Property="MinHeight" Value="30"/>
+      <Setter Property="Margin" Value="3,0,0,0"/>
       <Setter Property="Background" Value="{DynamicResource DockSurface}"/>
       <Setter Property="BorderBrush" Value="{DynamicResource DockBorder}"/>
       <Setter Property="Foreground" Value="{DynamicResource DockText}"/>
+    </Style>
+    <Style x:Key="DockLabel" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="9"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Foreground" Value="{DynamicResource DockMuted}"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+    </Style>
+    <Style x:Key="DockCombo" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="MinHeight" Value="28"/>
+      <Setter Property="Margin" Value="0"/>
+      <Setter Property="Background" Value="{DynamicResource DockInput}"/>
+      <Setter Property="Foreground" Value="{DynamicResource DockText}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource DockBorder}"/>
+    </Style>
+    <Style x:Key="DockCheck" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="Foreground" Value="{DynamicResource DockMuted}"/>
+      <Setter Property="Margin" Value="0,2,8,0"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
     </Style>
     <Style x:Key="TransportSlider" TargetType="Slider">
       <Setter Property="Height" Value="26"/>
@@ -83,12 +105,16 @@
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
-      <DockPanel Margin="0,0,0,6">
+      <DockPanel Margin="0,0,0,5">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
           <Button Content="Remove" Style="{StaticResource DockAction}" Click="Remove_Click" ToolTip="Remove the selected clip from the library"/>
           <Button Content="Import" Style="{StaticResource DockAction}" Click="Import_Click" ToolTip="Import audio or video clips"/>
@@ -96,16 +122,24 @@
         <StackPanel Orientation="Horizontal">
           <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,6,0"/>
           <TextBlock Text="MEDIA" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center"/>
-          <TextBlock x:Name="HintText" Text="  double-click a tile to play" FontSize="10" Foreground="{DynamicResource DockMuted}" Opacity="0.7" VerticalAlignment="Center" Visibility="Collapsed"/>
+          <TextBlock x:Name="HintText" Text="  tags route to the scorebug · folders organise" FontSize="10" Foreground="{DynamicResource DockMuted}" Opacity="0.7" VerticalAlignment="Center" Visibility="Collapsed"/>
         </StackPanel>
       </DockPanel>
 
-      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,2,0,8">
+      <!-- Folder filter: the library stays organised however big it gets. -->
+      <DockPanel Grid.Row="1" Margin="0,0,0,5">
+        <TextBlock Text="FOLDER" Style="{StaticResource DockLabel}"/>
+        <ComboBox x:Name="FolderFilter" Style="{StaticResource DockCombo}" SelectionChanged="FolderFilter_Changed"
+                  ToolTip="Show only the clips in one folder"/>
+      </DockPanel>
+
+      <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,1,0,6">
         <WrapPanel x:Name="Tiles"/>
       </ScrollViewer>
-      <TextBlock x:Name="EmptyText" Grid.Row="1" Text="No media yet — Import adds anthems, ads and clips. Give each clip a tag so scorebug video elements know what to show." Foreground="{DynamicResource DockMuted}" FontSize="11" TextWrapping="Wrap" Margin="2,6,8,0"/>
+      <TextBlock x:Name="EmptyText" Grid.Row="2" Text="No media yet — Import adds anthems, ads and clips. Give each clip a tag so scorebug video elements know what to show."
+                 Foreground="{DynamicResource DockMuted}" FontSize="11" TextWrapping="Wrap" Margin="2,6,8,0"/>
 
-      <Grid Grid.Row="2" Margin="0,0,0,8">
+      <Grid Grid.Row="3" Margin="0,0,0,6">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="Auto"/>
@@ -124,19 +158,62 @@
         <Button x:Name="StopButton" Grid.Column="4" Style="{StaticResource TransportButton}" Content="■" Click="Stop_Click" Margin="0" ToolTip="Stop playback and clear the scorebug video overlay"/>
       </Grid>
 
-      <Grid Grid.Row="3">
+      <!-- Where the selected clip lives and how it behaves. -->
+      <Grid Grid.Row="4" Margin="0,0,0,3">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock Text="TAG" Foreground="{DynamicResource DockMuted}" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,8,0"/>
-        <ComboBox x:Name="TagBox" Grid.Column="1" IsEditable="True" FontSize="12" MinHeight="30" Margin="0,0,4,0"
-                  Background="{DynamicResource DockInput}" Foreground="{DynamicResource DockText}"
-                  BorderBrush="{DynamicResource DockBorder}"
+        <TextBlock Text="FOLDER" Style="{StaticResource DockLabel}"/>
+        <ComboBox x:Name="FolderBox" Grid.Column="1" Style="{StaticResource DockCombo}" IsEditable="True"
+                  ToolTip="Move the selected clip into this folder (type a new name to create one)"/>
+        <Button Grid.Column="2" Content="Move" Style="{StaticResource DockAction}" Click="FolderMove_Click" ToolTip="Move the selected clip into this folder"/>
+      </Grid>
+
+      <Grid Grid.Row="5" Margin="0,0,0,3">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Text="TAG" Style="{StaticResource DockLabel}"/>
+        <ComboBox x:Name="TagBox" Grid.Column="1" Style="{StaticResource DockCombo}" IsEditable="True"
                   ToolTip="Clips with this tag are the only ones a matching scorebug video element will show"/>
         <Button Grid.Column="2" Content="Set tag" Style="{StaticResource DockAction}" Click="TagApply_Click" ToolTip="Apply this tag to the selected clip"/>
       </Grid>
+
+      <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,0,0,5">
+        <CheckBox x:Name="ClipLoopBox" Content="Loop this clip" Style="{StaticResource DockCheck}"
+                  Checked="ClipLoop_Changed" Unchecked="ClipLoop_Changed"
+                  ToolTip="Play this clip again when it ends (a playlist still moves on)"/>
+        <TextBlock x:Name="ClipCountText" Text="" FontSize="10" Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center"/>
+      </StackPanel>
+
+      <!-- Playlists: clips run one after another, repeating when Loop is on. -->
+      <Border Grid.Row="7" Background="{DynamicResource DockSurface}" CornerRadius="6" Padding="7,6">
+        <StackPanel>
+          <DockPanel Margin="0,0,0,4">
+            <TextBlock Text="PLAYLIST" Style="{StaticResource DockLabel}"/>
+            <ComboBox x:Name="PlaylistBox" Style="{StaticResource DockCombo}" IsEditable="True"
+                      SelectionChanged="PlaylistBox_SelectionChanged"
+                      ToolTip="Choose a playlist, or type a name and press New"/>
+          </DockPanel>
+          <WrapPanel>
+            <Button Content="+ New" Style="{StaticResource DockAction}" Click="PlaylistNew_Click" ToolTip="Create a playlist named in the box"/>
+            <Button Content="+ Clip" Style="{StaticResource DockAction}" Click="PlaylistAdd_Click" ToolTip="Add the selected clip to this playlist"/>
+            <Button Content="− Clip" Style="{StaticResource DockAction}" Click="PlaylistRemove_Click" ToolTip="Take the selected clip out of this playlist"/>
+            <Button Content="▶ Run" Style="{StaticResource DockAction}" Click="PlaylistPlay_Click" ToolTip="Play the playlist from the first clip"/>
+            <Button Content="■" Style="{StaticResource DockAction}" Click="PlaylistStop_Click" ToolTip="Stop the playlist"/>
+          </WrapPanel>
+          <DockPanel Margin="0,4,0,0">
+            <CheckBox x:Name="PlaylistLoopBox" Content="Loop playlist" Style="{StaticResource DockCheck}"
+                      Checked="PlaylistLoop_Changed" Unchecked="PlaylistLoop_Changed"
+                      ToolTip="Start the playlist again after the last clip"/>
+            <TextBlock x:Name="PlaylistInfo" Text="" FontSize="10" Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+          </DockPanel>
+        </StackPanel>
+      </Border>
     </Grid>
   </Border>
 </UserControl>

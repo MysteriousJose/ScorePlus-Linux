@@ -9,12 +9,14 @@ namespace Scoreboard.Desktop;
 
 /// <summary>
 /// The one media dock. The main window and each detached control panel host their own copy of this
-/// control against the same <see cref="MediaSession"/>, so imports, tags and playback stay in step.
-/// Docks are hosted in resizable panels by their windows; the dock itself just fills what it is given.
-/// Its palette follows the operator theme, so it sits in the app rather than on top of it.
+/// control against the same <see cref="MediaSession"/>, so imports, folders, tags, playlists and
+/// playback stay in step. Docks are hosted in resizable panels by their windows; the dock itself
+/// just fills what it is given. Its palette follows the operator theme.
 /// </summary>
 public partial class MediaDock : UserControl
 {
+    const string AllFolders = "All folders";
+
     static readonly Brush BorderSelected = Frozen("#38D7A3");
     static readonly Brush BorderOnAir = Frozen("#FFD166");
 
@@ -30,6 +32,11 @@ public partial class MediaDock : UserControl
     // Guards the bar's own Value writes. Without it, a focused bar turns every transport update
     // into another seek, which re-enters this method and storms the decoder until it dies.
     bool _syncingBar;
+    // Guards combo writes made by Refresh so they are not read back as operator input.
+    bool _syncing;
+    string? _syncedSelection;
+    string? _playlistNamesSignature;
+    string? _selectedPlaylistName;
     // While a seek is being applied the bar must not snap back to the old position.
     DateTime _settleUntil;
 
@@ -92,18 +99,79 @@ public partial class MediaDock : UserControl
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Refresh); return; }
         if (_session is null) return;
-        var selected = _session.Selected;
-        if (selected is not null && !TagBox.IsKeyboardFocused && TagBox.Text != selected.Tag) TagBox.Text = selected.Tag;
-        RefreshTiles();
+        _syncing = true;
+        try
+        {
+            var selected = _session.Selected;
+
+            // ---------- folder filter ----------
+            var folders = new List<string> { AllFolders };
+            folders.AddRange(_session.Folders);
+            if (!FoldersMatch(folders))
+            {
+                FolderFilter.ItemsSource = folders;
+            }
+            var wanted = _session.FolderFilter is null ? AllFolders : _session.FolderFilter;
+            if (!string.Equals(FolderFilter.SelectedItem as string, wanted, StringComparison.OrdinalIgnoreCase))
+                FolderFilter.SelectedItem = folders.FirstOrDefault(f => string.Equals(f, wanted, StringComparison.OrdinalIgnoreCase)) ?? AllFolders;
+
+            RefreshTiles();
+
+            // ---------- selected clip ----------
+            if (selected is not null && !string.Equals(_syncedSelection, selected.Path, StringComparison.OrdinalIgnoreCase))
+            {
+                _syncedSelection = selected.Path;
+                if (!FolderBox.IsKeyboardFocusWithin) FolderBox.Text = selected.Folder;
+                if (!TagBox.IsKeyboardFocusWithin) TagBox.Text = selected.Tag;
+            }
+            ClipLoopBox.IsChecked = selected?.Loop == true;
+            ClipLoopBox.IsEnabled = selected is not null;
+            ClipCountText.Text = _session.VisibleLibrary.Count == _session.Library.Count
+                ? $"{_session.Library.Count} clip{(_session.Library.Count == 1 ? "" : "s")}"
+                : $"{_session.VisibleLibrary.Count} of {_session.Library.Count}";
+
+            // ---------- playlists ----------
+            var names = _session.Playlists.Select(p => p.Name).ToArray();
+            var signature = string.Join("|", names);
+            if (signature != _playlistNamesSignature)
+            {
+                _playlistNamesSignature = signature;
+                PlaylistBox.ItemsSource = names;
+                if (!names.Contains(_selectedPlaylistName ?? "", StringComparer.OrdinalIgnoreCase))
+                    _selectedPlaylistName = names.FirstOrDefault();
+            }
+            if (!PlaylistBox.IsKeyboardFocusWithin)
+                PlaylistBox.SelectedItem = names.FirstOrDefault(n => string.Equals(n, _selectedPlaylistName, StringComparison.OrdinalIgnoreCase));
+            var playlist = ChosenPlaylist();
+            PlaylistLoopBox.IsChecked = playlist?.Loop == true;
+            PlaylistLoopBox.IsEnabled = playlist is not null;
+            PlaylistInfo.Text = playlist is null
+                ? "no playlist selected"
+                : _session.ActivePlaylist?.Name == playlist.Name
+                    ? $"playing {_session.PlaylistPosition + 1}/{playlist.Count}{(playlist.Loop ? " · loop" : "")}"
+                    : $"{playlist.Count} clip{(playlist.Count == 1 ? "" : "s")}{(playlist.Loop ? " · loop" : "")}";
+        }
+        finally { _syncing = false; }
+
         RefreshTransport();
+    }
+
+    bool FoldersMatch(IReadOnlyList<string> folders)
+    {
+        if (FolderFilter.ItemsSource is not IEnumerable<string> existing) return false;
+        return existing.SequenceEqual(folders, StringComparer.OrdinalIgnoreCase);
     }
 
     void RefreshTiles()
     {
         if (_session is null) return;
         Tiles.Children.Clear();
-        EmptyText.Visibility = _session.Library.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var entry in _session.Library) Tiles.Children.Add(BuildTile(entry));
+        var clips = _session.VisibleLibrary;
+        EmptyText.Visibility = clips.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyText.Text = _session.Library.Count == 0
+            ? "No media yet — Import adds anthems, ads and clips. Give each clip a tag so scorebug video elements know what to show."
+            : "No clips in this folder — pick All folders, or import a clip here.";
+        foreach (var entry in clips) Tiles.Children.Add(BuildTile(entry));
     }
 
     FrameworkElement BuildTile(MediaEntry entry)
@@ -122,7 +190,7 @@ public partial class MediaDock : UserControl
             BorderBrush = isOnAir ? BorderOnAir : isSelected ? BorderSelected : _tileBorderIdle,
             Cursor = Cursors.Hand,
             Tag = entry,
-            ToolTip = $"{entry.Label}\n{entry.KindLabel} · tag {entry.Tag}\nDouble-click to play"
+            ToolTip = $"{entry.Label}\n{entry.KindLabel} · tag {entry.Tag} · {entry.FolderLabel}{(entry.Loop ? "\nloops" : "")}\nDouble-click to play"
         };
         ThemeManager.SetSkipTheme(tile, true);
 
@@ -172,7 +240,7 @@ public partial class MediaDock : UserControl
 
         var tag = new TextBlock
         {
-            Text = entry.Tag.ToUpperInvariant(),
+            Text = (entry.Loop ? "⟳  " : "") + entry.TagAndFolder.ToUpperInvariant(),
             FontSize = 9,
             FontWeight = FontWeights.Bold,
             Foreground = _muted,
@@ -211,6 +279,13 @@ public partial class MediaDock : UserControl
         finally { _syncingBar = false; }
     }
 
+    MediaPlaylist? ChosenPlaylist()
+    {
+        if (_session is null) return null;
+        var name = (PlaylistBox.SelectedItem as string) ?? _selectedPlaylistName ?? PlaylistBox.Text;
+        return _session.Playlists.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
     // ---------- handlers ----------
 
     void Import_Click(object sender, RoutedEventArgs e)
@@ -223,7 +298,8 @@ public partial class MediaDock : UserControl
             Filter = "Audio & video|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v;*.mp3;*.wav;*.m4a;*.aac;*.wma|Video (*.mp4;*.mov;*.mkv;*.webm)|*.mp4;*.mov;*.mkv;*.webm|Audio (*.mp3;*.wav;*.m4a;*.aac)|*.mp3;*.wav;*.m4a;*.aac|All files (*.*)|*.*"
         };
         if (dialog.ShowDialog() != true) return;
-        _session.Import(dialog.FileNames, MediaLibrary.NormalizeTag(TagBox.Text));
+        var folder = _session.FolderFilter ?? FolderBox.Text;
+        _session.Import(dialog.FileNames, MediaLibrary.NormalizeTag(TagBox.Text), folder);
     }
 
     void Remove_Click(object sender, RoutedEventArgs e)
@@ -232,10 +308,86 @@ public partial class MediaDock : UserControl
         _session.Remove(selected);
     }
 
+    void FolderFilter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || _session is null || FolderFilter.SelectedItem is not string choice) return;
+        _session.SetFolderFilter(choice == AllFolders ? null : choice);
+    }
+
+    void FolderMove_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session?.Selected is not { } selected) return;
+        _session.MoveToFolder(selected, FolderBox.Text);
+    }
+
     void TagApply_Click(object sender, RoutedEventArgs e)
     {
         if (_session?.Selected is not { } selected) return;
         _session.Retag(selected, TagBox.Text);
+    }
+
+    void ClipLoop_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_syncing || _session?.Selected is not { } selected) return;
+        _session.SetClipLoop(selected, ClipLoopBox.IsChecked == true);
+    }
+
+    void PlaylistBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing) return;
+        _selectedPlaylistName = PlaylistBox.SelectedItem as string ?? _selectedPlaylistName;
+        Refresh();
+    }
+
+    void PlaylistNew_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null) return;
+        var name = (PlaylistBox.Text ?? "").Trim();
+        if (name.Length == 0) name = $"Playlist {_session.Playlists.Count + 1}";
+        var playlist = _session.CreatePlaylist(name);
+        _selectedPlaylistName = playlist.Name;
+        Refresh();
+    }
+
+    void PlaylistAdd_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null) return;
+        var playlist = ChosenPlaylist();
+        if (playlist is null)
+        {
+            playlist = _session.CreatePlaylist(PlaylistBox.Text);
+            _selectedPlaylistName = playlist.Name;
+        }
+        if (_session.Selected is not { } selected)
+        {
+            _session.Report("SELECT A CLIP FIRST");
+            return;
+        }
+        _session.AddToPlaylist(playlist, selected);
+        Refresh();
+    }
+
+    void PlaylistRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session?.Selected is not { } selected || ChosenPlaylist() is not { } playlist) return;
+        _session.RemoveFromPlaylist(playlist, selected);
+        Refresh();
+    }
+
+    void PlaylistPlay_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null || ChosenPlaylist() is not { } playlist) return;
+        _session.PlayPlaylist(playlist);
+        Refresh();
+    }
+
+    void PlaylistStop_Click(object sender, RoutedEventArgs e) => _session?.Stop();
+
+    void PlaylistLoop_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_syncing || _session is null || ChosenPlaylist() is not { } playlist) return;
+        _session.SetPlaylistLoop(playlist, PlaylistLoopBox.IsChecked == true);
+        Refresh();
     }
 
     void PlayPause_Click(object sender, RoutedEventArgs e) => _session?.TogglePlayPause();

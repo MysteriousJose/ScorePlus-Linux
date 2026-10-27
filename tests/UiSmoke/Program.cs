@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Scoreboard.Core;
 using Scoreboard.Desktop;
 
@@ -855,14 +856,16 @@ internal static class Program
                 var textIndex = contextCatalog.Layout.Elements.FindIndex(e => e.Kind == ScorebugElementKind.Text);
                 contextLayers.SelectedIndex = contextCatalog.Layout.Elements.Count - 1 - textIndex;
                 contextEditor.UpdateLayout();
-                var imagePicker = FindAll<Button>(contextEditor).First(b => (b.Content as string) is "Choose logo image…");
-                if (imagePicker.IsVisible)
-                    throw new Exception("FAIL: the logo image picker is offered for a text element");
+                var logoSection = (FrameworkElement)contextEditor.FindName("LogoSection")!;
+                if (logoSection.IsVisible)
+                    throw new Exception("FAIL: the team-logo selector is offered for a text element");
                 var logoIndex = contextCatalog.Layout.Elements.FindIndex(e => e.Kind == ScorebugElementKind.Logo);
                 contextLayers.SelectedIndex = contextCatalog.Layout.Elements.Count - 1 - logoIndex;
                 contextEditor.UpdateLayout();
-                if (!imagePicker.IsVisible)
-                    throw new Exception("FAIL: the logo image picker is missing for a logo element");
+                if (!logoSection.IsVisible || contextEditor.FindName("LogoInput") is not ComboBox)
+                    throw new Exception("FAIL: a logo element has no team-logo selector");
+                if (FindAll<Button>(contextEditor).Any(b => (b.Content as string) is "Choose logo image…"))
+                    throw new Exception("FAIL: logos are still configured in the studio instead of the control panel");
 
                 contextCatalog.Update(layout => layout.Elements.Add(new ScorebugElement { Name = "Quarter chip", Content = "{{PERIOD}}", X = 20, Y = 20, Width = 200, Height = 60 }));
                 contextEditor.UpdateLayout();
@@ -905,6 +908,302 @@ internal static class Program
             finally { if (File.Exists(videoLabelPath)) File.Delete(videoLabelPath); }
             Console.WriteLine("PASS: an empty video element is labelled in the studio only, never on the audience picture");
 
+            // ---------- fonts, type styles, team colour slots and value animations ----------
+            if (FontCatalog.All.Count < 25)
+                throw new Exception($"FAIL: only {FontCatalog.All.Count} fonts are offered; the studio needs at least 25");
+            if (FontCatalog.All.Select(f => f.Source).Distinct(StringComparer.OrdinalIgnoreCase).Count() < 25)
+                throw new Exception("FAIL: the font picker repeats families");
+            Console.WriteLine($"PASS: the studio offers {FontCatalog.All.Count} font families and imports your own");
+            if (Enum.GetValues<ScorebugTransition>().Length < 10)
+                throw new Exception($"FAIL: only {Enum.GetValues<ScorebugTransition>().Length} text-change animations exist");
+
+            var stylePath = Path.Combine(Path.GetTempPath(), $"smoke-style-{Guid.NewGuid():N}.json");
+            try
+            {
+                var styleCatalog = new ScorebugCatalog(stylePath);
+                styleCatalog.Update(layout =>
+                {
+                    layout.Elements.Clear();
+                    layout.Elements.Add(new ScorebugElement { Name = "Styled", Content = "{{HOME_TEAM}}", X = 10, Y = 10, Width = 420, Height = 90, FontSize = 48 });
+                });
+                var styleEngine = new GameEngine();
+                styleEngine.NewGame("football");
+                styleEngine.SetTeamIdentity(true, "Home Town", "HT", null, "#FF3366CC", "#FF223344");
+                var styleEditor = new ScorebugEditorWindow(styleCatalog, styleEngine);
+                styleEditor.Show();
+                styleEditor.UpdateLayout();
+                ((ListBox)styleEditor.FindName("Layers")!).SelectedIndex = 0;
+                styleEditor.UpdateLayout();
+                ((ComboBox)styleEditor.FindName("TransitionInput")!).SelectedItem = ScorebugTransition.WheelUp;
+                ((ComboBox)styleEditor.FindName("ForegroundSourceInput")!).SelectedIndex = 1; // Home · primary
+                ((CheckBox)styleEditor.FindName("BoldInput")!).IsChecked = false;
+                ((CheckBox)styleEditor.FindName("ItalicInput")!).IsChecked = true;
+                ((CheckBox)styleEditor.FindName("UnderlineInput")!).IsChecked = true;
+                ((CheckBox)styleEditor.FindName("StrikeInput")!).IsChecked = true;
+                Pump(TimeSpan.FromMilliseconds(700));
+                styleEditor.UpdateLayout();
+                var styled = styleCatalog.Layout.Elements[0];
+                if (styled.Transition != ScorebugTransition.WheelUp || styled.ForegroundSource != ScorebugColorSource.HomePrimary
+                    || styled.Bold || !styled.Italic || !styled.Underline || !styled.StrikeThrough)
+                    throw new Exception($"FAIL: the studio did not save type style / colour slot / transition ({styled.Transition}, {styled.ForegroundSource}, bold={styled.Bold})");
+                var styledText = FindAll<ScorebugTextBlock>((Canvas)styleEditor.FindName("DesignCanvas")!).FirstOrDefault(t => t.Text == "Home Town")
+                    ?? throw new Exception("FAIL: the styled text is missing from the studio canvas");
+                if (styledText.FontStyle != FontStyles.Italic || styledText.TextDecorations is null || styledText.TextDecorations.Count != 2)
+                    throw new Exception("FAIL: italic / underline / strike did not reach the canvas text");
+                if (styledText.Foreground is not SolidColorBrush teamBrush || teamBrush.Color != Color.FromRgb(0x33, 0x66, 0xCC))
+                    throw new Exception($"FAIL: the home primary colour did not reach the text ({styledText.Foreground})");
+                styleEditor.Close();
+                Console.WriteLine("PASS: fonts, bold/italic/underline/strike, team colour slots and value transitions reach the canvas");
+            }
+            finally { if (File.Exists(stylePath)) File.Delete(stylePath); }
+
+            // ---------- layouts: preview arrows switch the artwork, Update Output puts it on air ----------
+            {
+                var layoutMain = new MainWindow(LaunchMode.New) { Width = 1280, Height = 800 };
+                layoutMain.Show();
+                layoutMain.UpdateLayout();
+                if (layoutMain.FindName("LayoutPrevButton") is not Button || layoutMain.FindName("LayoutNextButton") is not Button)
+                    throw new Exception($"FAIL: the program preview has no layout arrows (buttons: {string.Join(",", FindAll<Button>(layoutMain).Select(b => b.Name).Where(n => n.Length > 0))})");
+                layoutMain.Scorebug.AddLayout("Slideshow");
+                layoutMain.Scorebug.Update(layout =>
+                {
+                    layout.Elements.Clear();
+                    layout.Elements.Add(new ScorebugElement { Name = "Slide", Content = "SLIDE TWO", X = 40, Y = 40, Width = 700, Height = 110, FontSize = 56 });
+                });
+                layoutMain.Scorebug.SelectLayout(0);
+                var preview = FindAll<ScorebugCanvasView>(layoutMain).First();
+                if (FindAll<TextBlock>(preview).Any(t => t.Text == "SLIDE TWO"))
+                    throw new Exception("FAIL: the preview already shows the second layout before the arrow is used");
+                layoutMain.ShiftLayout(1);
+                layoutMain.UpdateLayout();
+                if (!FindAll<TextBlock>(preview).Any(t => t.Text == "SLIDE TWO"))
+                    throw new Exception("FAIL: the forward arrow did not switch the program preview");
+                if (!layoutMain.HasStagedChanges)
+                    throw new Exception("FAIL: a layout switch did not wait for Update Output");
+                var audienceBefore = new ScorebugCanvasView(layoutMain.Scorebug, layoutMain.Engine, publishedLayout: true);
+                audienceBefore.Measure(new Size(1280, 720));
+                audienceBefore.Arrange(new Rect(0, 0, 1280, 720));
+                if (FindAll<TextBlock>(audienceBefore).Any(t => t.Text == "SLIDE TWO"))
+                    throw new Exception("FAIL: an unpublished layout reached the audience output");
+                layoutMain.PublishOutput();
+                if (layoutMain.HasStagedChanges)
+                    throw new Exception("FAIL: Update Output left the layout staged");
+                var audienceAfter = new ScorebugCanvasView(layoutMain.Scorebug, layoutMain.Engine, publishedLayout: true);
+                audienceAfter.Measure(new Size(1280, 720));
+                audienceAfter.Arrange(new Rect(0, 0, 1280, 720));
+                if (!FindAll<TextBlock>(audienceAfter).Any(t => t.Text == "SLIDE TWO"))
+                    throw new Exception("FAIL: Update Output did not send the chosen layout to the audience");
+                layoutMain.ShiftLayout(-1);
+                layoutMain.UpdateLayout();
+                if (FindAll<TextBlock>(preview).Any(t => t.Text == "SLIDE TWO"))
+                    throw new Exception("FAIL: the back arrow did not return to the first layout");
+                // The studio's own layout picker drives the same catalog.
+                var layoutStudio = new ScorebugEditorWindow(layoutMain.Scorebug, layoutMain.Engine);
+                layoutStudio.Show();
+                layoutStudio.UpdateLayout();
+                var layoutBox = (ComboBox)layoutStudio.FindName("LayoutBox")!;
+                if (layoutBox.Items.Count != 2)
+                    throw new Exception($"FAIL: the studio lists {layoutBox.Items.Count} layouts for 2");
+                layoutBox.SelectedIndex = 1;
+                layoutStudio.UpdateLayout();
+                if (layoutMain.Scorebug.ActiveIndex != 1)
+                    throw new Exception("FAIL: the studio layout picker did not switch the design");
+                if (((Canvas)layoutStudio.FindName("DesignCanvas")!).Width < 320)
+                    throw new Exception("FAIL: the studio did not draw the chosen layout");
+                layoutStudio.Close();
+                layoutMain.Scorebug.SelectLayout(0);
+                audienceBefore.Dispose();
+                audienceAfter.Dispose();
+                layoutMain.Close();
+                Console.WriteLine("PASS: layout arrows switch the preview and Update Output sends the chosen scorebug on air");
+            }
+
+            // ---------- team pop-up: name, abbreviation, logo and colours from the console ----------
+            var teamEngine = new GameEngine();
+            teamEngine.NewGame("football");
+            var teamPanel = new GameControlWindow(teamEngine, () => { }, _ => { }, () => true);
+            teamPanel.Show();
+            teamPanel.UpdateLayout();
+            var awayDetails = (Button)teamPanel.Panel.FindName("AwayDetailsButton")!;
+            if (awayDetails.ActualHeight < 32 || (awayDetails.Content as string) != "…")
+                throw new Exception($"FAIL: the team details button is missing or tiny ({awayDetails.ActualWidth:0}x{awayDetails.ActualHeight:0})");
+            var teamDialog = new TeamIdentityWindow(teamEngine, false, "Dark");
+            teamDialog.Show();
+            teamDialog.UpdateLayout();
+            var doneButton = FindAll<Button>(teamDialog).FirstOrDefault(b => (b.Content as string) == "Done")
+                ?? throw new Exception("FAIL: the team pop-up has no Done button");
+            doneButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (teamEngine.State.AwayTeam != "VISITORS")
+                throw new Exception($"FAIL: saving unchanged team details changed the team ({teamEngine.State.AwayTeam})");
+            teamPanel.Close();
+            Console.WriteLine("PASS: the … beside a team name opens the team details box (name, abbreviation, logo, colours)");
+
+            // Colour slots resolve against the live team palette.
+            var colorPath = Path.Combine(Path.GetTempPath(), $"smoke-colour-{Guid.NewGuid():N}.json");
+            try
+            {
+                var colorCatalog = new ScorebugCatalog(colorPath);
+                colorCatalog.Update(layout =>
+                {
+                    layout.Elements.Clear();
+                    layout.Elements.Add(new ScorebugElement { Name = "Away name", Content = "{{AWAY_TEAM}}", X = 10, Y = 10, Width = 460, Height = 90, FontSize = 44, ForegroundSource = ScorebugColorSource.AwayPrimary });
+                });
+                var colorEngine = new GameEngine();
+                colorEngine.NewGame("football");
+                colorEngine.SetTeamIdentity(false, "Rovers FC", "RFC", null, "#FFAA1122", "#FF223344");
+                var colorView = new ScorebugCanvasView(colorCatalog, colorEngine);
+                colorView.Measure(new Size(1280, 720));
+                colorView.Arrange(new Rect(0, 0, 1280, 720));
+                var awayText = FindAll<TextBlock>(colorView).FirstOrDefault(t => t.Text == "Rovers FC")
+                    ?? throw new Exception("FAIL: the team colour element did not render the team name");
+                if (awayText.Foreground is not SolidColorBrush awayBrush || awayBrush.Color != Color.FromArgb(0xFF, 0xAA, 0x11, 0x22))
+                    throw new Exception($"FAIL: the visitors' primary colour did not reach the graphic ({awayText.Foreground})");
+                colorEngine.SetTeamIdentity(false, "Rovers FC", "RFC", null, "#FF00FF00", "#FF223344");
+                colorView.Refresh();
+                colorView.UpdateLayout();
+                if (awayText.Foreground is not SolidColorBrush recoloured || recoloured.Color != Color.FromArgb(0xFF, 0x00, 0xFF, 0x00))
+                    throw new Exception("FAIL: changing a team colour did not recolour the graphic live");
+                // A team logo imported in the console reaches a logo element on the graphic.
+                var logoPath = Path.Combine(Path.GetTempPath(), $"smoke-team-logo-{Guid.NewGuid():N}.png");
+                WritePng(logoPath, Color.FromRgb(0x22, 0x88, 0xFF));
+                colorCatalog.Update(layout =>
+                {
+                    layout.Elements.Add(new ScorebugElement { Name = "Away logo", Kind = ScorebugElementKind.Logo, LogoSide = ScorebugLogoSide.Away, X = 900, Y = 40, Width = 160, Height = 120 });
+                });
+                colorEngine.SetTeamIdentity(false, "Rovers FC", "RFC", logoPath, "#FF00FF00", "#FF223344");
+                colorView.Rebuild();
+                colorView.Measure(new Size(1280, 720));
+                colorView.Arrange(new Rect(0, 0, 1280, 720));
+                colorView.UpdateLayout();
+                if (!FindAll<Image>(colorView).Any(i => i.Source is BitmapImage))
+                    throw new Exception("FAIL: the team logo did not reach the scorebug");
+                colorView.Dispose();
+                try { File.Delete(logoPath); } catch { }
+
+                // A value change must finish on the new value, whatever the animation, and a value
+                // that changes mid-flight must not leave the old one on the graphic.
+                foreach (var transition in new[] { ScorebugTransition.WheelUp, ScorebugTransition.Pop, ScorebugTransition.Flip })
+                {
+                    var block = new ScorebugTextBlock(new ScorebugElement { Transition = transition, FontSize = 40 });
+                    var transitionHost = new Window { Width = 360, Height = 160, Content = block };
+                    transitionHost.Show();
+                    transitionHost.UpdateLayout();
+                    block.UpdateText("10", ScorebugTransition.Cut);
+                    block.UpdateText("17", transition);
+                    Pump(TimeSpan.FromMilliseconds(650));
+                    if (block.Text != "17" || block.Opacity < 0.95)
+                        throw new Exception($"FAIL: the {transition} animation left the value at '{block.Text}' with opacity {block.Opacity:0.00}");
+                    block.UpdateText("21", transition);
+                    Pump(TimeSpan.FromMilliseconds(40));
+                    block.UpdateText("24", transition);
+                    Pump(TimeSpan.FromMilliseconds(80));
+                    if (block.Text != "24")
+                        throw new Exception($"FAIL: a value changed mid-animation showed '{block.Text}' instead of the newest value");
+                    transitionHost.Close();
+                }
+                Console.WriteLine("PASS: any colour can point at a team's primary or secondary colour, team logos reach the graphic, and value animations land on the newest value");
+            }
+            finally { if (File.Exists(colorPath)) File.Delete(colorPath); }
+
+            // ---------- media: folders, playlists and per-clip loop ----------
+            var clipA = Path.Combine(Path.GetTempPath(), $"smoke-playlist-a-{Guid.NewGuid():N}.wav");
+            var clipB = Path.Combine(Path.GetTempPath(), $"smoke-playlist-b-{Guid.NewGuid():N}.wav");
+            WriteSilentWav(clipA, 1);
+            WriteSilentWav(clipB, 1);
+            var playlistSession = new MediaSession(new UserPreferences());
+            try
+            {
+                playlistSession.Import([clipA, clipB], "Music", "Ads");
+                playlistSession.Import([Path.Combine(Path.GetTempPath(), "smoke-loop.mp4")], "Ads", "Ads");
+                if (playlistSession.Folders.Count != 1 || playlistSession.Folders[0] != "Ads")
+                    throw new Exception($"FAIL: folders did not collect the clips ({string.Join(",", playlistSession.Folders)})");
+                var importedVideo = playlistSession.Library.Single(m => m.Path.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase));
+                if (!importedVideo.Loop)
+                    throw new Exception("FAIL: an imported video does not loop like a stadium screen");
+                if (playlistSession.Library.Single(m => m.Path == clipA).Loop)
+                    throw new Exception("FAIL: imported audio loops by default");
+
+                var folderDock = new MediaDock();
+                folderDock.Attach(playlistSession);
+                var folderWindow = new Window { Width = 470, Height = 680, Content = folderDock };
+                folderWindow.Show();
+                folderWindow.UpdateLayout();
+                var folderFilter = (ComboBox)folderDock.FindName("FolderFilter")!;
+                if ((folderFilter.SelectedItem as string) != "All folders")
+                    throw new Exception($"FAIL: the folder filter starts at {folderFilter.SelectedItem}");
+                playlistSession.MoveToFolder(playlistSession.Library[1], "Openers");
+                folderWindow.UpdateLayout();
+                var tiles = (WrapPanel)folderDock.FindName("Tiles")!;
+                if (tiles.Children.Count != 3)
+                    throw new Exception($"FAIL: the dock shows {tiles.Children.Count} clips for a library of 3");
+                folderFilter.SelectedItem = "Openers";
+                folderWindow.UpdateLayout();
+                if (tiles.Children.Count != 1)
+                    throw new Exception($"FAIL: choosing a folder did not filter the library ({tiles.Children.Count} tiles)");
+                if (((ComboBox)folderDock.FindName("FolderBox")!).Text != "Openers")
+                    throw new Exception("FAIL: the selected clip's folder is not shown in the dock");
+
+                playlistSession.SetFolderFilter(null);
+                playlistSession.Select(playlistSession.Library[0]);
+                folderWindow.UpdateLayout();
+                var clipLoop = (CheckBox)folderDock.FindName("ClipLoopBox")!;
+                clipLoop.IsChecked = true;
+                if (!playlistSession.Library[0].Loop)
+                    throw new Exception("FAIL: the loop toggle did not reach the clip");
+
+                var playlist = playlistSession.CreatePlaylist("Run of show");
+                playlistSession.AddToPlaylist(playlist, playlistSession.Library[0]);
+                playlistSession.AddToPlaylist(playlist, playlistSession.Library[1]);
+                playlistSession.SetPlaylistLoop(playlist, true);
+                folderWindow.UpdateLayout();
+                var playlistBox = (ComboBox)folderDock.FindName("PlaylistBox")!;
+                if (!playlistBox.Items.Cast<string>().Contains("Run of show"))
+                    throw new Exception("FAIL: a new playlist does not appear in the dock");
+                if (((CheckBox)folderDock.FindName("PlaylistLoopBox")!).IsChecked != true)
+                    throw new Exception("FAIL: the playlist loop setting does not reach the dock");
+                playlistSession.PlayPlaylist(playlist);
+                if (playlistSession.ActivePlaylist?.Name != "Run of show" || playlistSession.PlaylistPosition != 0)
+                    throw new Exception("FAIL: a playlist did not start at its first clip");
+                // Each clip is one second long: the playlist must move on by itself when one ends.
+                var autoAdvance = DateTime.UtcNow.AddSeconds(10);
+                while (playlistSession.PlaylistPosition == 0 && playlistSession.ActivePlaylist is not null && DateTime.UtcNow < autoAdvance)
+                    Pump(TimeSpan.FromMilliseconds(200));
+                if (playlistSession.PlaylistPosition != 1)
+                    throw new Exception($"FAIL: the playlist did not advance on its own ({playlistSession.PlaylistPosition})");
+                playlistSession.NextClip();
+                if (playlistSession.PlaylistPosition != 0)
+                    throw new Exception("FAIL: a looping playlist did not wrap to its first clip");
+                playlistSession.Stop();
+                var savedMedia = PreferencesStore.Load();
+                var savedPlaylist = savedMedia.Playlists.SingleOrDefault(p => p.Name == "Run of show");
+                if (savedPlaylist is null || savedPlaylist.Count != 2 || !savedPlaylist.Loop || savedMedia.Media.All(m => m.Path != clipA))
+                    throw new Exception("FAIL: playlists, folders and clips did not survive a preferences save");
+                folderWindow.Close();
+                Console.WriteLine("PASS: folders organise the library, playlists run clip after clip with loop, and a clip can loop on its own");
+            }
+            finally
+            {
+                playlistSession.Dispose();
+                try { File.Delete(clipA); } catch { }
+                try { File.Delete(clipB); } catch { }
+            }
+
+            // Time controls carry the same full-size buttons as the rest of the console.
+            var clockPanel = new GameControlWindow(new GameEngine(), () => { }, _ => { }, () => true);
+            clockPanel.Show();
+            clockPanel.UpdateLayout();
+            clockPanel.Panel.UpdateLayout();
+            var minusMinute = FindAll<Button>(clockPanel.Panel).FirstOrDefault(b => (b.Tag as string) == "clock.minus60")
+                ?? throw new Exception("FAIL: the game clock has no minute buttons");
+            if (minusMinute.ActualHeight < 32 || minusMinute.ActualWidth < 32)
+                throw new Exception($"FAIL: a clock button is still small ({minusMinute.ActualWidth:0}x{minusMinute.ActualHeight:0})");
+            if (!FindAll<Button>(clockPanel.Panel).Any(b => (b.Tag as string) == "timeoutclock.plus10"))
+                throw new Exception("FAIL: the timeout clock has no step buttons");
+            if (clockPanel.Panel.FindName("LayoutNextButton") is not Button || string.IsNullOrWhiteSpace(((TextBlock)clockPanel.Panel.FindName("LayoutLabel")!).Text))
+                throw new Exception("FAIL: a detached control panel cannot switch layouts");
+            clockPanel.Close();
+            Console.WriteLine("PASS: clock buttons are full-size and every panel can switch layouts");
+
             Console.WriteLine("ALL UI SMOKE CHECKS PASSED");
 
             app.Shutdown();
@@ -939,6 +1238,19 @@ internal static class Program
             if (child is T match) yield return match;
             foreach (var nested in FindAll<T>(child)) yield return nested;
         }
+    }
+
+    /// <summary>A tiny solid PNG, so the team-logo path has a real image to load.</summary>
+    static void WritePng(string path, Color color)
+    {
+        var visual = new DrawingVisual();
+        using (var context = visual.RenderOpen()) context.DrawRectangle(new SolidColorBrush(color), null, new Rect(0, 0, 64, 64));
+        var bitmap = new RenderTargetBitmap(64, 64, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
     }
 
     static void RaiseKey(Window window, PresentationSource? source, Key key)

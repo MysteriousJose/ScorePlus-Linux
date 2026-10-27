@@ -93,11 +93,15 @@ public sealed class VideoSurface : Grid
 
     void SyncClip() => _clip.Rect = new Rect(0, 0, Math.Max(0, ActualWidth), Math.Max(0, ActualHeight));
 
-    /// <summary>A stadium screen never stops on a black frame: rewind and keep rolling while cued.</summary>
+    /// <summary>
+    /// A clip that loops behaves like a stadium screen: rewind and keep rolling. A clip with its
+    /// loop switched off holds its last frame and lets the session move to the next playlist item.
+    /// </summary>
     void Loop()
     {
         if (_loadedPath is null) { _playing = false; return; }
-        if (_playback is { IsPlaying: false }) { _playing = false; return; }
+        var entry = _playback?.ActiveFor(_item.MediaTag);
+        if (entry is null || !entry.Loop || _playback is { IsPlaying: false }) { _playing = false; return; }
         try
         {
             _element.Position = TimeSpan.Zero;

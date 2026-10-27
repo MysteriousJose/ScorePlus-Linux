@@ -91,16 +91,26 @@
           <Grid>
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
               <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            <DockPanel Margin="0,0,0,6">
+            <DockPanel Margin="0,0,0,4">
               <TextBlock x:Name="PreviewAudienceHint" DockPanel.Dock="Right" Text="AUDIENCE" Foreground="#38D7A3" FontSize="9" FontWeight="Bold" VerticalAlignment="Center" Visibility="Collapsed"/>
               <StackPanel Orientation="Horizontal">
                 <Border Style="{StaticResource RailAccent}"/>
                 <TextBlock Text="PROGRAM PREVIEW" Style="{StaticResource RailTitle}"/>
               </StackPanel>
             </DockPanel>
-            <ContentControl x:Name="PreviewHost" Grid.Row="1"/>
+            <!-- Several layouts can live in one game; the arrows choose what Update Output sends out. -->
+            <DockPanel Grid.Row="1" Margin="0,0,0,5">
+              <Button x:Name="LayoutPrevButton" DockPanel.Dock="Left" Content="◀" Padding="0" Width="34" MinHeight="30"
+                      FontSize="12" Click="LayoutPrev_Click" ToolTip="Previous scorebug layout"/>
+              <Button x:Name="LayoutNextButton" DockPanel.Dock="Right" Content="▶" Padding="0" Width="34" MinHeight="30"
+                      FontSize="12" Click="LayoutNext_Click" ToolTip="Next scorebug layout"/>
+              <TextBlock x:Name="PreviewLayoutLabel" Text="1 · Broadcast Classic" FontSize="11" FontWeight="SemiBold"
+                         TextAlignment="Center" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+            <ContentControl x:Name="PreviewHost" Grid.Row="2"/>
           </Grid>
         </Border>
 

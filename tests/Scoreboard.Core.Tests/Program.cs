@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Scoreboard.Core;
 // Keep the suite's default paths (sports.json, scorebug.json, autosaves) in a throwaway folder.
 var appDataPath=Path.Combine(Path.GetTempPath(),$"core-appdata-{Guid.NewGuid():N}");
@@ -71,3 +72,67 @@ engine.NewGame("football");engine.SetTeams("Home Team","Away Team");engine.SetFo
 var sameCatalogPath=Path.Combine(Path.GetTempPath(),$"same-{Guid.NewGuid():N}.json");try{var liveCatalog=new SportCatalog(sameCatalogPath);var liveEngine=new GameEngine(liveCatalog);liveEngine.NewGame("football");liveCatalog.SaveProfile(liveCatalog.Find("football")! with { Timeouts=4, ScoringOptions=[1,2,3,6] });liveEngine.NewGame("football");Check(liveEngine.State.HomeTimeouts==4&&liveEngine.State.ScoringOptions.Contains(6),"a sport profile edited while the app runs reaches the next new game without a relaunch");}finally{if(File.Exists(sameCatalogPath))File.Delete(sameCatalogPath);}
 var autosaveFolder=Path.Combine(Path.GetTempPath(),$"autosaves-{Guid.NewGuid():N}");AutosaveStore.UseFolder(autosaveFolder);try{var auto=new GameEngine();auto.NewGame("football");auto.SetTeams("Home Squad","Away Squad");auto.Score(true,7);AutosaveStore.Save(auto);AutosaveStore.Save(auto);var points=AutosaveStore.List();Check(points.Count==1&&points[0].HomeScore==7&&points[0].HomeTeam=="Home Squad","autosaves keep one recoverable point inside the same minute");Check(points[0].Path.EndsWith(".spg",StringComparison.OrdinalIgnoreCase),"autosaves are stored as .spg game files");auto.NewGame("football");var afterNewGame=AutosaveStore.Save(auto,startNewPoint:true);Check(afterNewGame.Count==2&&afterNewGame[0].HomeScore==0&&afterNewGame[1].HomeScore==7,"a new game starts its own recoverable point and leaves the previous game recoverable");}finally{AutosaveStore.UseFolder(null);try{Directory.Delete(autosaveFolder,true);}catch{}}
 var liveTick=new GameEngine();liveTick.NewGame("basketball");var tickNotified=0;liveTick.Changed+=()=>tickNotified++;Thread.Sleep(1100);liveTick.Tick();Check(tickNotified==0,"idle ticks do not notify the UI when no clock is running");
+
+// ---------- team identity: name, abbreviation, logo and palette ----------
+var identityEngine=new GameEngine();identityEngine.NewGame("football");
+identityEngine.SetTeamIdentity(false,"Rovers FC","RFC",@"C:\logos\rovers.png","#FFAA1122","#FF223344");
+Check(identityEngine.State.AwayTeam=="Rovers FC"&&identityEngine.State.AwayAbbreviation=="RFC"&&identityEngine.State.AwayLogoPath!.EndsWith("rovers.png",StringComparison.OrdinalIgnoreCase)&&identityEngine.State.ColorFor(ScorebugColorSource.AwayPrimary)=="#FFAA1122","team details save the name, abbreviation, logo and colours");
+var identityTarget=new GameEngine();identityTarget.LoadFromState(identityEngine.CloneState());
+identityEngine.SetTeamIdentity(true,"Home Town","HT",null,"#FF010203","#FF040506");
+identityTarget.UpdateLiveScoreClock(identityEngine.State);
+Check(identityTarget.State.HomePrimaryColor=="#FF010203"&&identityTarget.State.AwayTeam=="Rovers FC"&&identityTarget.State.AwayLogoPath is not null,"team details publish live like the score and team names");
+identityEngine.SetTeamIdentity(true,"Home Town","HT",null,"not-a-colour","#FF040506");
+Check(identityEngine.State.HomePrimaryColor.StartsWith('#')&&identityEngine.State.HomePrimaryColor.Length is 7 or 9,"an invalid team colour never reaches the graphic");
+Check(identityEngine.State.ColorFor(ScorebugColorSource.Custom) is null&&identityEngine.State.LogoFor(ScorebugLogoSide.None) is null,"a custom colour and no logo resolve to the element's own values");
+
+// ---------- layouts: several scorebugs in one game, one on air at a time ----------
+var layoutsPath=Path.Combine(Path.GetTempPath(),$"layouts-{Guid.NewGuid():N}.json");
+try
+{
+    var layouts=new ScorebugCatalog(layoutsPath);
+    Check(layouts.Layouts.Count==1&&layouts.Layout.Elements.Count>=8,"a fresh catalog opens with the default layout");
+    var second=layouts.AddLayout("Slideshow");
+    layouts.Update(layout=>{layout.Elements.Clear();layout.Elements.Add(new ScorebugElement{Name="Slide",Content="SECOND LAYOUT",X=20,Y=30,Width=600,Height=90});});
+    Check(layouts.Layout.Name=="Slideshow"&&layouts.Layout.Elements.Count==1,"a new layout holds its own artwork");
+    layouts.PublishLayout();
+    layouts.SelectLayout(0);
+    Check(layouts.ActiveIndex==0&&layouts.PublishedIndex==second,"switching the preview leaves the on-air layout alone until it is published");
+    var reloadedLayouts=new ScorebugCatalog(layoutsPath);
+    Check(reloadedLayouts.Layouts.Count==2&&reloadedLayouts.Layouts[1].Name=="Slideshow"&&reloadedLayouts.PublishedIndex==1,"layouts and the published choice persist in scorebug.json");
+    var copy=reloadedLayouts.AddLayout("Copy",copyActive:true);
+    Check(reloadedLayouts.Layouts[copy].Elements[0].Id!=reloadedLayouts.Layouts[1].Elements[0].Id,"a duplicated layout edits independently of the original");
+    Check(reloadedLayouts.RemoveLayout(copy)&&reloadedLayouts.Layouts.Count==2,"a layout can be deleted");
+}
+finally{if(File.Exists(layoutsPath))File.Delete(layoutsPath);}
+var lastLayoutPath=Path.Combine(Path.GetTempPath(),$"last-layout-{Guid.NewGuid():N}.json");
+try{var single=new ScorebugCatalog(lastLayoutPath);Check(!single.RemoveLayout(0),"the last layout cannot be deleted");}finally{if(File.Exists(lastLayoutPath))File.Delete(lastLayoutPath);}
+var legacyLayoutPath=Path.Combine(Path.GetTempPath(),$"legacy-layout-{Guid.NewGuid():N}.json");
+try
+{
+    File.WriteAllText(legacyLayoutPath,JsonSerializer.Serialize(ScorebugLayout.Default()));
+    var migrated=new ScorebugCatalog(legacyLayoutPath);
+    Check(migrated.Layouts.Count==1&&migrated.Layouts[0].Elements.Count>=8,"an older single-layout file becomes the first layout");
+}
+finally{if(File.Exists(legacyLayoutPath))File.Delete(legacyLayoutPath);}
+
+// ---------- typography, text transitions and team colour slots ----------
+var styledPath=Path.Combine(Path.GetTempPath(),$"styled-{Guid.NewGuid():N}.json");
+try
+{
+    var styledCatalog=new ScorebugCatalog(styledPath);
+    styledCatalog.Update(layout=>
+    {
+        layout.Elements.Clear();
+        layout.Elements.Add(new ScorebugElement
+        {
+            Name="Styled",FontFamily="Georgia",Bold=false,Italic=true,Underline=true,StrikeThrough=true,
+            Transition=ScorebugTransition.WheelUp,ForegroundSource=ScorebugColorSource.AwayPrimary,BackgroundSource=ScorebugColorSource.HomeSecondary
+        });
+    });
+    var styledReloaded=new ScorebugCatalog(styledPath);
+    var savedStyle=styledReloaded.Layout.Elements.Single();
+    Check(savedStyle.FontFamily=="Georgia"&&!savedStyle.Bold&&savedStyle.Italic&&savedStyle.Underline&&savedStyle.StrikeThrough,"font family, bold, italic, underline and strike persist in the layout");
+    Check(savedStyle.Transition==ScorebugTransition.WheelUp&&savedStyle.ForegroundSource==ScorebugColorSource.AwayPrimary&&savedStyle.BackgroundSource==ScorebugColorSource.HomeSecondary,"the text transition and team colour slots persist in the layout");
+}
+finally{if(File.Exists(styledPath))File.Delete(styledPath);}
+Check(Enum.GetValues<ScorebugTransition>().Length>=10&&Enum.GetValues<ScorebugColorSource>().Length==5,"there are at least ten value animations and five colour sources");

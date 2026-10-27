@@ -17,6 +17,7 @@ public partial class ScorebugEditorWindow : Window
     readonly string _theme;
     readonly List<VideoSurface> _videoSurfaces = [];
     bool _canvasLoading;
+    bool _layoutLoading;
     readonly System.Windows.Threading.DispatcherTimer _propertySave = new() { Interval=TimeSpan.FromMilliseconds(350) };
     readonly Dictionary<string,(Border Host, FrameworkElement Content, Border Handle)> _visuals = [];
     readonly Dictionary<string,(ScorebugElementKind Kind, ScorebugShape Shape, string? Image, ScorebugAnimation Animation, double Opacity)> _applied = [];
@@ -34,6 +35,16 @@ public partial class ScorebugEditorWindow : Window
         public override string ToString() => Label;
     }
 
+    sealed record ColorSourceOption(ScorebugColorSource Source, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    sealed record LogoOption(ScorebugLogoSide Side, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
     // Per-element quarter style. "Follow game default" keeps the old behaviour for layouts that
     // never asked for anything else.
     static readonly PeriodOption[] PeriodOptions =
@@ -44,14 +55,34 @@ public partial class ScorebugEditorWindow : Window
         new("Number", "1")
     ];
 
+    static readonly ColorSourceOption[] ColorSources =
+    [
+        new(ScorebugColorSource.Custom, "Custom colour"),
+        new(ScorebugColorSource.HomePrimary, "Home · primary"),
+        new(ScorebugColorSource.HomeSecondary, "Home · secondary"),
+        new(ScorebugColorSource.AwayPrimary, "Visitors · primary"),
+        new(ScorebugColorSource.AwaySecondary, "Visitors · secondary")
+    ];
+
+    static readonly LogoOption[] Logos =
+    [
+        new(ScorebugLogoSide.Home, "Home team logo"),
+        new(ScorebugLogoSide.Away, "Visitors team logo")
+    ];
+
     public ScorebugEditorWindow(ScorebugCatalog catalog, GameEngine engine, MediaPlayback? playback=null, string theme="Dark")
     {
         InitializeComponent(); _catalog=catalog; _engine=engine; _playback=playback; _theme=theme;
         ThemeManager.Apply(this,theme);
         AnimationInput.ItemsSource=Enum.GetValues<ScorebugAnimation>();
+        TransitionInput.ItemsSource=Enum.GetValues<ScorebugTransition>();
         ShapeInput.ItemsSource=Enum.GetValues<ScorebugShape>();
         IconInput.ItemsSource=Enum.GetValues<ScorebugIcon>();
         PeriodFormatInput.ItemsSource=PeriodOptions;
+        ForegroundSourceInput.ItemsSource=ColorSources;
+        BackgroundSourceInput.ItemsSource=ColorSources;
+        LogoInput.ItemsSource=Logos;
+        FontInput.ItemsSource=FontCatalog.All;
         CanvasPreset.ItemsSource=ScorebugLayout.SizePresets.Select(p=>p.Name).ToArray();
         _canvasLoading=true;
         CanvasPreset.SelectedIndex=PresetIndex(catalog.Layout.Width,catalog.Layout.Height);
@@ -79,12 +110,13 @@ public partial class ScorebugEditorWindow : Window
         Layers.SelectedItem=ordered.FirstOrDefault(x=>x.Element.Id==_selectedId);
         LayerCount.Text=ordered.Length==0?"no elements":$"{ordered.Length} element{(ordered.Length==1?"":"s")}";
         _syncingLayers=false;
+        SyncLayoutPicker();
         foreach(var surface in _videoSurfaces) surface.Dispose();
         _videoSurfaces.Clear();
         DesignCanvas.Width=_catalog.Layout.Width; DesignCanvas.Height=_catalog.Layout.Height;
         // Elements (video especially) must never paint outside the artwork they belong to.
         DesignCanvas.ClipToBounds=true;
-        CanvasInfo.Text=$"{_catalog.Layout.Width} × {_catalog.Layout.Height} · drag elements to reposition · bindings update live";
+        CanvasInfo.Text=$"{_catalog.Layout.Name} · {_catalog.Layout.Width} × {_catalog.Layout.Height} · drag elements to reposition";
         if(!_canvasLoading)
         {
             _canvasLoading=true;
@@ -97,6 +129,25 @@ public partial class ScorebugEditorWindow : Window
         foreach(var item in _catalog.Layout.Elements) DesignCanvas.Children.Add(CreateVisual(item));
         _loading=false;
         LoadProperties();
+    }
+
+    /// <summary>Keeps the layout picker in step without treating the sync as the operator's choice.</summary>
+    void SyncLayoutPicker()
+    {
+        _layoutLoading=true;
+        try
+        {
+            var names=_catalog.Layouts.Select((layout,index)=>$"{index+1}. {layout.Name}").ToArray();
+            // Replacing ItemsSource during its own SelectionChanged resets the picker, so only
+            // rebuild the list when the layouts themselves changed.
+            if(LayoutBox.ItemsSource is not IEnumerable<string> existing||!existing.SequenceEqual(names))
+                LayoutBox.ItemsSource=names;
+            LayoutBox.SelectedIndex=_catalog.ActiveIndex;
+            LayoutHintText.Text=_catalog.ActiveIndex==_catalog.PublishedIndex
+                ? "This layout is on air."
+                : "Preview only — press Update Output in the control panel to put it on air.";
+        }
+        finally { _layoutLoading=false; }
     }
 
     Border CreateVisual(ScorebugElement item)
@@ -122,7 +173,7 @@ public partial class ScorebugEditorWindow : Window
         stack.Children.Add(handle);
         var host=new Border
         {
-            Width=item.Width, Height=item.Height, Background=ScorebugRender.HostBackground(item),
+            Width=item.Width, Height=item.Height, Background=ScorebugRender.HostBackground(item,_engine.State),
             ClipToBounds=true,
             Opacity=item.Opacity, Cursor=Cursors.SizeAll, Tag=item, Child=stack,
             BorderBrush=item.Id==_selectedId?Brushes.DeepSkyBlue:Brushes.Transparent,
@@ -159,14 +210,14 @@ public partial class ScorebugEditorWindow : Window
         foreach(var item in _catalog.Layout.Elements)
         {
             if(!_visuals.TryGetValue(item.Id,out var visual))continue;
-            if(visual.Content is TextBlock)
-                ScorebugRender.ApplyToContent(visual.Content,item,ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat));
+            if(visual.Content is ScorebugTextBlock block)
+                ScorebugRender.ApplyToContent(block,item,_engine.State,ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat));
             else if(visual.Content is ScorebugIconView iconView)
                 iconView.Update();
             else if(visual.Content is not VideoSurface)
-                ScorebugRender.ApplyToContent(visual.Content,item);
+                ScorebugRender.ApplyToContent(visual.Content,item,_engine.State);
             visual.Host.Width=item.Width; visual.Host.Height=item.Height;
-            visual.Host.Background=ScorebugRender.HostBackground(item);
+            visual.Host.Background=ScorebugRender.HostBackground(item,_engine.State);
             if(item.Animation!=ScorebugAnimation.Pulse)visual.Host.Opacity=item.Opacity;
             Canvas.SetLeft(visual.Host,item.X); Canvas.SetTop(visual.Host,item.Y);
             visual.Handle.Visibility=item.Id==_selectedId?Visibility.Visible:Visibility.Collapsed;
@@ -184,8 +235,13 @@ public partial class ScorebugEditorWindow : Window
         {
             if(!_visuals.TryGetValue(item.Id,out var visual))continue;
             if(visual.Content is ScorebugIconView iconView) iconView.Update();
-            else if(item.Kind==ScorebugElementKind.Text&&visual.Content is TextBlock block)
-                block.Text=ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat);
+            else if(visual.Content is ScorebugTextBlock block)
+            {
+                block.ApplyStyle(item,_engine.State);
+                block.UpdateText(ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat),item.Transition);
+            }
+            else if(visual.Content is Image)
+                ScorebugRender.ApplyToContent(visual.Content,item,_engine.State);
         }
     }
 
@@ -203,21 +259,37 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,ColorInput,BackgroundInput,AnimationInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,ColorInput,BackgroundInput,AnimationInput,TransitionInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput})
             control.IsEnabled=has;
         if(has)
         {
             NameInput.Text=e!.Name; ContentInput.Text=e.Content; XInput.Text=e.X.ToString("0"); YInput.Text=e.Y.ToString("0");
-            WidthInput.Text=e.Width.ToString("0"); HeightInput.Text=e.Height.ToString("0"); FontInput.Text=e.FontSize.ToString("0");
-            ColorInput.Text=e.Foreground; BackgroundInput.Text=e.Background; AnimationInput.SelectedItem=e.Animation; ShapeInput.SelectedItem=e.Shape;
+            WidthInput.Text=e.Width.ToString("0"); HeightInput.Text=e.Height.ToString("0");
+            FontInputSize.Text=e.FontSize.ToString("0");
+            var font=FontCatalog.ChoiceFor(e.FontFamily);
+            FontInput.SelectedItem=FontCatalog.All.FirstOrDefault(c=>string.Equals(c.Source,font.Source,StringComparison.OrdinalIgnoreCase))??font;
+            BoldInput.IsChecked=e.Bold; ItalicInput.IsChecked=e.Italic;
+            UnderlineInput.IsChecked=e.Underline; StrikeInput.IsChecked=e.StrikeThrough;
+            ColorInput.Text=e.Foreground; BackgroundInput.Text=e.Background;
+            ForegroundSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.ForegroundSource)??ColorSources[0];
+            BackgroundSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.BackgroundSource)??ColorSources[0];
+            UpdateColorAvailability();
+            AnimationInput.SelectedItem=e.Animation; TransitionInput.SelectedItem=e.Transition; ShapeInput.SelectedItem=e.Shape;
             VisibleInput.IsChecked=e.Visible; TransparentBackgroundInput.IsChecked=e.TransparentBackground;
             MediaTagInput.Text=e.MediaTag;
+            LogoInput.SelectedItem=Logos.FirstOrDefault(l=>l.Side==e.LogoSide)??Logos[0];
             PeriodFormatInput.SelectedItem=PeriodOptions.FirstOrDefault(o=>o.Key==e.PeriodFormat)??PeriodOptions[0];
             IconInput.SelectedItem=e.Icon; IconVisitorsInput.IsChecked=e.IconVisitors; IconFlipInput.IsChecked=e.IconFlipped;
-            ImagePathText.Text=e.ImagePath??"No image selected";
         }
         _loading=false;
         UpdatePropertyVisibility();
+    }
+
+    /// <summary>A colour box only takes typing when the element uses a fixed colour.</summary>
+    void UpdateColorAvailability()
+    {
+        ColorInput.IsEnabled=Selected is not null && (ForegroundSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
+        BackgroundInput.IsEnabled=Selected is not null && (BackgroundSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
     }
 
     /// <summary>Shows only the properties that mean something for this kind of element.</summary>
@@ -246,9 +318,10 @@ public partial class ScorebugEditorWindow : Window
     void ApplyProperties(object sender)
     {
         if(_loading||Selected is null)return;
+        if(sender==ForegroundSourceInput||sender==BackgroundSourceInput){UpdateColorAvailability();SaveProperties();RefreshAllVisuals();return;}
         if(sender is ComboBox)
         {
-            // Shape/animation changes need fresh geometry.
+            // Shape/font/animation changes need fresh geometry or a new face.
             SaveProperties(); Render(); return;
         }
         if(sender is CheckBox){SaveProperties();RefreshAllVisuals();return;}
@@ -264,20 +337,29 @@ public partial class ScorebugEditorWindow : Window
         var name=NameInput.Text; var content=ContentInput.Text;
         var xOk=double.TryParse(XInput.Text,out var x); var yOk=double.TryParse(YInput.Text,out var y);
         var wOk=double.TryParse(WidthInput.Text,out var w); var hOk=double.TryParse(HeightInput.Text,out var h);
-        var fOk=double.TryParse(FontInput.Text,out var f);
+        var fOk=double.TryParse(FontInputSize.Text,out var f);
         var foregroundOk=TryColor(ColorInput.Text,out _); var backgroundOk=TryColor(BackgroundInput.Text,out _);
         var animation=AnimationInput.SelectedItem is ScorebugAnimation a?a:item.Animation;
+        var transition=TransitionInput.SelectedItem is ScorebugTransition t?t:item.Transition;
         var shape=ShapeInput.SelectedItem is ScorebugShape s?s:item.Shape;
         var visible=VisibleInput.IsChecked==true; var transparent=TransparentBackgroundInput.IsChecked==true;
         var mediaTag=MediaTagInput.Text.Trim();
         var periodFormat=PeriodFormatInput.SelectedItem is PeriodOption period?period.Key:item.PeriodFormat;
         var icon=IconInput.SelectedItem is ScorebugIcon chosenIcon?chosenIcon:item.Icon;
         var iconVisitors=IconVisitorsInput.IsChecked==true; var iconFlipped=IconFlipInput.IsChecked==true;
+        var font=(FontInput.SelectedItem as FontChoice)?.Source??item.FontFamily;
+        var bold=BoldInput.IsChecked==true; var italic=ItalicInput.IsChecked==true;
+        var underline=UnderlineInput.IsChecked==true; var strike=StrikeInput.IsChecked==true;
+        var foregroundSource=(ForegroundSourceInput.SelectedItem as ColorSourceOption)?.Source??item.ForegroundSource;
+        var backgroundSource=(BackgroundSourceInput.SelectedItem as ColorSourceOption)?.Source??item.BackgroundSource;
+        var logoSide=(LogoInput.SelectedItem as LogoOption)?.Side??item.LogoSide;
         if(item.Name==name&&item.Content==content&&(!xOk||item.X==x)&&(!yOk||item.Y==y)&&(!wOk||item.Width==w)&&(!hOk||item.Height==h)
             &&(!fOk||item.FontSize==f)&&(!foregroundOk||item.Foreground==ColorInput.Text)&&(!backgroundOk||item.Background==BackgroundInput.Text)
-            &&item.Animation==animation&&item.Shape==shape&&item.Visible==visible&&item.TransparentBackground==transparent
+            &&item.Animation==animation&&item.Transition==transition&&item.Shape==shape&&item.Visible==visible&&item.TransparentBackground==transparent
             &&item.MediaTag==mediaTag&&item.PeriodFormat==periodFormat
-            &&item.Icon==icon&&item.IconVisitors==iconVisitors&&item.IconFlipped==iconFlipped)return;
+            &&item.Icon==icon&&item.IconVisitors==iconVisitors&&item.IconFlipped==iconFlipped
+            &&item.FontFamily==font&&item.Bold==bold&&item.Italic==italic&&item.Underline==underline&&item.StrikeThrough==strike
+            &&item.ForegroundSource==foregroundSource&&item.BackgroundSource==backgroundSource&&item.LogoSide==logoSide)return;
         var id=item.Id;
         _catalog.Update(layout=>{
             var target=layout.Elements.FirstOrDefault(z=>z.Id==id); if(target is null)return;
@@ -286,19 +368,96 @@ public partial class ScorebugEditorWindow : Window
             if(fOk)target.FontSize=f;
             if(foregroundOk)target.Foreground=ColorInput.Text;
             if(backgroundOk)target.Background=BackgroundInput.Text;
-            target.Animation=animation; target.Shape=shape;
+            target.Animation=animation; target.Transition=transition; target.Shape=shape;
             target.Visible=visible; target.TransparentBackground=transparent;
             target.MediaTag=mediaTag; target.PeriodFormat=periodFormat;
             target.Icon=icon; target.IconVisitors=iconVisitors; target.IconFlipped=iconFlipped;
-            if(target.Kind==ScorebugElementKind.Logo&&string.IsNullOrWhiteSpace(target.ImagePath))target.Content=$"LOGO · {target.Name}";
+            target.FontFamily=font; target.Bold=bold; target.Italic=italic;
+            target.Underline=underline; target.StrikeThrough=strike;
+            target.ForegroundSource=foregroundSource; target.BackgroundSource=backgroundSource;
+            target.LogoSide=logoSide;
+            if(target.Kind==ScorebugElementKind.Logo&&target.LogoSide==ScorebugLogoSide.None)target.LogoSide=ScorebugLogoSide.Home;
         });
     }
 
     static bool TryColor(string value,out Color color){try{color=(Color)ColorConverter.ConvertFromString(value)!;return true;}catch{color=Colors.White;return false;}}
 
+    // ---------- fonts ----------
+
+    void ImportFont_Click(object sender,RoutedEventArgs e)
+    {
+        var dialog=new OpenFileDialog{Title="Import a font",Filter="Fonts (*.ttf;*.otf;*.ttc)|*.ttf;*.otf;*.ttc|All files (*.*)|*.*"};
+        if(dialog.ShowDialog(this)!=true)return;
+        try
+        {
+            var source=FontCatalog.Import(dialog.FileName);
+            FontInput.ItemsSource=FontCatalog.All;
+            var choice=FontCatalog.ChoiceFor(source);
+            FontInput.SelectedItem=FontCatalog.All.FirstOrDefault(c=>string.Equals(c.Source,choice.Source,StringComparison.OrdinalIgnoreCase))??choice;
+            SaveProperties();
+            Render();
+        }
+        catch(Exception ex)
+        {
+            MessageBox.Show(this,$"Could not import that font: {ex.Message}","Scorebug Studio",MessageBoxButton.OK,MessageBoxImage.Warning);
+        }
+    }
+
+    // ---------- layouts ----------
+
+    void LayoutBox_Changed(object sender,SelectionChangedEventArgs e)
+    {
+        if(_layoutLoading||LayoutBox.SelectedIndex<0)return;
+        if(LayoutBox.SelectedIndex==_catalog.ActiveIndex)return;
+        _selectedId=null;
+        _catalog.SelectLayout(LayoutBox.SelectedIndex);
+    }
+
+    void LayoutNew_Click(object sender,RoutedEventArgs e)
+    {
+        _catalog.AddLayout($"Layout {_catalog.Layouts.Count+1}");
+        _selectedId=null;
+        Render();
+    }
+
+    void LayoutDuplicate_Click(object sender,RoutedEventArgs e)
+    {
+        _catalog.AddLayout($"{_catalog.Layout.Name} copy",copyActive:true);
+        _selectedId=null;
+        Render();
+    }
+
+    void LayoutDelete_Click(object sender,RoutedEventArgs e)
+    {
+        if(_catalog.Layouts.Count<=1)
+        {
+            MessageBox.Show(this,"A game needs at least one scorebug layout.","Scorebug Studio",MessageBoxButton.OK,MessageBoxImage.Information);
+            return;
+        }
+        if(MessageBox.Show(this,$"Delete the layout \"{_catalog.Layout.Name}\"?","Scorebug Studio",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;
+        _selectedId=null;
+        _catalog.RemoveLayout(_catalog.ActiveIndex);
+        Render();
+    }
+
+    void LayoutRename_Click(object sender,RoutedEventArgs e)
+    {
+        var dialog=new Window{Title="Rename layout",Width=380,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
+        var panel=new StackPanel{Margin=new Thickness(16)};
+        panel.Children.Add(new TextBlock{Text="Layout name",Margin=new Thickness(4,0,4,6)});
+        var input=new TextBox{Text=_catalog.Layout.Name,Margin=new Thickness(4)};
+        panel.Children.Add(input);
+        var ok=new Button{Content="Rename",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(4,10,4,0)};
+        ok.Click+=(_,_)=>{_catalog.RenameLayout(_catalog.ActiveIndex,input.Text);dialog.DialogResult=true;dialog.Close();};
+        panel.Children.Add(ok);
+        dialog.Content=panel; ThemeManager.Apply(dialog,_theme);
+        dialog.ShowDialog();
+        Render();
+    }
+
     // New artwork starts with no background box so it lands clean on the canvas; turn one on in the properties if needed.
     void AddText_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New text",Content="EDIT TEXT",X=480,Y=470,TransparentBackground=true});
-    void AddLogo_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New logo",Kind=ScorebugElementKind.Logo,Content="LOGO",X=520,Y=470,Width=140,Height=90,TransparentBackground=true});
+    void AddLogo_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New logo",Kind=ScorebugElementKind.Logo,LogoSide=ScorebugLogoSide.Home,Content="HOME LOGO",X=520,Y=470,Width=140,Height=90,TransparentBackground=true});
     void AddShape_Click(object sender,RoutedEventArgs e)
     {
         var picker=new Window{Title="Add shape",Width=340,Height=190,ResizeMode=ResizeMode.NoResize,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
@@ -329,7 +488,8 @@ public partial class ScorebugEditorWindow : Window
             ("Football · yards to go","{{YARDS_TO_GO}}"),("Football · ball on (number)","{{BALL_ON}}"),
             ("Football · ball on side","{{BALL_SIDE}}"),("Football · ball on side + number","{{BALL_SIDE_SPOT}}"),
             ("Football · ball side team name","{{BALL_TEAM}}"),("Football · ball spot","{{BALL_SPOT}}"),
-            ("Football · team yards","{{YARDS}}"),("Football · turnovers","{{TURNOVERS}}"),
+            ("Football · team yards","{{YARDS}}"),("Football · home yards","{{HOME_YARDS}}"),("Football · visitors yards","{{AWAY_YARDS}}"),
+            ("Football · turnovers","{{TURNOVERS}}"),
             ("Basketball · shot clock","{{SHOT_CLOCK}}"),("Basketball · fouls","{{BASKETBALL_FOULS}}"),("Fouls (both)","{{FOULS}}"),
             ("Baseball · count & outs","{{BASEBALL_COUNT}}"),("Baseball · hits","{{HITS}}"),("Baseball · outs","{{BASEBALL_OUTS}}"),
             ("Soccer · cards","{{SOCCER_CARDS}}"),("Soccer · cards (short)","{{CARDS}}"),("Soccer · shots","{{SHOTS}}"),("Soccer · corners","{{CORNERS}}")
@@ -407,26 +567,6 @@ public partial class ScorebugEditorWindow : Window
         _catalog.Update(layout=>layout.Elements.RemoveAll(x=>x.Id==id));
         _selectedId=null;
         Render();
-    }
-
-    void ChooseImage_Click(object sender,RoutedEventArgs e)
-    {
-        if(Selected is not { } selected)return;
-        var dialog=new OpenFileDialog{Filter="Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff|All files|*.*"};
-        if(dialog.ShowDialog(this)!=true)return;
-        var id=selected.Id;
-        try
-        {
-            var assetFolder=AppPaths.Combine("ScorebugAssets");
-            Directory.CreateDirectory(assetFolder);
-            var target=System.IO.Path.Combine(assetFolder,$"{Guid.NewGuid():N}{System.IO.Path.GetExtension(dialog.FileName)}");
-            File.Copy(dialog.FileName,target);
-            _catalog.Update(layout=>{
-                var item=layout.Elements.FirstOrDefault(x=>x.Id==id); if(item is null)return;
-                item.Kind=ScorebugElementKind.Logo; item.ImagePath=target; item.Content=System.IO.Path.GetFileNameWithoutExtension(dialog.FileName);
-            });
-        }
-        catch(Exception ex){MessageBox.Show(this,$"Could not import logo: {ex.Message}","Scorebug Studio",MessageBoxButton.OK,MessageBoxImage.Warning);}
     }
 
     void Element_MouseDown(object sender,MouseButtonEventArgs e)
@@ -548,13 +688,6 @@ public partial class ScorebugEditorWindow : Window
     {
         var picked=ColorPickerWindow.Pick(this,target.Text);
         if(picked is not null){target.Text=picked;SaveProperties();RefreshAllVisuals();}
-    }
-
-    static Color Hsv(double hue,double saturation,double value)
-    {
-        var chroma=value*saturation; var x=chroma*(1-Math.Abs((hue/60%2)-1)); var m=value-chroma;
-        var (r,g,b)=hue switch{<60=>(chroma,x,0d),<120=>(x,chroma,0d),<180=>(0d,chroma,x),<240=>(0d,x,chroma),<300=>(x,0d,chroma),_=>(chroma,0d,x)};
-        return Color.FromRgb((byte)((r+m)*255),(byte)((g+m)*255),(byte)((b+m)*255));
     }
 
     void TextColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(ColorInput);
