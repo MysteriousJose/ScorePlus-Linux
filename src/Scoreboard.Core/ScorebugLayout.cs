@@ -6,6 +6,16 @@ public enum ScorebugElementKind { Text, Logo, Shape, Video }
 public enum ScorebugAnimation { None, Pulse, Drift }
 public enum ScorebugShape { Rectangle, Circle, Triangle }
 
+/// <summary>Artwork drawn by an element in addition to (or instead of) its bound text.</summary>
+public enum ScorebugIcon
+{
+    None,
+    /// <summary>One little bar per timeout the team has left.</summary>
+    TimeoutBars,
+    /// <summary>A dot on the left or right edge, on the side of the team with the ball.</summary>
+    PossessionDot
+}
+
 public sealed class ScorebugElement
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -28,6 +38,18 @@ public sealed class ScorebugElement
     public double Opacity { get; set; } = 1;
     public bool Visible { get; set; } = true;
     public ScorebugAnimation Animation { get; set; }
+
+    /// <summary>How this element prints a quarter: "Full", "Short", "Number", or null for the game default.</summary>
+    public string? PeriodFormat { get; set; }
+
+    /// <summary>Optional artwork from live data: timeout bars or a possession dot.</summary>
+    public ScorebugIcon Icon { get; set; } = ScorebugIcon.None;
+
+    /// <summary>For timeout bars: count the visitors' timeouts instead of the home team's.</summary>
+    public bool IconVisitors { get; set; }
+
+    /// <summary>For the possession dot: mirror it, putting the home side on the left.</summary>
+    public bool IconFlipped { get; set; }
 }
 
 public sealed class ScorebugLayout
@@ -74,7 +96,7 @@ public sealed class ScorebugCatalog
     public event Action? Changed;
     public ScorebugCatalog(string? path = null)
     {
-        _path = path ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Scoreboard", "scorebug.json");
+        _path = path ?? AppPaths.Combine("scorebug.json");
         try { Layout = File.Exists(_path) ? JsonSerializer.Deserialize<ScorebugLayout>(File.ReadAllText(_path)) ?? ScorebugLayout.Default() : ScorebugLayout.Default(); }
         catch (Exception ex) { Layout = ScorebugLayout.Default(); Warning = $"Could not load scorebug layout: {ex.Message}"; }
         Validate();
@@ -101,6 +123,7 @@ public sealed class ScorebugCatalog
             item.Height = Math.Clamp(double.IsFinite(item.Height) ? item.Height : 50, 24, Layout.Height);
             item.FontSize = Math.Clamp(double.IsFinite(item.FontSize) ? item.FontSize : 24, 8, 480);
             item.Opacity = Math.Clamp(double.IsFinite(item.Opacity) ? item.Opacity : 1, 0, 1);
+            if (item.PeriodFormat is not ("Full" or "Short" or "Number")) item.PeriodFormat = null;
         }
     }
 

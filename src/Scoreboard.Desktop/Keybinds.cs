@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Windows.Input;
+using Scoreboard.Core;
 
 namespace Scoreboard.Desktop;
 
@@ -53,6 +54,7 @@ public static class ControlActions
         new("football.distance.plus","Football","Distance +1 yard"),
         new("football.ball.minus","Football","Ball spot −1 yard"),
         new("football.ball.plus","Football","Ball spot +1 yard"),
+        new("football.ball.side","Football","Ball spot side (home / visitors)"),
         new("football.series.new","Football","New series"),
         new("football.yards.home","Football","Home +10 yards"),
         new("football.yards.away","Football","Away +10 yards"),
@@ -107,20 +109,34 @@ public sealed class KeybindSettings
 
 public static class KeybindStore
 {
-    static readonly string FilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Scoreboard", "keybinds.json");
+    static readonly string FilePath = AppPaths.Combine("keybinds.json");
+
+    // Shortcuts older builds installed on first run. Nobody chose these, so a file holding exactly
+    // this set is treated as untouched and cleared; anything the operator changed is kept.
+    static readonly (string Action, string Gesture)[] LegacyDefaults =
+    [
+        ("clock.toggle", "Space"),
+        ("football.down.next", "F1"),
+        ("football.down.previous", "F2"),
+        ("output.publish", "F5"),
+        ("global.undo", "Ctrl+Z")
+    ];
 
     public static KeybindSettings Load()
     {
         try
         {
-            return File.Exists(FilePath)
-                ? JsonSerializer.Deserialize<KeybindSettings>(File.ReadAllText(FilePath)) ?? Defaults()
-                : Defaults();
+            if (!File.Exists(FilePath)) return Defaults();
+            var stored = JsonSerializer.Deserialize<KeybindSettings>(File.ReadAllText(FilePath)) ?? Defaults();
+            return IsLegacyDefaults(stored) ? new() : stored;
         }
         catch { return new(); }
     }
+
+    static bool IsLegacyDefaults(KeybindSettings settings) =>
+        settings.Bindings.Count == LegacyDefaults.Length &&
+        LegacyDefaults.All(d => settings.Bindings.TryGetValue(d.Action, out var gesture)
+            && string.Equals(gesture, d.Gesture, StringComparison.OrdinalIgnoreCase));
 
     public static void Save(KeybindSettings settings)
     {
@@ -212,14 +228,6 @@ public static class KeybindStore
         return null;
     }
 
-    public static KeybindSettings Defaults()
-    {
-        var settings = new KeybindSettings();
-        settings.Bindings["clock.toggle"] = "Space";
-        settings.Bindings["football.down.next"] = "F1";
-        settings.Bindings["football.down.previous"] = "F2";
-        settings.Bindings["output.publish"] = "F5";
-        settings.Bindings["global.undo"] = "Ctrl+Z";
-        return settings;
-    }
+    /// <summary>No shortcuts out of the box: every binding is the operator's own choice.</summary>
+    public static KeybindSettings Defaults() => new();
 }

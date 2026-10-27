@@ -40,7 +40,9 @@ public sealed class ScorebugCanvasView : Grid
         _canvas.Children.Clear();_visuals.Clear();_animations.Clear();_backgrounds.Clear();_transparentStates.Clear();
         foreach(var item in _catalog.Layout.Elements)
         {
-            var content=ScorebugRender.CreateContent(item,_stateProvider,_playback,_muteVideo);
+            // The preview and the audience screen stay empty when nothing is cued; the studio is
+            // the only place the tag placeholder is drawn.
+            var content=ScorebugRender.CreateContent(item,_stateProvider,_playback,_muteVideo,showVideoPlaceholder:false);
             if(content is VideoSurface video) _videoSurfaces.Add(video);
             var host=new Border
             {
@@ -119,7 +121,7 @@ public sealed class ScorebugCanvasView : Grid
             }
             if(visual.Content is TextBlock block)
             {
-                var text=ScoreboardTemplates.Bind(item.Content,state);
+                var text=ScoreboardTemplates.Bind(item.Content,state,item.PeriodFormat);
                 if(block.Text!=text)block.Text=text;
             }
             else if(visual.Content is not VideoSurface) ScorebugRender.ApplyToContent(visual.Content,item);

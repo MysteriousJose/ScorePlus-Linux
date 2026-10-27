@@ -14,7 +14,6 @@ public partial class SettingsWindow : Window
         _draft = prefs.Clone();
         ThemeSelector.ItemsSource = new[] { "Dark", "Light" };
         ThemeSelector.SelectedItem = _draft.Theme;
-        SeparateControls.IsChecked = _draft.SeparateControls;
         ShowHints.IsChecked = _draft.ShowHeadingHints;
         _loading = false;
     }
@@ -26,15 +25,13 @@ public partial class SettingsWindow : Window
 
     void Controls_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loading || SeparateControls is null || ShowHints is null) return;
-        _draft.SeparateControls = SeparateControls.IsChecked == true;
+        if (_loading || ShowHints is null) return;
         _draft.ShowHeadingHints = ShowHints.IsChecked == true;
     }
 
     void Save_Click(object sender, RoutedEventArgs e)
     {
         _original.Theme = _draft.Theme;
-        _original.SeparateControls = _draft.SeparateControls;
         _original.ShowHeadingHints = _draft.ShowHeadingHints;
         PreferencesStore.Save(_original);
         // DialogResult is only valid for a modal dialog; the window may also be shown modelessly.

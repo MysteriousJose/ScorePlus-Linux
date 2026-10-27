@@ -1,1 +1,248 @@
-<Window x:Class="Scoreboard.Desktop.ScorebugEditorWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ScorePlus — Scorebug Studio" Width="1260" Height="820" MinWidth="980" MinHeight="650" WindowStartupLocation="CenterOwner" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI"><Grid Margin="14"><Grid.ColumnDefinitions><ColumnDefinition Width="230"/><ColumnDefinition Width="*"/><ColumnDefinition Width="275"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><DockPanel Grid.ColumnSpan="3" Margin="2,0,2,12"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="Add text" Click="AddText_Click"/><Button Content="Add logo" Click="AddLogo_Click"/><Button Content="Add shape" Click="AddShape_Click"/><Button Content="Add sport data" Click="AddData_Click"/><Button Content="Add video" Click="AddVideo_Click"/><Button Content="Remove" Click="Remove_Click"/></StackPanel><StackPanel Orientation="Horizontal"><TextBlock Text="SCOREPLUS · SCOREBUG STUDIO" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/><TextBlock Text="   Arrange audience graphics · edits save automatically" Foreground="#93A0B2" VerticalAlignment="Center"/></StackPanel></DockPanel><DockPanel Grid.Row="1" Background="#171C25" Margin="0,0,10,0"><TextBlock DockPanel.Dock="Top" Text="LAYERS · drag a layer to position it" FontWeight="Bold" Margin="10"/><ListBox x:Name="Layers" Background="#10151D" Foreground="White" BorderBrush="#364151" SelectionChanged="Layers_SelectionChanged" PreviewMouseLeftButtonDown="Layers_MouseDown" PreviewMouseMove="Layers_MouseMove" AllowDrop="True" Drop="Layers_Drop"/></DockPanel><Border Grid.Row="1" Grid.Column="1" Background="#171C25" Padding="12" Margin="0,0,10,0"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><DockPanel Margin="4,0,0,10"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><ComboBox x:Name="CanvasPreset" Width="170" FontSize="11" SelectedIndex="0" ToolTip="Canvas size presets" SelectionChanged="CanvasPreset_Changed"/><TextBox x:Name="CanvasWidthInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip="Canvas width in pixels"/><TextBox x:Name="CanvasHeightInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip="Canvas height in pixels"/><Button Content="Resize" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasResize_Click" ToolTip="Scale the whole layout into this canvas size"/></StackPanel><TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2" VerticalAlignment="Center"/></DockPanel><Border Grid.Row="1" x:Name="CanvasFrame" Background="#091018" ClipToBounds="True" MouseMove="Canvas_MouseMove" MouseLeftButtonUp="Canvas_MouseUp"><Canvas x:Name="DesignCanvas" Width="1280" Height="720" Background="#091018" RenderTransformOrigin="0,0"><Canvas.LayoutTransform><ScaleTransform x:Name="CanvasScale" ScaleX="0.55" ScaleY="0.55"/></Canvas.LayoutTransform></Canvas></Border></Grid></Border><ScrollViewer Grid.Row="1" Grid.Column="2" VerticalScrollBarVisibility="Auto"><StackPanel Background="#171C25" Margin="0" ><TextBlock Text="ELEMENT PROPERTIES" FontWeight="Bold" Margin="12,12,12,8"/><TextBlock Text="Name" Foreground="#93A0B2" Margin="8,0,0,0"/><TextBox x:Name="NameInput" TextChanged="Property_Changed"/><TextBlock Text="Text / data binding" Foreground="#93A0B2" Margin="8,0,0,0"/><TextBox x:Name="ContentInput" TextChanged="Property_Changed"/><TextBlock Text="X position" Foreground="#93A0B2" Margin="8,0,0,0"/><TextBox x:Name="XInput" TextChanged="Property_Changed"/><TextBlock Text="Y position" Foreground="#93A0B2" Margin="8,0,0,0"/><TextBox x:Name="YInput" TextChanged="Property_Changed"/><TextBlock Text="Width" Foreground="#93A0B2" Margin="8,0,0,0"/><TextBox x:Name="WidthInput" TextChanged="Property_Changed"/><TextBlock Text="Height" Foreground="#93A0B2" Margin="8,0,0,0"/><TextBox x:Name="HeightInput" TextChanged="Property_Changed"/><TextBlock Text="Font size" Foreground="#93A0B2" Margin="8,0,0,0"/><TextBox x:Name="FontInput" TextChanged="Property_Changed"/><TextBlock Text="Text color" Foreground="#93A0B2" Margin="8,0,0,0"/><DockPanel><TextBox x:Name="ColorInput" TextChanged="Property_Changed"/><Button Content="Choose…" Click="TextColor_Click" ToolTip="Open the color palette"/></DockPanel><TextBlock Text="Background color" Foreground="#93A0B2" Margin="8,0,0,0"/><DockPanel><TextBox x:Name="BackgroundInput" TextChanged="Property_Changed"/><Button Content="Choose…" Click="BackgroundColor_Click" ToolTip="Open the color palette"/></DockPanel><CheckBox x:Name="TransparentBackgroundInput" Content="No text background (transparent)" Margin="10" Checked="Property_Changed" Unchecked="Property_Changed"/><StackPanel x:Name="ShapePanel"><TextBlock Text="Shape type" Foreground="#93A0B2" Margin="8,0,0,0"/><ComboBox x:Name="ShapeInput" SelectionChanged="Property_Changed"/></StackPanel><TextBlock Text="Animation" Foreground="#93A0B2" Margin="8,0,0,0"/><ComboBox x:Name="AnimationInput" SelectionChanged="Property_Changed"/><StackPanel x:Name="VideoPanel"><TextBlock Text="Media tag" Foreground="#93A0B2" Margin="8,0,0,0"/><TextBox x:Name="MediaTagInput" TextChanged="Property_Changed" ToolTip="Leave empty to show any playing clip, or name a tag so only that tag's clips appear"/><TextBlock Text="Only media with this tag plays inside this element." Foreground="#93A0B2" FontSize="11" TextWrapping="Wrap" Margin="8,4,8,6"/></StackPanel><CheckBox x:Name="VisibleInput" Content="Visible on output" Margin="10" Checked="Property_Changed" Unchecked="Property_Changed"/><Button Content="Choose logo image…" Click="ChooseImage_Click" HorizontalAlignment="Stretch"/><TextBlock x:Name="ImagePathText" Foreground="#93A0B2" TextWrapping="Wrap" Margin="8"/><Button Content="Zoom to fit" Click="Fit_Click"/><TextBlock Text="Resize: select an element, then drag a blue corner handle on the canvas." Foreground="#93A0B2" TextWrapping="Wrap" Margin="8"/></StackPanel></ScrollViewer><DockPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,12,0,0"><TextBlock Text="Drag and reorder layers. Text supports {{HOME_SCORE}}, {{AWAY_SCORE}}, {{HOME_TEAM}}, {{AWAY_TEAM}}, {{HOME_ABBR}}, {{AWAY_ABBR}}, {{PERIOD}}, {{GAME_CLOCK}}, {{DOWNS}}, {{YARDS}}, {{BALL_SPOT}}, {{TURNOVERS}}, {{FOULS}}, {{SHOT_CLOCK}}, {{BASEBALL_COUNT}}, {{HITS}}, {{CARDS}}, {{SHOTS}}, {{CORNERS}}, and custom stats such as {{STAT:Turnovers}}." Foreground="#93A0B2" VerticalAlignment="Center"/><Button DockPanel.Dock="Right" Content="Done" Click="Done_Click" ToolTip="Close the studio (Enter only commits the value you are editing)"/></DockPanel></Grid></Window>
+<Window x:Class="Scoreboard.Desktop.ScorebugEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ScorePlus — Scorebug Studio" Width="1320" Height="860" MinWidth="1080" MinHeight="700"
+        WindowStartupLocation="CenterOwner" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI">
+  <Window.Resources>
+    <Style x:Key="ToolButton" TargetType="Button">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Padding" Value="12,8"/>
+      <Setter Property="MinHeight" Value="34"/>
+      <Setter Property="Margin" Value="3,0,0,0"/>
+    </Style>
+    <Style x:Key="SectionTitle" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Foreground" Value="#93A0B2"/>
+      <Setter Property="Margin" Value="10,12,10,4"/>
+    </Style>
+    <Style x:Key="FieldLabel" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Foreground" Value="#7C8A9C"/>
+      <Setter Property="Margin" Value="10,4,0,2"/>
+    </Style>
+    <Style x:Key="FieldBox" TargetType="TextBox">
+      <Setter Property="Margin" Value="10,0,10,2"/>
+    </Style>
+    <Style x:Key="LayerRow" TargetType="ListBoxItem">
+      <Setter Property="Padding" Value="8,7"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    </Style>
+  </Window.Resources>
+
+  <Grid Margin="14">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="252"/>
+      <ColumnDefinition Width="*"/>
+      <ColumnDefinition Width="306"/>
+    </Grid.ColumnDefinitions>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <!-- ============ TOOLBAR ============ -->
+    <DockPanel Grid.ColumnSpan="3" Margin="2,0,2,12">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button Content="Add text" Style="{StaticResource ToolButton}" Click="AddText_Click"/>
+        <Button Content="Add logo" Style="{StaticResource ToolButton}" Click="AddLogo_Click"/>
+        <Button Content="Add shape" Style="{StaticResource ToolButton}" Click="AddShape_Click"/>
+        <Button Content="Add sport data" Style="{StaticResource ToolButton}" Click="AddData_Click"/>
+        <Button Content="Add video" Style="{StaticResource ToolButton}" Click="AddVideo_Click"/>
+        <Button Content="Remove" Style="{StaticResource ToolButton}" Click="Remove_Click" ToolTip="Delete the selected element"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal">
+        <TextBlock Text="SCOREPLUS · SCOREBUG STUDIO" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
+        <TextBlock Text="   Arrange audience graphics · edits save automatically" Foreground="#93A0B2" VerticalAlignment="Center"/>
+      </StackPanel>
+    </DockPanel>
+
+    <!-- ============ LAYERS (top of the list = in front) ============ -->
+    <Border Grid.Row="1" Background="#171C25" Margin="0,0,10,0" CornerRadius="9" Padding="8">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top">
+          <DockPanel Margin="2,2,2,6">
+            <TextBlock x:Name="LayerCount" DockPanel.Dock="Right" Text="" FontSize="10" Foreground="#5C6B7E" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal">
+              <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,6,0"/>
+              <TextBlock Text="LAYERS" FontSize="11" FontWeight="Bold" Foreground="#93A0B2" VerticalAlignment="Center"/>
+            </StackPanel>
+          </DockPanel>
+          <TextBlock Text="Front of the picture at the top. Drag a row, or use the buttons."
+                     FontSize="10" Foreground="#5C6B7E" TextWrapping="Wrap" Margin="2,0,2,6"/>
+          <UniformGrid Columns="2" Margin="0,0,0,6">
+            <Button x:Name="LayerFrontButton" Content="▲ Bring forward" FontSize="11" Padding="6,7" Margin="0,0,3,0"
+                    Click="LayerFront_Click" ToolTip="Move the selected element in front of the one above it"/>
+            <Button x:Name="LayerBackButton" Content="▼ Send back" FontSize="11" Padding="6,7" Margin="3,0,0,0"
+                    Click="LayerBack_Click" ToolTip="Move the selected element behind the one below it"/>
+          </UniformGrid>
+        </StackPanel>
+        <ListBox x:Name="Layers" Background="#10151D" Foreground="White" BorderBrush="#364151"
+                 ItemContainerStyle="{StaticResource LayerRow}"
+                 SelectionChanged="Layers_SelectionChanged"
+                 PreviewMouseLeftButtonDown="Layers_MouseDown"
+                 PreviewMouseMove="Layers_MouseMove"
+                 AllowDrop="True" Drop="Layers_Drop">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="20"/>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding Glyph}" FontSize="12" Foreground="#38D7A3" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding Label}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="2" Text="{Binding KindLabel}" FontSize="9" Foreground="#5C6B7E" VerticalAlignment="Center" Margin="4,0,0,0"/>
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <!-- ============ CANVAS ============ -->
+    <Border Grid.Row="1" Grid.Column="1" Background="#171C25" Padding="12" Margin="0,0,10,0" CornerRadius="9">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <DockPanel Margin="4,0,0,10">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <ComboBox x:Name="CanvasPreset" Width="170" FontSize="11" SelectedIndex="0" ToolTip="Canvas size presets" SelectionChanged="CanvasPreset_Changed"/>
+            <TextBox x:Name="CanvasWidthInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip="Canvas width in pixels"/>
+            <TextBox x:Name="CanvasHeightInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip="Canvas height in pixels"/>
+            <Button Content="Resize" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasResize_Click" ToolTip="Scale the whole layout into this canvas size"/>
+          </StackPanel>
+          <TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2" VerticalAlignment="Center"/>
+        </DockPanel>
+        <Border Grid.Row="1" x:Name="CanvasFrame" Background="#091018" ClipToBounds="True" MouseMove="Canvas_MouseMove" MouseLeftButtonUp="Canvas_MouseUp">
+          <Canvas x:Name="DesignCanvas" Width="1280" Height="720" Background="#091018" RenderTransformOrigin="0,0">
+            <Canvas.LayoutTransform>
+              <ScaleTransform x:Name="CanvasScale" ScaleX="0.55" ScaleY="0.55"/>
+            </Canvas.LayoutTransform>
+          </Canvas>
+        </Border>
+      </Grid>
+    </Border>
+
+    <!-- ============ PROPERTIES (only what applies to this kind of element) ============ -->
+    <ScrollViewer Grid.Row="1" Grid.Column="2" VerticalScrollBarVisibility="Auto">
+      <StackPanel Background="#171C25">
+        <TextBlock Text="ELEMENT PROPERTIES" FontWeight="Bold" Margin="12,12,12,2"/>
+
+        <TextBlock Text="NAME" Style="{StaticResource SectionTitle}"/>
+        <TextBox x:Name="NameInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+
+        <TextBlock Text="POSITION &amp; SIZE" Style="{StaticResource SectionTitle}"/>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <StackPanel>
+            <TextBlock Text="X" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="XInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1">
+            <TextBlock Text="Y" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="YInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+          </StackPanel>
+          <StackPanel Grid.Row="1">
+            <TextBlock Text="Width" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="WidthInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+          </StackPanel>
+          <StackPanel Grid.Row="1" Grid.Column="1">
+            <TextBlock Text="Height" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="HeightInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+          </StackPanel>
+        </Grid>
+
+        <StackPanel x:Name="TextSection">
+          <TextBlock Text="TEXT" Style="{StaticResource SectionTitle}"/>
+          <TextBox x:Name="ContentInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+          <StackPanel x:Name="PeriodSection">
+            <TextBlock Text="Quarter style for this element" Style="{StaticResource FieldLabel}"/>
+            <ComboBox x:Name="PeriodFormatInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
+                      ToolTip="How {{PERIOD}} prints on this element — Quarter 1, Q1 or 1"/>
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel x:Name="FontSection">
+          <TextBlock Text="TYPE" Style="{StaticResource SectionTitle}"/>
+          <TextBlock Text="Font size" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="FontInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+          <TextBlock Text="Text color" Style="{StaticResource FieldLabel}"/>
+          <DockPanel Margin="0,0,10,4">
+            <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Click="TextColor_Click" ToolTip="Open the color palette"/>
+            <TextBox x:Name="ColorInput" Margin="10,0,0,0" TextChanged="Property_Changed"/>
+          </DockPanel>
+        </StackPanel>
+
+        <StackPanel x:Name="LogoSection">
+          <TextBlock Text="LOGO" Style="{StaticResource SectionTitle}"/>
+          <Button Content="Choose logo image…" Margin="10,0,10,4" Padding="10,7" Click="ChooseImage_Click"/>
+          <TextBlock x:Name="ImagePathText" Foreground="#93A0B2" TextWrapping="Wrap" Margin="10,0,10,4"/>
+        </StackPanel>
+
+        <StackPanel x:Name="ShapePanel">
+          <TextBlock Text="SHAPE" Style="{StaticResource SectionTitle}"/>
+          <TextBlock Text="Shape type" Style="{StaticResource FieldLabel}"/>
+          <ComboBox x:Name="ShapeInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"/>
+        </StackPanel>
+
+        <StackPanel x:Name="IconSection">
+          <TextBlock Text="ICON" Style="{StaticResource SectionTitle}"/>
+          <TextBlock Text="Live artwork instead of (or beside) typed text" Style="{StaticResource FieldLabel}"/>
+          <ComboBox x:Name="IconInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
+                    ToolTip="Timeout bars, or a dot on the side of the team with the ball"/>
+          <CheckBox x:Name="IconVisitorsInput" Content="Count the visitors' timeouts" Margin="10,2,10,4"
+                    Checked="Property_Changed" Unchecked="Property_Changed"/>
+          <CheckBox x:Name="IconFlipInput" Content="Put the home side on the left" Margin="10,2,10,8"
+                    Checked="Property_Changed" Unchecked="Property_Changed"/>
+        </StackPanel>
+
+        <StackPanel x:Name="VideoPanel">
+          <TextBlock Text="VIDEO" Style="{StaticResource SectionTitle}"/>
+          <TextBlock Text="Media tag" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="MediaTagInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                   ToolTip="Leave empty to show any playing clip, or name a tag so only that tag's clips appear"/>
+          <TextBlock Text="Only media with this tag plays inside this element. The tag label is drawn in the studio only; the audience screen stays blank until a clip is cued."
+                     Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+        </StackPanel>
+
+        <StackPanel x:Name="BackgroundSection">
+          <TextBlock Text="BACKGROUND" Style="{StaticResource SectionTitle}"/>
+          <TextBlock Text="Background color" Style="{StaticResource FieldLabel}"/>
+          <DockPanel Margin="0,0,10,4">
+            <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Click="BackgroundColor_Click" ToolTip="Open the color palette"/>
+            <TextBox x:Name="BackgroundInput" Margin="10,0,0,0" TextChanged="Property_Changed"/>
+          </DockPanel>
+          <CheckBox x:Name="TransparentBackgroundInput" Content="No background box (transparent)" Margin="10,4,10,6"
+                    Checked="Property_Changed" Unchecked="Property_Changed"/>
+        </StackPanel>
+
+        <TextBlock Text="BEHAVIOUR" Style="{StaticResource SectionTitle}"/>
+        <TextBlock Text="Animation" Style="{StaticResource FieldLabel}"/>
+        <ComboBox x:Name="AnimationInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"/>
+        <CheckBox x:Name="VisibleInput" Content="Visible on output" Margin="10,4,10,8" Checked="Property_Changed" Unchecked="Property_Changed"/>
+
+        <Button Content="Zoom to fit" Margin="10,6,10,4" Padding="10,7" Click="Fit_Click"/>
+        <TextBlock Text="Resize: select an element, then drag the blue corner handle on the canvas."
+                   Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,4,10,12"/>
+      </StackPanel>
+    </ScrollViewer>
+
+    <DockPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,12,0,0">
+      <Button DockPanel.Dock="Right" Content="Done" Padding="16,8" Click="Done_Click" ToolTip="Close the studio (Enter only commits the value you are editing)"/>
+      <TextBlock Text="Every value can go on the graphic: team names and abbreviations, scores, period, game clock, play clock, timeout clock, timeouts left, possession, down, to go, down &amp; distance, ball on (with {{BALL_SIDE}} and {{BALL_SIDE_SPOT}}), sport, yards, turnovers, fouls, shot clock, baseball count and outs, hits, cards, shots, corners, date, time, and custom stats such as {{STAT:Turnovers}}. Use Add sport data for the full list."
+                 Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
+    </DockPanel>
+  </Grid>
+</Window>

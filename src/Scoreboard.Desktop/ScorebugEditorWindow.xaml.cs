@@ -29,12 +29,29 @@ public partial class ScorebugEditorWindow : Window
     Point _dragOffset;
     Point _listStart;
 
+    sealed record PeriodOption(string? Key, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    // Per-element quarter style. "Follow game default" keeps the old behaviour for layouts that
+    // never asked for anything else.
+    static readonly PeriodOption[] PeriodOptions =
+    [
+        new(null, "Follow game default"),
+        new("Full", "Quarter 1"),
+        new("Short", "Q1"),
+        new("Number", "1")
+    ];
+
     public ScorebugEditorWindow(ScorebugCatalog catalog, GameEngine engine, MediaPlayback? playback=null, string theme="Dark")
     {
         InitializeComponent(); _catalog=catalog; _engine=engine; _playback=playback; _theme=theme;
         ThemeManager.Apply(this,theme);
         AnimationInput.ItemsSource=Enum.GetValues<ScorebugAnimation>();
         ShapeInput.ItemsSource=Enum.GetValues<ScorebugShape>();
+        IconInput.ItemsSource=Enum.GetValues<ScorebugIcon>();
+        PeriodFormatInput.ItemsSource=PeriodOptions;
         CanvasPreset.ItemsSource=ScorebugLayout.SizePresets.Select(p=>p.Name).ToArray();
         _canvasLoading=true;
         CanvasPreset.SelectedIndex=PresetIndex(catalog.Layout.Width,catalog.Layout.Height);
@@ -56,8 +73,11 @@ public partial class ScorebugEditorWindow : Window
         if(_selectedId is not null && _catalog.Layout.Elements.All(x=>x.Id!=_selectedId))_selectedId=null;
         _loading=true;
         _syncingLayers=true;
-        Layers.ItemsSource=_catalog.Layout.Elements.Select(e=>new LayerItem(e)).ToArray();
-        Layers.SelectedItem=Layers.Items.Cast<LayerItem>().FirstOrDefault(x=>x.Element.Id==_selectedId);
+        // Top of the list is the front of the picture, the opposite of the canvas' back-to-front order.
+        var ordered=_catalog.Layout.Elements.AsEnumerable().Reverse().Select(e=>new LayerItem(e)).ToArray();
+        Layers.ItemsSource=ordered;
+        Layers.SelectedItem=ordered.FirstOrDefault(x=>x.Element.Id==_selectedId);
+        LayerCount.Text=ordered.Length==0?"no elements":$"{ordered.Length} element{(ordered.Length==1?"":"s")}";
         _syncingLayers=false;
         foreach(var surface in _videoSurfaces) surface.Dispose();
         _videoSurfaces.Clear();
@@ -81,7 +101,7 @@ public partial class ScorebugEditorWindow : Window
 
     Border CreateVisual(ScorebugElement item)
     {
-        var content=ScorebugRender.CreateContent(item,()=>_engine.State,_playback,true);
+        var content=ScorebugRender.CreateContent(item,()=>_engine.State,_playback,true,showVideoPlaceholder:true);
         if(content is VideoSurface videoSurface)_videoSurfaces.Add(videoSurface);
         var handle=new Border
         {
@@ -140,7 +160,9 @@ public partial class ScorebugEditorWindow : Window
         {
             if(!_visuals.TryGetValue(item.Id,out var visual))continue;
             if(visual.Content is TextBlock)
-                ScorebugRender.ApplyToContent(visual.Content,item,ScoreboardTemplates.Bind(item.Content,_engine.State));
+                ScorebugRender.ApplyToContent(visual.Content,item,ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat));
+            else if(visual.Content is ScorebugIconView iconView)
+                iconView.Update();
             else if(visual.Content is not VideoSurface)
                 ScorebugRender.ApplyToContent(visual.Content,item);
             visual.Host.Width=item.Width; visual.Host.Height=item.Height;
@@ -159,8 +181,12 @@ public partial class ScorebugEditorWindow : Window
         if(!Dispatcher.CheckAccess()){Dispatcher.BeginInvoke(RefreshBoundText);return;}
         if(_dragElement is not null)return;
         foreach(var item in _catalog.Layout.Elements)
-            if(item.Kind==ScorebugElementKind.Text&&_visuals.TryGetValue(item.Id,out var visual)&&visual.Content is TextBlock block)
-                block.Text=ScoreboardTemplates.Bind(item.Content,_engine.State);
+        {
+            if(!_visuals.TryGetValue(item.Id,out var visual))continue;
+            if(visual.Content is ScorebugIconView iconView) iconView.Update();
+            else if(item.Kind==ScorebugElementKind.Text&&visual.Content is TextBlock block)
+                block.Text=ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat);
+        }
     }
 
     void Layers_SelectionChanged(object sender,SelectionChangedEventArgs e)
@@ -177,10 +203,8 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,ColorInput,BackgroundInput,AnimationInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,ColorInput,BackgroundInput,AnimationInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput})
             control.IsEnabled=has;
-        ShapePanel.Visibility=e?.Kind==ScorebugElementKind.Shape?Visibility.Visible:Visibility.Collapsed;
-        VideoPanel.Visibility=e?.Kind==ScorebugElementKind.Video?Visibility.Visible:Visibility.Collapsed;
         if(has)
         {
             NameInput.Text=e!.Name; ContentInput.Text=e.Content; XInput.Text=e.X.ToString("0"); YInput.Text=e.Y.ToString("0");
@@ -188,9 +212,31 @@ public partial class ScorebugEditorWindow : Window
             ColorInput.Text=e.Foreground; BackgroundInput.Text=e.Background; AnimationInput.SelectedItem=e.Animation; ShapeInput.SelectedItem=e.Shape;
             VisibleInput.IsChecked=e.Visible; TransparentBackgroundInput.IsChecked=e.TransparentBackground;
             MediaTagInput.Text=e.MediaTag;
+            PeriodFormatInput.SelectedItem=PeriodOptions.FirstOrDefault(o=>o.Key==e.PeriodFormat)??PeriodOptions[0];
+            IconInput.SelectedItem=e.Icon; IconVisitorsInput.IsChecked=e.IconVisitors; IconFlipInput.IsChecked=e.IconFlipped;
             ImagePathText.Text=e.ImagePath??"No image selected";
         }
         _loading=false;
+        UpdatePropertyVisibility();
+    }
+
+    /// <summary>Shows only the properties that mean something for this kind of element.</summary>
+    void UpdatePropertyVisibility()
+    {
+        var e=Selected;
+        var kind=e?.Kind;
+        var text=kind==ScorebugElementKind.Text;
+        TextSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
+        FontSection.Visibility=kind is ScorebugElementKind.Text or ScorebugElementKind.Logo or ScorebugElementKind.Shape?Visibility.Visible:Visibility.Collapsed;
+        LogoSection.Visibility=kind==ScorebugElementKind.Logo?Visibility.Visible:Visibility.Collapsed;
+        ShapePanel.Visibility=kind==ScorebugElementKind.Shape?Visibility.Visible:Visibility.Collapsed;
+        VideoPanel.Visibility=kind==ScorebugElementKind.Video?Visibility.Visible:Visibility.Collapsed;
+        BackgroundSection.Visibility=kind is ScorebugElementKind.Text or ScorebugElementKind.Shape or ScorebugElementKind.Logo?Visibility.Visible:Visibility.Collapsed;
+        PeriodSection.Visibility=text&&e!.Content.Contains("{{PERIOD}}",StringComparison.OrdinalIgnoreCase)?Visibility.Visible:Visibility.Collapsed;
+        IconSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
+        var icon=e?.Icon??ScorebugIcon.None;
+        IconVisitorsInput.Visibility=icon==ScorebugIcon.TimeoutBars?Visibility.Visible:Visibility.Collapsed;
+        IconFlipInput.Visibility=icon==ScorebugIcon.PossessionDot?Visibility.Visible:Visibility.Collapsed;
     }
 
     void Property_Changed(object sender,RoutedEventArgs e)=>ApplyProperties(sender);
@@ -207,6 +253,7 @@ public partial class ScorebugEditorWindow : Window
         }
         if(sender is CheckBox){SaveProperties();RefreshAllVisuals();return;}
         if(sender==ColorInput||sender==BackgroundInput){SaveProperties();RefreshAllVisuals();return;}
+        if(sender==ContentInput) UpdatePropertyVisibility();
         _propertySave.Stop(); _propertySave.Start();
     }
 
@@ -223,10 +270,14 @@ public partial class ScorebugEditorWindow : Window
         var shape=ShapeInput.SelectedItem is ScorebugShape s?s:item.Shape;
         var visible=VisibleInput.IsChecked==true; var transparent=TransparentBackgroundInput.IsChecked==true;
         var mediaTag=MediaTagInput.Text.Trim();
+        var periodFormat=PeriodFormatInput.SelectedItem is PeriodOption period?period.Key:item.PeriodFormat;
+        var icon=IconInput.SelectedItem is ScorebugIcon chosenIcon?chosenIcon:item.Icon;
+        var iconVisitors=IconVisitorsInput.IsChecked==true; var iconFlipped=IconFlipInput.IsChecked==true;
         if(item.Name==name&&item.Content==content&&(!xOk||item.X==x)&&(!yOk||item.Y==y)&&(!wOk||item.Width==w)&&(!hOk||item.Height==h)
             &&(!fOk||item.FontSize==f)&&(!foregroundOk||item.Foreground==ColorInput.Text)&&(!backgroundOk||item.Background==BackgroundInput.Text)
             &&item.Animation==animation&&item.Shape==shape&&item.Visible==visible&&item.TransparentBackground==transparent
-            &&item.MediaTag==mediaTag)return;
+            &&item.MediaTag==mediaTag&&item.PeriodFormat==periodFormat
+            &&item.Icon==icon&&item.IconVisitors==iconVisitors&&item.IconFlipped==iconFlipped)return;
         var id=item.Id;
         _catalog.Update(layout=>{
             var target=layout.Elements.FirstOrDefault(z=>z.Id==id); if(target is null)return;
@@ -237,7 +288,8 @@ public partial class ScorebugEditorWindow : Window
             if(backgroundOk)target.Background=BackgroundInput.Text;
             target.Animation=animation; target.Shape=shape;
             target.Visible=visible; target.TransparentBackground=transparent;
-            target.MediaTag=mediaTag;
+            target.MediaTag=mediaTag; target.PeriodFormat=periodFormat;
+            target.Icon=icon; target.IconVisitors=iconVisitors; target.IconFlipped=iconFlipped;
             if(target.Kind==ScorebugElementKind.Logo&&string.IsNullOrWhiteSpace(target.ImagePath))target.Content=$"LOGO · {target.Name}";
         });
     }
@@ -264,7 +316,24 @@ public partial class ScorebugEditorWindow : Window
 
     void AddData_Click(object sender,RoutedEventArgs e)
     {
-        var choices=new List<(string,string)>{("Football · ball spot","{{BALL_SPOT}}"),("Football · down & distance","{{DOWNS}}"),("Football · yards to go","{{YARDS_TO_GO}}"),("Football · team yards","{{YARDS}}"),("Football · turnovers","{{TURNOVERS}}"),("Football · play clock","{{PLAY_CLOCK}}"),("Football · timeout clock","{{TIMEOUT_CLOCK}}"),("Football · down","{{DOWN}}"),("Football · to go","{{TO_GO}}"),("Football · ball on","{{BALL_ON}}"),("Timeouts left","{{TIMEOUTS}}"),("Possession","{{POSSESSION}}"),("Basketball · shot clock","{{SHOT_CLOCK}}"),("Basketball · fouls","{{BASKETBALL_FOULS}}"),("Baseball · count & outs","{{BASEBALL_COUNT}}"),("Baseball · hits","{{HITS}}"),("Soccer · cards","{{SOCCER_CARDS}}"),("Soccer · shots","{{SHOTS}}"),("Soccer · corners","{{CORNERS}}"),("Sport name","{{SPORT}}")};
+        // Every token the binder understands, so no data is missing from the studio.
+        var choices=new List<(string,string)>
+        {
+            ("Team · home name","{{HOME_TEAM}}"),("Team · visitors name","{{AWAY_TEAM}}"),
+            ("Team · home abbreviation","{{HOME_ABBR}}"),("Team · visitors abbreviation","{{AWAY_ABBR}}"),
+            ("Score · home","{{HOME_SCORE}}"),("Score · visitors","{{AWAY_SCORE}}"),
+            ("Period (quarter)","{{PERIOD}}"),("Game clock","{{GAME_CLOCK}}"),("Play clock","{{PLAY_CLOCK}}"),
+            ("Timeout clock","{{TIMEOUT_CLOCK}}"),("Timeouts left","{{TIMEOUTS}}"),("Possession","{{POSSESSION}}"),
+            ("Sport name","{{SPORT}}"),("Date","{{DATE}}"),("Time of day","{{TIME}}"),
+            ("Football · down","{{DOWN}}"),("Football · to go","{{TO_GO}}"),("Football · down & distance","{{DOWNS}}"),
+            ("Football · yards to go","{{YARDS_TO_GO}}"),("Football · ball on (number)","{{BALL_ON}}"),
+            ("Football · ball on side","{{BALL_SIDE}}"),("Football · ball on side + number","{{BALL_SIDE_SPOT}}"),
+            ("Football · ball side team name","{{BALL_TEAM}}"),("Football · ball spot","{{BALL_SPOT}}"),
+            ("Football · team yards","{{YARDS}}"),("Football · turnovers","{{TURNOVERS}}"),
+            ("Basketball · shot clock","{{SHOT_CLOCK}}"),("Basketball · fouls","{{BASKETBALL_FOULS}}"),("Fouls (both)","{{FOULS}}"),
+            ("Baseball · count & outs","{{BASEBALL_COUNT}}"),("Baseball · hits","{{HITS}}"),("Baseball · outs","{{BASEBALL_OUTS}}"),
+            ("Soccer · cards","{{SOCCER_CARDS}}"),("Soccer · cards (short)","{{CARDS}}"),("Soccer · shots","{{SHOTS}}"),("Soccer · corners","{{CORNERS}}")
+        };
         foreach(var stat in _engine.State.Stats)choices.Add(($"Custom stat · {stat.Name}",$"{{{{STAT:{stat.Name}}}}}"));
         choices.Add(("Custom stat · any name","{{STAT:Name}}"));
         var picker=new Window{Title="Add sport data",Width=380,Height=470,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
@@ -348,7 +417,7 @@ public partial class ScorebugEditorWindow : Window
         var id=selected.Id;
         try
         {
-            var assetFolder=System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Scoreboard","ScorebugAssets");
+            var assetFolder=AppPaths.Combine("ScorebugAssets");
             Directory.CreateDirectory(assetFolder);
             var target=System.IO.Path.Combine(assetFolder,$"{Guid.NewGuid():N}{System.IO.Path.GetExtension(dialog.FileName)}");
             File.Copy(dialog.FileName,target);
@@ -517,5 +586,32 @@ public partial class ScorebugEditorWindow : Window
         _catalog.Changed-=Render; _engine.Changed-=RefreshBoundText;
         base.OnClosed(e);
     }
-    sealed record LayerItem(ScorebugElement Element){public override string ToString()=>$"{(Element.Visible?"◉":"○")}  {Element.Name}";}
+    /// <summary>Moves the selected element one step towards the front (+1) or back (-1) of the picture.</summary>
+    void MoveSelectedLayer(int delta)
+    {
+        if(Selected is not { } item) return;
+        var from=_catalog.Layout.Elements.IndexOf(item);
+        if(from<0) return;
+        var to=Math.Clamp(from+delta,0,_catalog.Layout.Elements.Count-1);
+        if(from==to) return;
+        _catalog.Update(layout=>{var moved=layout.Elements[from];layout.Elements.RemoveAt(from);layout.Elements.Insert(to,moved);});
+    }
+
+    void LayerFront_Click(object sender,RoutedEventArgs e)=>MoveSelectedLayer(1);
+    void LayerBack_Click(object sender,RoutedEventArgs e)=>MoveSelectedLayer(-1);
+
+    sealed class LayerItem
+    {
+        public LayerItem(ScorebugElement element)=>Element=element;
+        public ScorebugElement Element { get; }
+        public string Glyph => !Element.Visible ? "○" : Element.Kind switch
+        {
+            ScorebugElementKind.Logo => "▣",
+            ScorebugElementKind.Shape => "◼",
+            ScorebugElementKind.Video => "▶",
+            _ => "T"
+        };
+        public string Label => Element.Name;
+        public string KindLabel => Element.Kind.ToString().ToUpperInvariant();
+    }
 }

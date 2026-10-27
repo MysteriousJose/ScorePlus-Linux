@@ -12,6 +12,8 @@ public partial class OutputWindow : Window
     WindowStyle _style; WindowState _state; bool _full;
     public OutputWindow(GameEngine engine, ScorebugCatalog catalog,string broadcastTheme="Dark",MediaPlayback? playback=null) {InitializeComponent(); _broadcastTheme=broadcastTheme; _engine = engine; _catalog=catalog; _displayState=engine.CloneState(); _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState,playback,muteVideo:false); ScorebugHost.Children.Add(_scorebugView); _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update(); }
     public void Publish(){_displayState=_engine.CloneState();Update();_scorebugView.Refresh();}
+    /// <summary>Re-creates the on-air visuals; used when a new game replaces everything.</summary>
+    public void Rebuild(){Update();_scorebugView.Rebuild();}
     public void UpdateLiveScoreClock(GameState source)
     {
         _displayState.HomeScore=source.HomeScore;_displayState.AwayScore=source.AwayScore;

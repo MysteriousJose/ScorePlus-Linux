@@ -59,7 +59,11 @@ public sealed class GameState
     public int Down { get; set; } = 1;
     public string QuarterDisplayFormat { get; set; } = "Full";
     public int YardsToGo { get; set; } = 10;
-    public int YardsToGoal { get; set; } = 75;
+    /// <summary>Ball spot as a yard line, 0–50. Independent of who has possession.</summary>
+    public int YardsToGoal { get; set; } = 35;
+    /// <summary>Whose half of the field the ball spot sits on. Separate from possession, so the
+    /// graphic can read "Home 37" while the visitors have the ball.</summary>
+    public bool BallOnHomeSide { get; set; } = true;
     public int HomeYellowCards { get; set; }
     public int AwayYellowCards { get; set; }
     public int HomeRedCards { get; set; }
@@ -246,11 +250,21 @@ public sealed class GameEngine
         Tick(); SaveUndo("Timeout clock reset"); State.TimeoutClockSeconds = Math.Clamp(seconds, 1, 599); State.TimeoutClockRunning = false; _lastTick = _watch.ElapsedTicks;
         Log("Timeout clock", $"Timeout clock reset to {FormatClock(State.TimeoutClockSeconds)}"); Changed?.Invoke();
     }
-    public void AdvanceDown() { if (State.SportId != "football") return; SaveUndo("Down"); if (State.Down >= 4) { State.Down=1; State.YardsToGo=10; State.YardsToGoal=Math.Max(0,State.YardsToGoal-State.YardsToGo); } else State.Down++; Log("Down", $"Down {State.Down}, {State.YardsToGo} to go"); Changed?.Invoke(); }
+    public void AdvanceDown() { if (State.SportId != "football") return; SaveUndo("Down"); if (State.Down >= 4) { State.Down=1; State.YardsToGo=10; State.YardsToGoal=Math.Clamp(State.YardsToGoal-State.YardsToGo,0,50); } else State.Down++; Log("Down", $"Down {State.Down}, {State.YardsToGo} to go"); Changed?.Invoke(); }
     public void PreviousDown() { if (State.SportId != "football") return; SaveUndo("Previous down"); if (State.Down > 1) State.Down--; Log("Down", $"Down {State.Down}, {State.YardsToGo} to go"); Changed?.Invoke(); }
     public void NewSeries() { if (State.SportId != "football") return; SaveUndo("New series"); State.Down = 1; State.YardsToGo = 10; Log("Series", "New series · 1st & 10"); Changed?.Invoke(); }
     public void SetPeriodFormat(string format) { if(format is not ("Full" or "Short" or "Number"))return; if(State.QuarterDisplayFormat==format)return; SaveUndo("Period format"); State.QuarterDisplayFormat=format; Log("Period", $"Period display: {PeriodDisplay.Format(State)}"); Changed?.Invoke(); }
-    public void SetFootballDistance(int yardsToGo,int? yardsToGoal=null) { if (State.SportId != "football") return; SaveUndo("Football distance"); State.YardsToGo=Math.Clamp(yardsToGo,1,99); if(yardsToGoal is not null)State.YardsToGoal=Math.Clamp(yardsToGoal.Value,0,99); Log("Yards", $"{State.YardsToGo} to go, ball at {State.YardsToGoal}"); Changed?.Invoke(); }
+    /// <summary>Yard line is 0–50: a ball spot never goes past midfield, whichever team has it.</summary>
+    public void SetFootballDistance(int yardsToGo,int? yardsToGoal=null) { if (State.SportId != "football") return; SaveUndo("Football distance"); State.YardsToGo=Math.Clamp(yardsToGo,1,99); if(yardsToGoal is not null)State.YardsToGoal=Math.Clamp(yardsToGoal.Value,0,50); Log("Yards", $"{State.YardsToGo} to go, ball at {State.YardsToGoal}"); Changed?.Invoke(); }
+
+    /// <summary>Which team's half the ball spot is on. Deliberately independent of possession.</summary>
+    public void SetBallSide(bool home)
+    {
+        if (State.SportId != "football" || State.BallOnHomeSide == home) return;
+        SaveUndo("Ball side"); State.BallOnHomeSide = home;
+        Log("Ball spot", $"Ball on {(home ? State.HomeTeam : State.AwayTeam)}'s {State.YardsToGoal}");
+        Changed?.Invoke();
+    }
     public void AddCard(bool home,bool red=false) { if(State.SportId!="soccer")return; SaveUndo(red?"Red card":"Yellow card"); if(red){if(home)State.HomeRedCards++;else State.AwayRedCards++;}else{if(home)State.HomeYellowCards++;else State.AwayYellowCards++;} Log("Card",$"{(home?State.HomeTeam:State.AwayTeam)} {(red?"red":"yellow")} card");Changed?.Invoke(); }
     public void BaseballBall() { if(State.SportId!="baseball")return; SaveUndo("Ball"); State.Balls++; if(State.Balls>=4){State.Balls=0;State.Strikes=0;Log("Count","Walk · count reset");}else Log("Count","Ball");Changed?.Invoke(); }
     public void BaseballStrike(bool foul=false) { if(State.SportId!="baseball")return; SaveUndo(foul?"Foul ball":"Strike"); if(!foul||State.Strikes<2)State.Strikes++; if(State.Strikes>=3){State.Outs++;State.Balls=0;State.Strikes=0;Log("Count","Strikeout · batter out");}else Log("Count",foul?"Foul ball":"Strike");Changed?.Invoke(); }
@@ -326,6 +340,8 @@ public sealed class GameEngine
     public void Load(string path)
     {
         State = JsonSerializer.Deserialize<GameState>(File.ReadAllText(path), JsonOptions) ?? new GameState();
+        // Older saves could hold a spot past midfield; bring it back into the 0–50 range.
+        State.YardsToGoal = Math.Clamp(State.YardsToGoal, 0, 50);
         _undo.Clear(); _lastTick = _watch.ElapsedTicks; Changed?.Invoke();
     }
 
@@ -337,7 +353,7 @@ public sealed class GameEngine
         s.SportId,
         s.Period, s.TotalPeriods, s.PeriodLabel, s.QuarterDisplayFormat,
         s.HomeTimeouts, s.AwayTimeouts, s.HomeFouls, s.AwayFouls, s.HomePossession,
-        s.Down, s.YardsToGo, s.YardsToGoal,
+        s.Down, s.YardsToGo, s.YardsToGoal, s.BallOnHomeSide,
         s.HomeYellowCards, s.AwayYellowCards, s.HomeRedCards, s.AwayRedCards,
         s.Balls, s.Strikes, s.Outs, s.HomeHits, s.AwayHits,
         s.HomeYards, s.AwayYards, s.HomeTurnovers, s.AwayTurnovers,

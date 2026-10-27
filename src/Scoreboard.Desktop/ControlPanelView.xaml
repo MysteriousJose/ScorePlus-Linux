@@ -31,8 +31,10 @@
     </Style>
     <Style x:Key="Tiny" TargetType="Button">
       <Setter Property="FontSize" Value="11"/>
-      <Setter Property="Padding" Value="7,5"/>
-      <Setter Property="Margin" Value="2"/>
+      <!-- Tall enough to hit without aiming: a rectangle, not a sliver. -->
+      <Setter Property="Padding" Value="9,8"/>
+      <Setter Property="MinHeight" Value="34"/>
+      <Setter Property="Margin" Value="3,2"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
     <Style x:Key="NameBox" TargetType="TextBox">
@@ -58,9 +60,9 @@
 
   <Grid>
     <Grid.RowDefinitions>
-      <RowDefinition Height="*" MinHeight="176"/>
-      <RowDefinition Height="*" MinHeight="152"/>
-      <RowDefinition Height="168"/>
+      <RowDefinition Height="*" MinHeight="226"/>
+      <RowDefinition Height="*" MinHeight="190"/>
+      <RowDefinition Height="196" MinHeight="196"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
@@ -76,7 +78,7 @@
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
           <DockPanel>
@@ -87,6 +89,8 @@
             </StackPanel>
           </DockPanel>
           <TextBox x:Name="AwayName" Grid.Row="1" Style="{StaticResource NameBox}"/>
+          <!-- Auto, not star: the score stepper keeps its full height and never slides down over
+               the yards/turnover line below it. -->
           <ContentControl x:Name="AwayScoreHost" Grid.Row="2" VerticalAlignment="Center"/>
           <TextBlock x:Name="AwayMeta" Grid.Row="3" Style="{StaticResource Caption}" HorizontalAlignment="Center" Margin="0,4,0,0"/>
         </Grid>
@@ -97,15 +101,17 @@
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
+          <!-- Mirrored against the visitors card: possession sits on the inside edge, the team
+               heading on the outside edge, so the pair reads symmetrically across the panel. -->
           <DockPanel>
-            <TextBlock x:Name="HomePossessionTag" DockPanel.Dock="Right" Text="" Foreground="#38D7A3" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
-            <StackPanel Orientation="Horizontal">
-              <Border Style="{StaticResource Accent}"/>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
               <TextBlock Text="HOME" Style="{StaticResource CardTitle}"/>
+              <Border Style="{StaticResource Accent}" Margin="6,0,0,0"/>
             </StackPanel>
+            <TextBlock x:Name="HomePossessionTag" Text="" Foreground="#38D7A3" FontSize="10" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Left"/>
           </DockPanel>
           <TextBox x:Name="HomeName" Grid.Row="1" Style="{StaticResource NameBox}"/>
           <ContentControl x:Name="HomeScoreHost" Grid.Row="2" VerticalAlignment="Center"/>
@@ -125,7 +131,7 @@
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
           <DockPanel>
@@ -137,7 +143,7 @@
           </DockPanel>
 
           <!-- Football -->
-          <Grid x:Name="FootballDetail" Grid.Row="1" Margin="0,4,0,0">
+          <Grid x:Name="FootballDetail" Grid.Row="1" Margin="0,4,0,0" VerticalAlignment="Top">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="*"/>
@@ -310,8 +316,8 @@
     <Border Grid.Row="3" Background="#111721" CornerRadius="9" Padding="9,6" Margin="0,8,0,0">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-          <ToggleButton x:Name="LiveOutputToggle" Content="Live score &amp; clocks: ON" IsChecked="True" Checked="LiveOutput_Changed" Unchecked="LiveOutput_Changed" Padding="10,6" FontSize="12"/>
-          <Button x:Name="UpdateButton" Content="Update Output  ·  publish everything else" FontSize="13" Padding="14,7" Background="#0B6B50" BorderBrush="#14A67C" Tag="output.publish" Click="Action_Click" Margin="6,0,0,0" ToolTip="Score and clocks are already live; this publishes everything else"/>
+          <ToggleButton x:Name="LiveOutputToggle" Content="Live: ON" IsChecked="True" Checked="LiveOutput_Changed" Unchecked="LiveOutput_Changed" Padding="12,8" MinHeight="34" FontSize="12" Width="86" ToolTip="Publish score, clocks and team names as they change"/>
+          <Button x:Name="UpdateButton" Content="Update Output" FontSize="13" Padding="16,10" MinHeight="38" Background="#0B6B50" BorderBrush="#14A67C" Tag="output.publish" Click="Action_Click" Margin="6,0,0,0" ToolTip="Publish down, distance, possession, timeouts and stats"/>
         </StackPanel>
         <TextBlock x:Name="StagedText" Text="EVERYTHING ON AIR" FontSize="11" FontWeight="Bold" Foreground="#38D7A3" VerticalAlignment="Center"/>
       </DockPanel>

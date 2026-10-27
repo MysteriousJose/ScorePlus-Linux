@@ -11,7 +11,7 @@ public sealed class SportCatalog
 
     public SportCatalog(string? path = null)
     {
-        _path = path ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Scoreboard", "sports.json");
+        _path = path ?? AppPaths.Combine("sports.json");
         try { Load(); }
         catch { /* A corrupt user catalog must not prevent the game application from starting. */ }
         _custom.RemoveAll(s => !IsValid(s) || SportDefinition.BuiltIns.Any(b => b.Id == s.Id));

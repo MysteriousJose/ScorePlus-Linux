@@ -7,7 +7,7 @@ Everything runs locally on one PC. Scores and clocks publish to the audience out
 ## Highlights
 
 - **One console, no scrolling.** The main window is the control panel: visitors on the left, home on the right, with down & distance, miscellaneous clocks, timeouts, possession, the timeout clock, and custom stats all on the same page.
-- **Steppers everywhere.** Every value has its add buttons above it and subtract buttons below it, so score, timeouts, down, distance, ball spot, and custom stats all read the same way. Click the value in the middle to type an exact number.
+- **Steppers everywhere.** Every value has its add buttons above it and subtract buttons below it, so score, timeouts, down, distance, ball spot, and custom stats all read the same way. Click the value in the middle to type an exact number. The ball spot carries its own side — "Home 37" or "Visitors 25" — switched by a full-size **HOME ▶ / ◀ VISITORS** button under it, and it is independent of who has possession.
 - **Operator + audience windows.** The main window is the operator surface, and **New Panel** pops out another copy in its own window — for a second monitor or an assistant — that always drives the same game. The audience window is independent and resizable, ready for a projector or capture card.
 - **Live score, clocks and names.** Score, game clock, play clock, timeout clock, shot clock, and team names update the audience instantly. **Update Output** publishes staged details such as down and distance, possession, and timeouts when you want them to change.
 - **One media library with tags.** The preview sits in the top-left corner; under it is a single media dock showing thumbnail tiles for every clip, a play/pause and scrub bar, and a tag editor. Tags are folder-like buckets — a clip tagged *Ads* only appears in the scorebug video element watching *Ads*.
@@ -16,11 +16,12 @@ Everything runs locally on one PC. Scores and clocks publish to the audience out
 - **Event log in its own window.** The log moved out of the dock to a **Event Log** button in the top row, so you can park it on a second monitor.
 - **Multiple sports.** Basketball, American Football, Baseball, Soccer, Hockey, Lacrosse, Volleyball, Tennis, and Generic presets — each with its own period label, clock, scoring buttons, and timeout count.
 - **Editable sport profiles.** Change period length, number of periods, timeouts per team, scoring buttons, and count-up clocks. Built-in presets can be edited (stored as overrides you can reset), and you can duplicate, rename, or delete custom sports.
-- **Scorebug Studio.** Design the on-air graphic: text, logos, shapes (rectangle/square, circle, triangle), and video boxes positioned freely, layered, resized, and colored with a full custom color picker (hex, RGB/alpha sliders, palette). Bind live data with tokens like `{{HOME_SCORE}}`, `{{GAME_CLOCK}}`, `{{DOWNS}}`, or your own stats. Every dialog in the studio follows the current theme.
+- **Icons from live data.** Any text element can draw artwork instead of a number: **timeout bars** (a row of short horizontal lines, one per timeout the team has left, home or visitors) and a **possession dot** that sits on the left for the visitors and the right for the home team — with a property to mirror it. Both are chosen in the element's **ICON** section in the studio.
+- **Scorebug Studio.** Design the on-air graphic: text, logos, shapes (rectangle/square, circle, triangle), and video boxes positioned freely, layered, resized, and colored with a full custom color picker (hex, RGB/alpha sliders, palette). The layer list runs front-to-back (the top row is the highest layer) with bring-forward/send-back buttons, and the property panel only offers what applies to the selected element — a logo image picker for logos, a media tag for video boxes, a shape picker for shapes. Bind live data with tokens like `{{HOME_SCORE}}`, `{{GAME_CLOCK}}`, `{{DOWNS}}`, `{{BALL_ON}}`, or your own stats. Each text element chooses its own quarter style (`Quarter 1`, `Q1` or `1`). Every dialog in the studio follows the current theme.
 - **Custom stats.** Add any stat — Turnovers, Penalties, Shots, Saves, or something unique — and track a running value. Show it on the scorebug with `{{STAT:Turnovers}}` and in the exported game report.
-- **Keybinds for everything.** Assign a key combination to any control-panel button — including **Update Output** and the **live score & clocks** switch; bindings persist between sessions.
+- **Keybinds for everything, none by default.** Assign a key combination to any control-panel button — including **Update Output**, the **live score & clocks** switch and the ball spot's side; bindings persist between sessions, and nothing is bound until you choose it.
 - **Themes that leave graphics alone.** Light and dark themes restyle the operator windows only; scorebug and audience artwork keep their designed colors.
-- **Game safety.** 100-step undo, event history, portable save/load (`.scoreboard` JSON), and automatic recovery autosave every five seconds. The last autosave is restored silently at launch — no recovery popup — and **New Game** starts fresh.
+- **Game safety.** 100-step undo, event history, portable save/load (`.spg` ScorePlus Game files), and rolling autosaves every five seconds. The launch screen lists the recoverable autosave points (one per minute of play) so you can pick one, and **New Game** clears the game and the on-air picture while leaving sport profiles, keybinds, preferences, your media library and your scorebug design alone — the saved design is the template every new game uses.
 
 ## Getting started
 
@@ -34,28 +35,30 @@ The result is `dist/ScorePlus-win-x64/ScorePlus.exe`; double-click it to launch.
 
 ## A typical game
 
-1. Pick the sport in the main window (or load a saved game).
+1. Start from the launcher: **New Game** for a clean sheet, **Open Game** for a saved `.spg`, or an autosave from the list. Pick the sport in the main window (or switch it, which also starts fresh).
 2. Work the console: team names, score steppers, down & distance, clocks, timeouts, and possession are all on the page. Typing over any value sets it exactly; Enter commits it.
 3. Press **Update Output** (or your keybind for it) when the staged details (down, distance, possession, timeouts) should go on air — scores, clocks, and team names are already live.
 4. Open **Audience Output** and send it fullscreen to your display. Use **New Panel** if you want a second control window.
 5. Optionally open **Scorebug Studio** to lay out the on-air graphic and **Sport Profiles** to tune the rules.
 6. Assign shortcuts in **Keybinds…** so the actions you use most are one keystroke away.
 
-The clock can be set by typing `MM:SS` (for example `10:30`) or a plain number of seconds. The period label can read `Quarter 1`, `Q1`, or `1`.
+The clock can be set by typing `MM:SS` (for example `10:30`) or a plain number of seconds. How the quarter prints (`Quarter 1`, `Q1`, or `1`) is a property of the scorebug element in the studio, not a console setting, so two graphics can print it differently.
 
-Preferences start on the **dark** theme with **Open the control panel in its own window** enabled, and the little heading tips ("scoring, timing, actions") are off until you turn them on in **Preferences**.
+Preferences start on the **dark** theme, and the little heading tips ("scoring, timing, actions") are off until you turn them on in **Preferences**. The console lives in the main window; **New Panel** opens an extra synced one when you actually want a second window — starting or opening a game never pops one up by itself.
 
 ## Where files live
 
 | What | Location |
 | --- | --- |
-| Game files | Anywhere you choose — portable JSON with the `.scoreboard` extension |
-| Recovery autosave | `%LOCALAPPDATA%\Scoreboard\recovery.scoreboard` |
-| Preferences | `%LOCALAPPDATA%\Scoreboard\preferences.json` |
-| Sport profiles | `%LOCALAPPDATA%\Scoreboard\sports.json` |
-| Scorebug layout | `%LOCALAPPDATA%\Scoreboard\scorebug.json` |
-| Keybinds | `%LOCALAPPDATA%\Scoreboard\keybinds.json` |
-| Diagnostics | `%LOCALAPPDATA%\Scoreboard\logs` |
+| Game files | Anywhere you choose — portable `.spg` (ScorePlus Game) files; older `.scoreboard` / `.json` games still open |
+| Autosaves | `%LOCALAPPDATA%\ScorePlus\autosaves` — the newest twelve points, listed on the launch screen |
+| Preferences | `%LOCALAPPDATA%\ScorePlus\preferences.json` |
+| Sport profiles | `%LOCALAPPDATA%\ScorePlus\sports.json` |
+| Scorebug layout | `%LOCALAPPDATA%\ScorePlus\scorebug.json` |
+| Keybinds | `%LOCALAPPDATA%\ScorePlus\keybinds.json` |
+| Diagnostics | `%LOCALAPPDATA%\ScorePlus\logs` |
+
+An existing installation is carried across the folder rename once: the files in `%LOCALAPPDATA%\Scoreboard` are copied into `%LOCALAPPDATA%\ScorePlus` on first run (copied, not moved, so an older build still works).
 
 ## Project layout
 

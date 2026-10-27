@@ -22,18 +22,6 @@ public interface IControlPanelHost
 /// </summary>
 public partial class ControlPanelView : UserControl
 {
-    sealed record PeriodFormatOption(string Key, string Label)
-    {
-        public override string ToString() => Label;
-    }
-
-    static readonly PeriodFormatOption[] PeriodFormats =
-    [
-        new("Full", "Quarter 1"),
-        new("Short", "Q1"),
-        new("Number", "1")
-    ];
-
     static readonly Brush StagedBrush = Freeze(Color.FromRgb(255, 209, 102));
     static readonly Brush PublishedBrush = Freeze(Color.FromRgb(56, 215, 163));
     static Brush Freeze(Color color) { var brush = new SolidColorBrush(color); brush.Freeze(); return brush; }
@@ -41,12 +29,11 @@ public partial class ControlPanelView : UserControl
     readonly GameEngine _engine;
     readonly IControlPanelHost _host;
     readonly Stepper _awayScore, _homeScore, _down, _toGo, _ballOn, _quarter, _awayTimeouts, _homeTimeouts;
-    readonly ComboBox _periodFormat = new() { Width = 104, FontSize = 11, Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Bottom };
+    readonly Button _ballSide;
     readonly Dictionary<string, Stepper> _statValues = [];
     string _scoreSignature = "";
     string _sportSignature = "";
     string _statsSignature = "";
-    bool _loadingFormats;
     bool _syncingLive;
     bool _loadingNames;
     bool _showHints;
@@ -57,8 +44,6 @@ public partial class ControlPanelView : UserControl
         InitializeComponent();
         _engine = engine;
         _host = host;
-        _periodFormat.ItemsSource = PeriodFormats;
-        _periodFormat.SelectionChanged += PeriodFormat_Changed;
 
         _awayScore = BuildScoreStepper(false);
         _homeScore = BuildScoreStepper(true);
@@ -77,21 +62,34 @@ public partial class ControlPanelView : UserControl
         _toGo.Committed += value => _engine.SetFootballDistance(value);
         ToGoHost.Content = _toGo;
 
-        _ballOn = new Stepper("Ball on", 26);
+        _ballOn = new Stepper("BALL ON", 26);
+        _ballOn.ToolTip = "Ball spot as a yard line, 0–50, on either team's half. Its side is independent of possession.";
         _ballOn.SetButtons([new("+", -1, "football.ball.plus")], [new("−", 1, "football.ball.minus")]);
         _ballOn.Stepped += Step;
         _ballOn.Committed += value => _engine.SetFootballDistance(_engine.State.YardsToGo, value);
-        BallOnHost.Content = _ballOn;
+        // A full-size console button, keybindable like the rest, naming the half the ball is on.
+        _ballSide = new Button
+        {
+            Content = "HOME ▶",
+            Tag = "football.ball.side",
+            Style = (Style)FindResource("Tiny"),
+            Margin = new Thickness(2, 6, 2, 0),
+            FontSize = 11,
+            ToolTip = "Which team's half of the field the ball is on — independent of possession"
+        };
+        _ballSide.Click += Action_Click;
+        var ballColumn = new StackPanel();
+        ballColumn.Children.Add(_ballOn);
+        ballColumn.Children.Add(_ballSide);
+        BallOnHost.Content = ballColumn;
 
         _quarter = new Stepper("Quarter", 26);
         _quarter.SetButtons([new("+", 1, "period.next")], [new("−", -1, "period.previous")]);
         _quarter.Stepped += Step;
         _quarter.Committed += value => _engine.SetPeriod(value);
-        var quarterRow = new DockPanel();
-        DockPanel.SetDock(_periodFormat, Dock.Right);
-        quarterRow.Children.Add(_periodFormat);
-        quarterRow.Children.Add(_quarter);
-        QuarterHost.Content = quarterRow;
+        // How the quarter prints (Quarter 1 / Q1 / 1) belongs to the graphic, not the console:
+        // it is a property of the element in Scorebug Studio.
+        QuarterHost.Content = _quarter;
 
         _awayTimeouts = BuildTimeoutStepper(false);
         _homeTimeouts = BuildTimeoutStepper(true);
@@ -114,7 +112,7 @@ public partial class ControlPanelView : UserControl
     public string PlayClockText => PlayClockValue.Text;
     public Stepper HomeScore => _homeScore;
     public Stepper AwayScore => _awayScore;
-    public ComboBox PeriodFormatSelector => _periodFormat;
+    public Stepper BallOn => _ballOn;
 
     Stepper BuildScoreStepper(bool home)
     {
@@ -152,7 +150,7 @@ public partial class ControlPanelView : UserControl
         if (LiveOutputToggle is null) return;
         _syncingLive = true;
         LiveOutputToggle.IsChecked = live;
-        LiveOutputToggle.Content = live ? "Live score & clocks: ON" : "Live score & clocks: OFF";
+        LiveOutputToggle.Content = live ? "Live: ON" : "Live: OFF";
         _syncingLive = false;
     }
 
@@ -174,6 +172,7 @@ public partial class ControlPanelView : UserControl
         _down.Value = s.Down;
         _toGo.Value = s.YardsToGo;
         _ballOn.Value = s.YardsToGoal;
+        _ballSide.Content = s.BallOnHomeSide ? "HOME ▶" : "◀ VISITORS";
         _quarter.Value = s.Period;
 
         if (!ClockValue.IsKeyboardFocused) ClockValue.Text = GameEngine.FormatClock(s.ClockSeconds);
@@ -206,15 +205,11 @@ public partial class ControlPanelView : UserControl
         OtherDetail.Visibility = football ? Visibility.Collapsed : Visibility.Visible;
         NewSeriesButton.Visibility = FootballExtras.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
         DetailCardTitle.Text = football ? "DOWN & DISTANCE" : "SPORT CONTROLS";
-        DetailCardHint.Text = football ? $"{Ordinal(s.Down)} & {s.YardsToGo} · ball on {s.YardsToGoal}" : string.Empty;
+        DetailCardHint.Text = football ? $"{Ordinal(s.Down)} & {s.YardsToGo} · ball on {(s.BallOnHomeSide ? "home" : "visitors")}' {s.YardsToGoal}" : string.Empty;
         DetailCardHint.Visibility = _showHints && football ? Visibility.Visible : Visibility.Collapsed;
         PlayClockRow.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
         ShotClockRow.Visibility = _engine.Sport.HasShotClock ? Visibility.Visible : Visibility.Collapsed;
         RebuildSportButtons(s);
-
-        _loadingFormats = true;
-        _periodFormat.SelectedItem = PeriodFormats.FirstOrDefault(f => f.Key == s.QuarterDisplayFormat) ?? PeriodFormats[0];
-        _loadingFormats = false;
 
         var staged = _host.HasStagedChanges;
         StagedText.Text = staged ? "●  NOT ON AIR YET — press Update Output" : "EVERYTHING ON AIR";
@@ -379,12 +374,6 @@ public partial class ControlPanelView : UserControl
     void PlayClock40_Click(object sender, RoutedEventArgs e) => _engine.ResetPlayClock(40);
     void PlayClock25_Click(object sender, RoutedEventArgs e) => _engine.ResetPlayClock(25);
 
-    void PeriodFormat_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (_loadingFormats || _periodFormat.SelectedItem is not PeriodFormatOption option) return;
-        _engine.SetPeriodFormat(option.Key);
-    }
-
     void AddStat_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new AddStatDialog(_engine.State.Stats.Select(s => s.Name).ToArray()) { Owner = Window.GetWindow(this) };
@@ -396,7 +385,7 @@ public partial class ControlPanelView : UserControl
     {
         if (_syncingLive || LiveOutputToggle is null || _host is null) return;
         var enabled = LiveOutputToggle.IsChecked == true;
-        LiveOutputToggle.Content = enabled ? "Live score & clocks: ON" : "Live score & clocks: OFF";
+        LiveOutputToggle.Content = enabled ? "Live: ON" : "Live: OFF";
         _host.LiveScoreClock = enabled;
     }
 
@@ -437,7 +426,8 @@ public partial class ControlPanelView : UserControl
             case "football.down.previous": _engine.PreviousDown(); break;
             case "football.distance.minus": _engine.SetFootballDistance(_engine.State.YardsToGo - 1); break;
             case "football.distance.plus": _engine.SetFootballDistance(_engine.State.YardsToGo + 1); break;
-            case "football.ball.minus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Min(99, _engine.State.YardsToGoal + 1)); break;
+            case "football.ball.minus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Min(50, _engine.State.YardsToGoal + 1)); break;
+            case "football.ball.side": _engine.SetBallSide(!_engine.State.BallOnHomeSide); break;
             case "football.ball.plus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Max(0, _engine.State.YardsToGoal - 1)); break;
             case "football.series.new": _engine.NewSeries(); break;
             case "football.yards.home": _engine.AddFootballYards(true, 10); break;

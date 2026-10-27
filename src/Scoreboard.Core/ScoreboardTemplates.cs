@@ -6,14 +6,14 @@ public static class ScoreboardTemplates
 {
     static readonly Regex StatToken = new(@"\{\{STAT:(?<name>[^}]+)\}\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    public static string Bind(string content, GameState state) => StatToken.Replace(ReplaceFixed(content, state), match =>
+    public static string Bind(string content, GameState state, string? periodFormat = null) => StatToken.Replace(ReplaceFixed(content, state, periodFormat), match =>
     {
         var name = match.Groups["name"].Value.Trim();
         var stat = state.Stats.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
         return stat is null ? string.Empty : stat.Value.ToString();
     });
 
-    static string ReplaceFixed(string content, GameState state) => content
+    static string ReplaceFixed(string content, GameState state, string? periodFormat) => content
         // Team names render exactly as the operator typed them: full text, original case.
         .Replace("{{HOME_TEAM}}", state.HomeTeam)
         .Replace("{{AWAY_TEAM}}", state.AwayTeam)
@@ -21,7 +21,7 @@ public static class ScoreboardTemplates
         .Replace("{{AWAY_ABBR}}", state.AwayAbbreviation)
         .Replace("{{HOME_SCORE}}", state.HomeScore.ToString())
         .Replace("{{AWAY_SCORE}}", state.AwayScore.ToString())
-        .Replace("{{PERIOD}}", PeriodDisplay.Format(state).ToUpperInvariant())
+        .Replace("{{PERIOD}}", PeriodDisplay.Format(state, periodFormat).ToUpperInvariant())
         .Replace("{{GAME_CLOCK}}", GameEngine.FormatClock(state.ClockSeconds))
         .Replace("{{PLAY_CLOCK}}", state.PlayClockSeconds.ToString())
         .Replace("{{TIMEOUT_CLOCK}}", GameEngine.FormatClock(state.TimeoutClockSeconds))
@@ -29,7 +29,11 @@ public static class ScoreboardTemplates
         .Replace("{{POSSESSION}}", state.HomePossession ? state.HomeAbbreviation : state.AwayAbbreviation)
         .Replace("{{DOWN}}", $"{state.Down}{Ordinal(state.Down)}")
         .Replace("{{TO_GO}}", state.YardsToGo.ToString())
+        // The ball spot is a plain yard line (0-50) with its own side, independent of possession.
         .Replace("{{BALL_ON}}", state.YardsToGoal.ToString())
+        .Replace("{{BALL_SIDE}}", state.BallOnHomeSide ? state.HomeAbbreviation : state.AwayAbbreviation)
+        .Replace("{{BALL_TEAM}}", state.BallOnHomeSide ? state.HomeTeam : state.AwayTeam)
+        .Replace("{{BALL_SIDE_SPOT}}", $"{(state.BallOnHomeSide ? state.HomeAbbreviation : state.AwayAbbreviation)} {state.YardsToGoal}")
         .Replace("{{DOWNS}}", $"{state.Down}{Ordinal(state.Down)} & {state.YardsToGo}")
         .Replace("{{BALL_SPOT}}", $"BALL {state.YardsToGoal}")
         .Replace("{{SPORT}}", state.SportId.ToUpperInvariant())

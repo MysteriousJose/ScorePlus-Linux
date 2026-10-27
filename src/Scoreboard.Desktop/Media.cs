@@ -50,12 +50,28 @@ public sealed class MediaPlayback
     /// <summary>False while the operator has the clip paused, so scorebug video elements freeze with it.</summary>
     public bool IsPlaying { get; private set; }
 
+    /// <summary>Where the cued clip has been scrubbed to, in seconds. Video elements follow it.</summary>
+    public double Position { get; private set; }
+
+    /// <summary>Bumped on every explicit seek so an element can tell a seek from a play/pause.</summary>
+    public int SeekVersion { get; private set; }
+
     public event Action? Changed;
 
     public void Start(MediaEntry? entry)
     {
         NowPlaying = entry;
         IsPlaying = entry is not null;
+        Position = 0;
+        SeekVersion++;
+        Changed?.Invoke();
+    }
+
+    /// <summary>Moves every scorebug video element showing this clip to the same point.</summary>
+    public void Seek(double seconds)
+    {
+        Position = Math.Max(0, seconds);
+        SeekVersion++;
         Changed?.Invoke();
     }
 

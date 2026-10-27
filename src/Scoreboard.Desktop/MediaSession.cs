@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Scoreboard.Core;
 
 namespace Scoreboard.Desktop;
 
@@ -15,8 +16,14 @@ namespace Scoreboard.Desktop;
 public sealed class MediaSession
 {
     readonly UserPreferences _preferences;
-    readonly MediaPlayer _player = new();
+    readonly Dispatcher _ui = Dispatcher.CurrentDispatcher;
+    // ScrubbingEnabled is what makes Position stick while the clip is paused; without it the
+    // transport can only be watched from the beginning.
+    readonly MediaPlayer _player = new() { ScrubbingEnabled = true };
     readonly DispatcherTimer _transport = new() { Interval = TimeSpan.FromMilliseconds(200) };
+    // Scrub bursts are coalesced into a single seek: pause/seek/play on every pixel of a drag is
+    // what made seeking feel laggy.
+    readonly DispatcherTimer _seekApply = new() { Interval = TimeSpan.FromMilliseconds(80) };
     readonly Dictionary<string, ImageSource> _thumbs = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _pendingThumbs = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, int> _thumbAttempts = new(StringComparer.OrdinalIgnoreCase);
@@ -24,6 +31,9 @@ public sealed class MediaSession
     bool _playing;
     bool _scrubbing;
     double _duration;
+    // A seek asked for before the decoder opened is replayed as soon as it does.
+    double? _pendingSeek;
+    double _seekTarget;
 
     public MediaSession(UserPreferences preferences)
     {
@@ -36,6 +46,11 @@ public sealed class MediaSession
         _player.MediaOpened += (_, _) =>
         {
             _duration = _player.NaturalDuration.HasTimeSpan ? Math.Max(0, _player.NaturalDuration.TimeSpan.TotalSeconds) : 0;
+            if (_pendingSeek is double pending)
+            {
+                _pendingSeek = null;
+                try { _player.Position = TimeSpan.FromSeconds(Math.Clamp(pending, 0, Math.Max(0, _duration))); } catch { }
+            }
             TransportChanged?.Invoke();
             if (_playing) _player.Play();
         };
@@ -51,6 +66,7 @@ public sealed class MediaSession
             TransportChanged?.Invoke();
         };
         _transport.Start();
+        _seekApply.Tick += (_, _) => { _seekApply.Stop(); ApplySeek(); };
     }
 
     /// <summary>Clips in the library, in import order. Shared by every dock.</summary>
@@ -102,9 +118,55 @@ public sealed class MediaSession
 
     public void Seek(double seconds)
     {
-        if (_player.Source is null) return;
-        try { _player.Position = TimeSpan.FromSeconds(Math.Max(0, seconds)); } catch { }
+        var target = Math.Max(0, seconds);
+        if (_duration > 0) target = Math.Min(target, _duration);
+        _seekTarget = target;
+        _seekApply.Stop();
+        _seekApply.Start();
         TransportChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Notes the last media operation in <c>logs\media-last-action.txt</c>. A decoder that dies
+    /// natively leaves no managed traceback; this file says exactly which step it died on.
+    /// </summary>
+    static void Trace(string message)
+    {
+        try
+        {
+            var folder = AppPaths.Combine("logs");
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "media-last-action.txt"), $"{DateTimeOffset.Now:O} {message}");
+        }
+        catch { /* tracing must never interfere with playback */ }
+    }
+
+    /// <summary>Applies the latest requested point once the drag has settled.</summary>
+    void ApplySeek()
+    {
+        var target = _seekTarget;
+        _pendingSeek = target;
+        Trace($"seek {target:0.00}s · {Current?.Label ?? "no clip"} · transport start");
+        if (_player.Source is not null)
+        {
+            try
+            {
+                // A seek is applied most reliably while paused, so the playing clip is briefly held.
+                var resume = _playing;
+                if (resume) _player.Pause();
+                _player.Position = TimeSpan.FromSeconds(target);
+                _pendingSeek = null;
+                // Resume one turn later: Play() in the same tick as Position can kill the decoder.
+                if (resume) _ui.BeginInvoke(() => { try { _player.Play(); } catch { } });
+                Trace($"seek {target:0.00}s · transport moved");
+            }
+            catch { }
+        }
+        // The picture the operator watches is the scorebug video, not this muted transport player.
+        Trace($"seek {target:0.00}s · publishing to the scorebug ({Playback.NowPlaying?.Label ?? "nothing"})");
+        Playback.Seek(target);
+        TransportChanged?.Invoke();
+        Trace($"seek {target:0.00}s · done");
     }
 
     public void Import(IEnumerable<string> paths, string tag)
@@ -173,9 +235,13 @@ public sealed class MediaSession
             return;
         }
         try { _player.Close(); } catch { }
+        // A seek queued for the previous clip must not land on this one.
+        _seekApply.Stop();
+        _seekTarget = 0;
         Selected = entry;
         Current = entry;
         _duration = 0;
+        _pendingSeek = null;
         // Video sound lives on the audience output; muting here avoids hearing it twice.
         _player.Volume = entry.IsVideo ? 0 : 1;
         _player.Open(new Uri(entry.Path));
@@ -216,8 +282,11 @@ public sealed class MediaSession
     public void Stop()
     {
         try { _player.Stop(); _player.Close(); } catch { }
+        _seekApply.Stop();
+        _seekTarget = 0;
         Current = null;
         _duration = 0;
+        _pendingSeek = null;
         SetTransportPlaying(false);
         _player.Volume = 1;
         Playback.Stop();
@@ -335,6 +404,7 @@ public sealed class MediaSession
     public void Dispose()
     {
         _transport.Stop();
+        _seekApply.Stop();
         try { _player.Close(); } catch { }
     }
 }

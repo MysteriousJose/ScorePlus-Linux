@@ -17,8 +17,15 @@ internal static class Program
         var layoutPath = Path.Combine(Path.GetTempPath(), $"smoke-scorebug-{Guid.NewGuid():N}.json");
         // Keep the operator's real preferences.json out of reach: earlier runs overwrote it, which
         // is how a light theme and an empty media library ended up on the reviewer's machine.
+        // Every default path (preferences, keybinds, profiles, layout, assets, autosaves) is aimed at
+        // a throwaway folder, so a suite can never touch the operator's real %LOCALAPPDATA%\ScorePlus.
+        var appDataPath = Path.Combine(Path.GetTempPath(), $"smoke-appdata-{Guid.NewGuid():N}");
+        AppPaths.UseRoot(appDataPath);
         var prefsPath = Path.Combine(Path.GetTempPath(), $"smoke-prefs-{Guid.NewGuid():N}.json");
         PreferencesStore.UsePath(prefsPath);
+        // Autosaves are isolated too: a test run must never rotate the operator's own recovery points.
+        var autosavePath = Path.Combine(Path.GetTempPath(), $"smoke-autosaves-{Guid.NewGuid():N}");
+        AutosaveStore.UseFolder(autosavePath);
         try
         {
             var engine = new GameEngine();
@@ -114,6 +121,10 @@ internal static class Program
             var selectedBackground = backgroundInput.Text;
             var selectedWidth = widthInput.Text;
             if (string.IsNullOrEmpty(selectedName)) throw new Exception("FAIL: studio selection did not load properties");
+            // The layer list runs front-to-back, so row 0 is the last element drawn.
+            var selectedIndex = catalog.Layout.Elements.Count - 1 - 2;
+            if (catalog.Layout.Elements[selectedIndex].Name != selectedName)
+                throw new Exception("FAIL: the layer list is not ordered with the highest layer on top");
 
             engine.Score(true, 2);
             engine.AdvanceDown();
@@ -124,7 +135,7 @@ internal static class Program
 
             nameInput.Text = "Renamed away team";
             Pump(TimeSpan.FromMilliseconds(700));
-            var edited = catalog.Layout.Elements[2];
+            var edited = catalog.Layout.Elements[selectedIndex];
             if (edited.Name != "Renamed away team" || edited.Background != selectedBackground || edited.Width.ToString("0") != selectedWidth)
                 throw new Exception("FAIL: studio edit touched another element or its background");
             if (layers.SelectedIndex != 2 || nameInput.Text != "Renamed away team")
@@ -209,13 +220,17 @@ internal static class Program
             panelA.Close(); panelB.Close();
             Console.WriteLine("PASS: multiple control panels stay in sync");
 
-            ThemeManager.Apply(statsPanel, "Light");
+            var lightProbe = new SettingsWindow(new UserPreferences());
+            lightProbe.Show();
+            lightProbe.UpdateLayout();
+            ThemeManager.Apply(lightProbe, "Light");
             Pump(TimeSpan.FromMilliseconds(250));
-            var combo = statsPanel.Panel.PeriodFormatSelector;
+            var combo = (ComboBox)lightProbe.FindName("ThemeSelector")!;
             if (combo.Foreground is not SolidColorBrush comboText || combo.Background is not SolidColorBrush comboBackground)
                 throw new Exception("FAIL: combo box colors were not themed");
             var contrast = Math.Abs(comboText.Color.R - comboBackground.Color.R) + Math.Abs(comboText.Color.G - comboBackground.Color.G) + Math.Abs(comboText.Color.B - comboBackground.Color.B);
             if (contrast < 200) throw new Exception($"FAIL: dropdown text contrast too low ({comboText.Color} on {comboBackground.Color})");
+            lightProbe.Close();
             ThemeManager.Apply(statsPanel, "Dark");
             Pump(TimeSpan.FromMilliseconds(250));
             Console.WriteLine($"PASS: dropdown text stays readable in the light theme (contrast {contrast})");
@@ -270,7 +285,7 @@ internal static class Program
             enterEditor.UpdateLayout();
             if (!enterEditor.IsVisible) throw new Exception("FAIL: Enter closed the studio");
             Pump(TimeSpan.FromMilliseconds(250));
-            if (catalog.Layout.Elements[1].Name != "Renamed by enter") throw new Exception("FAIL: Enter did not commit the edited value");
+            if (catalog.Layout.Elements[catalog.Layout.Elements.Count - 1 - 1].Name != "Renamed by enter") throw new Exception("FAIL: Enter did not commit the edited value");
             enterEditor.Close();
             Console.WriteLine("PASS: Enter commits a studio value without closing the window");
 
@@ -366,7 +381,7 @@ internal static class Program
             engine.AddStat("Penalties");
             // The console itself needs ~900px; the detached window also carries the media dock, so its
             // minimum usable width is the console width plus that dock.
-            var fitPanel = new GameControlWindow(engine, () => { }, _ => { }, () => true) { Width = 1280, Height = 677 };
+            var fitPanel = new GameControlWindow(engine, () => { }, _ => { }, () => true) { Width = 1280, Height = 860 };
             fitPanel.Show();
             fitPanel.UpdateLayout();
             var view = fitPanel.Panel;
@@ -383,7 +398,7 @@ internal static class Program
             if (updateBottom > view.ActualHeight + 0.5)
                 throw new Exception($"FAIL: Update Output is off the page ({updateBottom:0} of {view.ActualHeight:0})");
             var scrollers = FindAll<ScrollViewer>(view).Where(s => s.IsVisible && s.ScrollableHeight > 0).ToArray();
-            if (scrollers.Length > 0) throw new Exception($"FAIL: {scrollers.Length} section(s) need scrolling at the smallest window");
+            if (scrollers.Length > 0) throw new Exception($"FAIL: {scrollers.Length} section(s) need scrolling at the smallest window ({string.Join(", ", scrollers.Select(s => $"{s.Name}:{s.ScrollableHeight:0}/{s.ActualHeight:0}"))})");
             if (((FrameworkElement)view.FindName("PlayClockRow")!).Visibility != Visibility.Visible)
                 throw new Exception("FAIL: play clock is hidden for football");
             if (((TextBlock)view.FindName("TimeoutClockValue")!).Text.Length == 0)
@@ -402,6 +417,134 @@ internal static class Program
             Console.WriteLine($"PASS: football console fits {view.ActualWidth:0}x{view.ActualHeight:0} with no scrolling, visitors left of home");
             Console.WriteLine("PASS: a long stat list scrolls inside its card without moving the page");
 
+            // The ball spot names the half of the field it sits on, and the console flips it.
+            var ballEngine = new GameEngine();
+            ballEngine.NewGame("football");
+            var ballWindow = new GameControlWindow(ballEngine, () => { }, _ => { }, () => true);
+            ballWindow.Show();
+            ballWindow.UpdateLayout();
+            var ballView = ballWindow.Panel;
+            ballView.UpdateLayout();
+            var sideButton = FindAll<Button>(ballView).FirstOrDefault(b => (b.Tag as string) == "football.ball.side")
+                ?? throw new Exception("FAIL: the ball spot has no side button");
+            if (sideButton.ActualHeight < 30 || sideButton.FontSize < 10)
+                throw new Exception($"FAIL: the ball spot side button is still tiny ({sideButton.ActualWidth:0}x{sideButton.ActualHeight:0})");
+            if (!ControlActions.All.Any(a => a.Id == "football.ball.side"))
+                throw new Exception("FAIL: the ball spot side button cannot be keybound");
+            if ((sideButton.Content as string) != "HOME ▶")
+                throw new Exception($"FAIL: the ball spot side button reads {sideButton.Content}");
+            ballEngine.SetPossession(false);
+            ballView.UpdateLayout();
+            if ((sideButton.Content as string) != "HOME ▶" || !ballEngine.State.BallOnHomeSide)
+                throw new Exception("FAIL: changing possession moved the ball to the other half");
+            ballEngine.SetBallSide(false);
+            ballView.UpdateLayout();
+            if ((sideButton.Content as string) != "◀ VISITORS")
+                throw new Exception($"FAIL: the ball spot side did not follow the game ({sideButton.Content})");
+            sideButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (!ballEngine.State.BallOnHomeSide)
+                throw new Exception("FAIL: the ball spot side button did not switch halves");
+            ballWindow.Close();
+            Console.WriteLine("PASS: the ball spot has its own side, independent of possession, and a button to flip it");
+
+            // A profile edited while the app is running must reach the next new game, no relaunch.
+            var profileShell = new MainWindow(LaunchMode.New);
+            profileShell.Show();
+            profileShell.UpdateLayout();
+            profileShell.Engine.Sports.SaveProfile(profileShell.Engine.Sports.Find("football")! with { Timeouts = 4, ScoringOptions = [1, 2, 3, 6] });
+            profileShell.StartNewGame("football");
+            profileShell.UpdateLayout();
+            if (profileShell.Engine.State.HomeTimeouts != 4)
+                throw new Exception($"FAIL: an edited profile still gives {profileShell.Engine.State.HomeTimeouts} timeouts to a new game");
+            if (!FindAll<Button>(profileShell.Panel.HomeScore).Any(b => (b.Content as string) == "+6"))
+                throw new Exception("FAIL: the console kept the old scoring buttons after a profile edit");
+            profileShell.Close();
+            Console.WriteLine("PASS: a sport profile edited at runtime applies to the next new game");
+
+            // Saving from the real profile dialog must stick in the running catalog too.
+            var dialogPath = Path.Combine(appDataPath, $"dialog-sports-{Guid.NewGuid():N}.json");
+            var dialogCatalog = new SportCatalog(dialogPath);
+            var dialogTarget = dialogCatalog.All.OrderBy(s => s.Name).First();
+            var profileDialog = new SportProfileWindow(dialogCatalog);
+            profileDialog.Show();
+            profileDialog.UpdateLayout();
+            ((TextBox)profileDialog.FindName("TimeoutsInput")!).Text = "6";
+            ((TextBox)profileDialog.FindName("ScoringInput")!).Text = "2, 3, 7";
+            ((Button)profileDialog.FindName("SaveButton")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var savedProfile = dialogCatalog.Find(dialogTarget.Id)!;
+            if (savedProfile.Timeouts != 6 || !savedProfile.ScoringOptions.SequenceEqual([2, 3, 7]))
+                throw new Exception($"FAIL: the profile dialog saved {savedProfile.Timeouts} timeouts and {string.Join('/', savedProfile.ScoringOptions)} scoring");
+            profileDialog.Close();
+            Console.WriteLine("PASS: saving from the sport profile window reaches the running catalog immediately");
+
+            // Icons: one bar per timeout, and a possession dot that follows the team with the ball.
+            var iconEngine = new GameEngine();
+            iconEngine.NewGame("football");
+            var barsItem = new ScorebugElement { Name = "Timeouts", Content = "", Kind = ScorebugElementKind.Text, Icon = ScorebugIcon.TimeoutBars, Width = 160, Height = 60 };
+            var iconsView = new ScorebugIconView(barsItem, () => iconEngine.State);
+            var barCount = FindAll<System.Windows.Shapes.Rectangle>(iconsView).Count();
+            if (barCount != iconEngine.State.HomeTimeouts)
+                throw new Exception($"FAIL: timeout icon drew {barCount} bars for {iconEngine.State.HomeTimeouts} timeouts");
+            foreach (var line in FindAll<System.Windows.Shapes.Rectangle>(iconsView))
+                if (line.Width <= line.Height * 2)
+                    throw new Exception($"FAIL: timeout bar is not a horizontal line ({line.Width:0}x{line.Height:0})");
+            var barStack = FindAll<StackPanel>(iconsView).FirstOrDefault()
+                ?? throw new Exception("FAIL: timeout lines have no stack to sit in");
+            if (barStack.Orientation != Orientation.Horizontal)
+                throw new Exception("FAIL: timeout lines are not in a row");
+            iconEngine.Timeout(true);
+            iconsView.Update();
+            if (FindAll<System.Windows.Shapes.Rectangle>(iconsView).Count() != iconEngine.State.HomeTimeouts)
+                throw new Exception("FAIL: the timeout icon did not follow a used timeout");
+            var dotItem = new ScorebugElement { Name = "Possession", Content = "{{POSSESSION}}", Kind = ScorebugElementKind.Text, Icon = ScorebugIcon.PossessionDot, Width = 200, Height = 60 };
+            var dotView = new ScorebugIconView(dotItem, () => iconEngine.State);
+            var dot = FindAll<System.Windows.Shapes.Ellipse>(dotView).Single();
+            iconEngine.SetPossession(false);
+            dotView.Update();
+            if (dot.HorizontalAlignment != HorizontalAlignment.Left)
+                throw new Exception($"FAIL: the possession dot sits {dot.HorizontalAlignment} while the visitors have the ball");
+            iconEngine.SetPossession(true);
+            dotView.Update();
+            if (dot.HorizontalAlignment != HorizontalAlignment.Right)
+                throw new Exception($"FAIL: the possession dot did not move to the home side");
+            dotItem.IconFlipped = true;
+            iconEngine.SetPossession(false);
+            dotView.Update();
+            if (dot.HorizontalAlignment != HorizontalAlignment.Right)
+                throw new Exception("FAIL: flipping the possession dot had no effect");
+            Console.WriteLine("PASS: timeout bars and the possession dot follow live data, and the dot can be flipped");
+
+            // The same icons render on a real scorebug canvas, and the studio offers the property.
+            var iconCatalog = new ScorebugCatalog(Path.Combine(appDataPath, $"icons-{Guid.NewGuid():N}.json"));
+            iconCatalog.Update(layout =>
+            {
+                layout.Elements.Clear();
+                layout.Elements.Add(new ScorebugElement { Name = "Timeouts", Kind = ScorebugElementKind.Text, Content = "", Icon = ScorebugIcon.TimeoutBars });
+                layout.Elements.Add(new ScorebugElement { Name = "Ball", Kind = ScorebugElementKind.Text, Content = "{{POSSESSION}}", Icon = ScorebugIcon.PossessionDot });
+            });
+            var iconCanvas = new ScorebugCanvasView(iconCatalog, iconEngine);
+            iconCanvas.Measure(new Size(1280, 720));
+            iconCanvas.Arrange(new Rect(0, 0, 1280, 720));
+            iconCanvas.UpdateLayout();
+            if (FindAll<ScorebugIconView>(iconCanvas).Count() != 2)
+                throw new Exception("FAIL: the scorebug canvas did not draw the icon elements");
+            iconCanvas.Dispose();
+            var iconStudio = new ScorebugEditorWindow(iconCatalog, iconEngine, null, "Dark");
+            iconStudio.Show();
+            iconStudio.UpdateLayout();
+            ((ListBox)iconStudio.FindName("Layers")!).SelectedIndex = 0;
+            iconStudio.UpdateLayout();
+            if (((FrameworkElement)iconStudio.FindName("IconSection")!).Visibility != Visibility.Visible)
+                throw new Exception("FAIL: the studio hides the icon properties for a text element");
+            if (((ComboBox)iconStudio.FindName("IconInput")!).SelectedItem is not (ScorebugIcon.TimeoutBars or ScorebugIcon.PossessionDot))
+                throw new Exception("FAIL: the studio did not show the selected element's icon");
+            iconStudio.Close();
+            Console.WriteLine("PASS: icon elements draw on the scorebug canvas and edit from the studio");
+
+            if (KeybindStore.Defaults().Bindings.Count != 0)
+                throw new Exception("FAIL: keybinds are still assigned out of the box");
+            Console.WriteLine("PASS: no shortcut is assigned until the operator picks one");
+
             // The button that pops out another synced panel raises the request the main window listens to.
             var popOutRequests = 0;
             var chainPanel = new GameControlWindow(engine, () => { }, _ => { }, () => true);
@@ -416,9 +559,9 @@ internal static class Program
 
             // Preference defaults: dark theme, detached control panel, heading tips off.
             var freshPrefs = new UserPreferences();
-            if (freshPrefs.Theme != "Dark" || !freshPrefs.SeparateControls || freshPrefs.ShowHeadingHints)
-                throw new Exception($"FAIL: defaults are {freshPrefs.Theme}/{freshPrefs.SeparateControls}/{freshPrefs.ShowHeadingHints}");
-            Console.WriteLine("PASS: defaults are dark theme, detached control panel, heading tips off");
+            if (freshPrefs.Theme != "Dark" || freshPrefs.ShowHeadingHints)
+                throw new Exception($"FAIL: defaults are {freshPrefs.Theme}/{freshPrefs.ShowHeadingHints}");
+            Console.WriteLine("PASS: defaults are dark theme with heading tips off");
 
             // Heading tips stay hidden unless the preference is on.
             var hintWindow = new GameControlWindow(engine, () => { }, _ => { }, () => true);
@@ -498,6 +641,9 @@ internal static class Program
                 var anthem = new MediaEntry(@"C:\media\anthem.mp3", "Ads");
                 playback.Start(ad);
                 if (playback.ActiveFor("Ads")?.Path != ad.Path) throw new Exception("FAIL: a tagged clip did not reach its matching element");
+                playback.Seek(12.5);
+                if (Math.Abs(playback.Position - 12.5) > 0.001)
+                    throw new Exception($"FAIL: seeking did not reach the scorebug video ({playback.Position})");
                 if (playback.ActiveFor("Highlights") is not null) throw new Exception("FAIL: the wrong tag reached a video element");
                 if (playback.ActiveFor("")?.Path != ad.Path) throw new Exception("FAIL: an element with no tag should accept any playing video");
                 playback.Start(anthem);
@@ -557,6 +703,48 @@ internal static class Program
                 throw new Exception("FAIL: the media library did not survive a preferences round trip");
             Console.WriteLine("PASS: media tags stick to clips and the library round trips through preferences");
 
+            // Seeking: a cued clip can be jumped into instead of watched from the start.
+            var seekPath = Path.Combine(Path.GetTempPath(), $"smoke-seek-{Guid.NewGuid():N}.wav");
+            WriteSilentWav(seekPath, 6);
+            var seekSession = new MediaSession(new UserPreferences());
+            try
+            {
+                seekSession.Play(new MediaEntry(seekPath, "Music"));
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                while (seekSession.Duration <= 0 && DateTime.UtcNow < deadline) Pump(TimeSpan.FromMilliseconds(100));
+                if (seekSession.Duration <= 0) throw new Exception("FAIL: the test clip never opened, so seeking could not be checked");
+                seekSession.Seek(1);
+                Pump(TimeSpan.FromMilliseconds(600));
+                if (seekSession.Position is < 0.8 or > 2.2)
+                    throw new Exception($"FAIL: seeking landed at {seekSession.Position:0.00}s instead of about 1.00s");
+                if (Math.Abs(seekSession.Playback.Position - 1) > 0.001)
+                    throw new Exception($"FAIL: the scorebug cue did not follow the seek ({seekSession.Playback.Position})");
+                Console.WriteLine($"PASS: a clip can be scrubbed straight to 1.00s (duration {seekSession.Duration:0.0}s)");
+
+                // A focused scrub bar used to feed its own transport updates back in as seek
+                // requests, which hammered the decoder until the app died. It must now just sit
+                // where the operator left it.
+                var seekDock = new MediaDock();
+                seekDock.Attach(seekSession);
+                var seekHost = new Window { Width = 420, Height = 320, Content = seekDock };
+                seekHost.Show();
+                seekHost.UpdateLayout();
+                var bar = (Slider)seekDock.FindName("ScrubBar")!;
+                Keyboard.Focus(bar);
+                Pump(TimeSpan.FromMilliseconds(400));
+                var seeksBefore = seekSession.Playback.SeekVersion;
+                Pump(TimeSpan.FromMilliseconds(900));
+                if (seekSession.Playback.SeekVersion != seeksBefore)
+                    throw new Exception($"FAIL: the focused scrub bar re-seeked the clip {seekSession.Playback.SeekVersion - seeksBefore} times on its own");
+                seekHost.Close();
+                Console.WriteLine("PASS: a focused scrub bar never echoes transport updates back as seeks");
+            }
+            finally
+            {
+                seekSession.Dispose();
+                try { File.Delete(seekPath); } catch { }
+            }
+
             // Update Output is bindable as a key.
             var publishCount = 0;
             var publishPanel = new GameControlWindow(engine, () => publishCount++, _ => { }, () => true);
@@ -591,7 +779,12 @@ internal static class Program
             finally { sharedMedia.Dispose(); }
             Console.WriteLine("PASS: detached control panels show the shared media library");
 
-            // The app opens on a chooser: product name, both buttons, and the version strip.
+            // The app opens on a chooser: product name, both buttons, the version strip and autosaves.
+            var demoAutosave = new GameEngine();
+            demoAutosave.NewGame("football");
+            demoAutosave.SetTeams("Away Club", "Home Club");
+            demoAutosave.Score(true, 3);
+            AutosaveStore.Save(demoAutosave);
             var launcherWindow = new LauncherWindow();
             launcherWindow.Show();
             launcherWindow.UpdateLayout();
@@ -603,8 +796,11 @@ internal static class Program
                 throw new Exception("FAIL: the launcher does not show the version on its side strip");
             if (!FindAll<TextBlock>(launcherWindow).Any(t => t.Text.Contains("SCOREPLUS", StringComparison.OrdinalIgnoreCase)))
                 throw new Exception("FAIL: the launcher does not show the product name");
+            var autosaveList = (ListBox)launcherWindow.FindName("AutosaveList")!;
+            if (autosaveList.Items.Count == 0)
+                throw new Exception("FAIL: the launcher lists no autosaves to load");
             launcherWindow.Close();
-            Console.WriteLine($"PASS: launch chooser offers New Game / Open Game and shows {LauncherWindow.Version}");
+            Console.WriteLine($"PASS: launch chooser offers New Game / Open Game, {LauncherWindow.Version} and {autosaveList.Items.Count} autosave(s)");
 
             // Studio dialogs are plain Windows: the theme has to reach them too.
             var dialogProbe = new Window { Width = 300, Height = 200 };
@@ -621,6 +817,94 @@ internal static class Program
             dialogProbe.Close();
             Console.WriteLine("PASS: plain dialogs (shape, sport data, video) pick up the theme");
 
+            // A new game clears the live game and the on-air copy, so the previous one cannot linger.
+            var panelsBeforeGame = Application.Current.Windows.OfType<GameControlWindow>().Count(w => w.IsVisible);
+            var freshGame = new MainWindow(LaunchMode.New);
+            freshGame.Show();
+            freshGame.UpdateLayout();
+            if (Application.Current.Windows.OfType<GameControlWindow>().Count(w => w.IsVisible) > panelsBeforeGame)
+                throw new Exception("FAIL: opening a game popped out another control panel");
+            freshGame.Engine.SetTeams("Old Home", "Old Away");
+            freshGame.Engine.Score(true, 21);
+            freshGame.Engine.AdvanceDown();
+            freshGame.Engine.AddStat("Penalties");
+            freshGame.PublishOutput();
+            freshGame.StartNewGame("football");
+            if (freshGame.Engine.State.HomeScore != 0 || freshGame.Engine.State.AwayScore != 0 || freshGame.Engine.State.Down != 1 || freshGame.Engine.State.Stats.Count != 0)
+                throw new Exception("FAIL: New Game left the previous game's state behind");
+            if (freshGame.Engine.State.HomeTeam == "Old Home" || freshGame.PublishedState.HomeScore != 0 || freshGame.PublishedState.HomeTeam == "Old Home" || freshGame.PublishedState.Down != 1)
+                throw new Exception("FAIL: New Game left the previous game on air");
+            // The blank slate has to be visible, not just stored: the preview must be rebuilt.
+            var previewView = FindAll<ScorebugCanvasView>(freshGame).FirstOrDefault()
+                ?? throw new Exception("FAIL: the main window has no program preview");
+            var previewTexts = FindAll<TextBlock>(previewView).Select(t => t.Text).ToArray();
+            if (previewTexts.Any(t => t.Contains("Old Home", StringComparison.Ordinal) || t.Contains("Old Away", StringComparison.Ordinal) || t == "21"))
+                throw new Exception($"FAIL: the scorebug preview still shows the previous game ({string.Join(" | ", previewTexts)})");
+            freshGame.Close();
+            Console.WriteLine("PASS: New Game resets the game and clears the previous game from the output");
+
+            // Studio: layer order, context-sensitive properties and the element's own quarter style.
+            var contextPath = Path.Combine(Path.GetTempPath(), $"smoke-studio-{Guid.NewGuid():N}.json");
+            try
+            {
+                var contextCatalog = new ScorebugCatalog(contextPath);
+                var contextEditor = new ScorebugEditorWindow(contextCatalog, engine);
+                contextEditor.Show();
+                contextEditor.UpdateLayout();
+                var contextLayers = (ListBox)contextEditor.FindName("Layers")!;
+                var textIndex = contextCatalog.Layout.Elements.FindIndex(e => e.Kind == ScorebugElementKind.Text);
+                contextLayers.SelectedIndex = contextCatalog.Layout.Elements.Count - 1 - textIndex;
+                contextEditor.UpdateLayout();
+                var imagePicker = FindAll<Button>(contextEditor).First(b => (b.Content as string) is "Choose logo image…");
+                if (imagePicker.IsVisible)
+                    throw new Exception("FAIL: the logo image picker is offered for a text element");
+                var logoIndex = contextCatalog.Layout.Elements.FindIndex(e => e.Kind == ScorebugElementKind.Logo);
+                contextLayers.SelectedIndex = contextCatalog.Layout.Elements.Count - 1 - logoIndex;
+                contextEditor.UpdateLayout();
+                if (!imagePicker.IsVisible)
+                    throw new Exception("FAIL: the logo image picker is missing for a logo element");
+
+                contextCatalog.Update(layout => layout.Elements.Add(new ScorebugElement { Name = "Quarter chip", Content = "{{PERIOD}}", X = 20, Y = 20, Width = 200, Height = 60 }));
+                contextEditor.UpdateLayout();
+                contextLayers.SelectedIndex = 0;
+                contextEditor.UpdateLayout();
+                var quarterCombo = (ComboBox)contextEditor.FindName("PeriodFormatInput")!;
+                if (quarterCombo.IsVisible == false) throw new Exception("FAIL: the quarter style is not offered for a period element");
+                quarterCombo.SelectedIndex = 3; // "1"
+                Pump(TimeSpan.FromMilliseconds(400));
+                var chip = contextCatalog.Layout.Elements.Last();
+                if (chip.PeriodFormat != "Number")
+                    throw new Exception($"FAIL: the element's quarter style was not saved ({chip.PeriodFormat})");
+                if (!FindAll<TextBlock>((Canvas)contextEditor.FindName("DesignCanvas")!).Any(t => t.Text == "1"))
+                    throw new Exception("FAIL: the studio did not print the element's own quarter style");
+                contextEditor.Close();
+            }
+            finally { if (File.Exists(contextPath)) File.Delete(contextPath); }
+            Console.WriteLine("PASS: studio layers run front-first and only show properties that apply to the selected element");
+
+            // Video tag labels are a studio aid; nothing about them reaches the audience picture.
+            var videoLabelPath = Path.Combine(Path.GetTempPath(), $"smoke-video-label-{Guid.NewGuid():N}.json");
+            try
+            {
+                var labelCatalog = new ScorebugCatalog(videoLabelPath);
+                labelCatalog.Update(layout => layout.Elements.Add(new ScorebugElement { Name = "Ad box", Kind = ScorebugElementKind.Video, MediaTag = "General", X = 10, Y = 10, Width = 320, Height = 180 }));
+                var audience = new ScorebugCanvasView(labelCatalog, engine, playback: new MediaPlayback());
+                audience.Measure(new Size(640, 360));
+                audience.Arrange(new Rect(0, 0, 640, 360));
+                audience.UpdateLayout();
+                if (FindAll<TextBlock>(audience).Any(t => t.Text.Contains("VIDEO", StringComparison.OrdinalIgnoreCase)))
+                    throw new Exception("FAIL: the video tag label reached the audience picture");
+                var labelEditor = new ScorebugEditorWindow(labelCatalog, engine, new MediaPlayback());
+                labelEditor.Show();
+                labelEditor.UpdateLayout();
+                if (!FindAll<TextBlock>(labelEditor).Any(t => t.Text.Contains("VIDEO · GENERAL", StringComparison.Ordinal)))
+                    throw new Exception("FAIL: the studio does not label an empty video element");
+                labelEditor.Close();
+                audience.Dispose();
+            }
+            finally { if (File.Exists(videoLabelPath)) File.Delete(videoLabelPath); }
+            Console.WriteLine("PASS: an empty video element is labelled in the studio only, never on the audience picture");
+
             Console.WriteLine("ALL UI SMOKE CHECKS PASSED");
 
             app.Shutdown();
@@ -635,6 +919,10 @@ internal static class Program
         finally
         {
             PreferencesStore.UsePath(null);
+            AppPaths.UseRoot(null);
+            AutosaveStore.UseFolder(null);
+            try { if (Directory.Exists(appDataPath)) Directory.Delete(appDataPath, true); } catch { }
+            try { if (Directory.Exists(autosavePath)) Directory.Delete(autosavePath, true); } catch { }
             if (File.Exists(layoutPath)) File.Delete(layoutPath);
             if (File.Exists(prefsPath)) File.Delete(prefsPath);
             var prefsTemp = prefsPath + ".tmp";
@@ -657,6 +945,29 @@ internal static class Program
     {
         if (source is null) throw new Exception("FAIL: window has no presentation source");
         window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+    }
+
+    /// <summary>A plain 16-bit PCM WAV, so the seek check has a real decodable clip without user files.</summary>
+    static void WriteSilentWav(string path, int seconds)
+    {
+        const int rate = 22050;
+        short channels = 1, bits = 16;
+        var data = rate * seconds * channels * bits / 8;
+        using var writer = new BinaryWriter(File.Create(path));
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + data);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(rate);
+        writer.Write(rate * channels * bits / 8);
+        writer.Write((short)(channels * bits / 8));
+        writer.Write(bits);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+        writer.Write(data);
+        writer.Write(new byte[data]);
     }
 
     static void Pump(TimeSpan duration)

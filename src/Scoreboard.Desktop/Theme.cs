@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using Scoreboard.Core;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -13,7 +14,6 @@ public sealed class UserPreferences
     public int Schema { get; set; }
 
     public string Theme { get; set; } = "Dark";
-    public bool SeparateControls { get; set; } = true;
     public bool ShowHeadingHints { get; set; }
 
     /// <summary>The sport the operator last ran, so a launcher "New Game" opens the game they expect.</summary>
@@ -28,7 +28,6 @@ public sealed class UserPreferences
     {
         Schema = Schema,
         Theme = Theme,
-        SeparateControls = SeparateControls,
         ShowHeadingHints = ShowHeadingHints,
         LastSport = LastSport,
         Media = [.. Media],
@@ -43,9 +42,7 @@ public static class PreferencesStore
     /// <summary>Test hook: aim storage at a throwaway file so a suite can never rewrite the operator's real preferences.</summary>
     public static void UsePath(string? path) => _overridePath = path;
 
-    static string FilePath => _overridePath ?? Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Scoreboard", "preferences.json");
+    static string FilePath => _overridePath ?? AppPaths.Combine("preferences.json");
 
     public static UserPreferences Load()
     {
@@ -72,7 +69,6 @@ public static class PreferencesStore
         if (preferences.Schema < 1)
         {
             preferences.Theme = "Dark";
-            preferences.SeparateControls = true;
             preferences.ShowHeadingHints = false;
             preferences.Schema = 1;
             try { Save(preferences); } catch { }

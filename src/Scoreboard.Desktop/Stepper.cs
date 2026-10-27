@@ -93,6 +93,7 @@ public sealed class Stepper : Grid
         Fill(_minusRow, minus);
     }
 
+
     void Fill(UniformGrid row, IEnumerable<StepButton> buttons)
     {
         row.Children.Clear();
@@ -105,9 +106,10 @@ public sealed class Stepper : Grid
             {
                 Content = item.Text,
                 FontSize = 13,
-                Padding = new Thickness(2, 4, 2, 4),
+                Padding = new Thickness(2, 9, 2, 9),
                 Margin = new Thickness(2, 0, 2, 0),
                 MinWidth = 0,
+                MinHeight = 34,
                 Tag = item.ActionId,
                 ToolTip = item.Tip
             };

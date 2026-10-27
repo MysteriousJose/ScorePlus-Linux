@@ -27,10 +27,15 @@ public partial class MainWindow : Window, IControlPanelHost
     ScorebugCanvasView? _preview;
     int _eventCount = -1;
     readonly UserPreferences _preferences = PreferencesStore.Load();
-    readonly string _recoveryPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Scoreboard", "recovery.scoreboard");
     string? _projectPath;
     bool _initializing = true;
     bool _liveScoreClock = true;
+    // Set while the sport picker is being filled in for the operator, so syncing the control cannot
+    // be mistaken for the operator choosing a sport (which starts a new game).
+    bool _sportSync;
+    // The next autosave starts a fresh recoverable point instead of updating the newest one. Set
+    // when a new game starts or a game is loaded, so the previous game keeps its own autosave.
+    bool _startNewAutosavePoint = true;
 
     /// <param name="mode">How the app was started: <see cref="LaunchMode.New"/> skips the autosave,
     /// <see cref="LaunchMode.Open"/> loads <paramref name="gamePath"/>. Null keeps the legacy
@@ -67,38 +72,36 @@ public partial class MainWindow : Window, IControlPanelHost
         Refresh();
         _initializing = false;
 
-        // No recovery prompt: the autosave is restored silently and reported in the status bar.
-        // A launched "New Game" starts clean; "Open Game" loads the chosen file; otherwise the
-        // autosave is restored silently and reported in the status bar.
+        // No recovery prompt: a "New Game" launch always starts clean, "Open Game" loads the chosen
+        // file, and the window shows whatever the newest autosave holds only when no choice was made.
         if (mode == LaunchMode.New)
         {
-            _engine.NewGame(string.IsNullOrWhiteSpace(_preferences.LastSport) ? "football" : _preferences.LastSport);
+            StartNewGame(string.IsNullOrWhiteSpace(_preferences.LastSport) ? "football" : _preferences.LastSport, announce: false);
             StatusText.Text = "NEW GAME · set the teams and you are live";
         }
         else if (mode == LaunchMode.Open && !string.IsNullOrWhiteSpace(gamePath))
         {
-            try
-            {
-                _engine.Load(gamePath);
-                _projectPath = gamePath;
-                RefreshSports();
-                SportSelector.SelectedValue = _engine.State.SportId;
-                StatusText.Text = $"GAME LOADED · {System.IO.Path.GetFileName(gamePath)}";
-            }
-            catch (Exception ex) { StatusText.Text = $"COULD NOT OPEN GAME · {ex.Message}"; }
+            LoadGame(gamePath);
         }
-        else if (mode is null && File.Exists(_recoveryPath))
+        else if (mode is null)
         {
-            try
-            {
-                _engine.Load(_recoveryPath);
-                StatusText.Text = "RECOVERED · previous game restored (New Game starts fresh)";
-            }
-            catch { }
+            AutosaveStore.ImportLegacy();
+            var newest = AutosaveStore.List().FirstOrDefault();
+            if (newest is not null && LoadGame(newest.Path))
+                StatusText.Text = $"AUTOSAVE RESTORED · {newest.WhenLabel} (New Game starts fresh)";
         }
 
-        if (_preferences.SeparateControls) OpenControlPanel();
+        // Panels are opened deliberately with New Panel; starting a game never spawns a second window.
     }
+
+    /// <summary>The live game, exposed so the operator surface (and the checks) can drive it.</summary>
+    public GameEngine Engine => _engine;
+
+    /// <summary>The copy currently on air (preview and audience output).</summary>
+    public GameState PublishedState => _publishedEngine.State;
+
+    /// <summary>The console embedded in this window, exposed for the checks.</summary>
+    public ControlPanelView Panel => _panel;
 
     // ---------- IControlPanelHost ----------
     public bool LiveScoreClock
@@ -125,7 +128,12 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Refresh); return; }
         var s = _engine.State;
-        if (SportSelector.SelectedValue is not string selectedId || selectedId != s.SportId) SportSelector.SelectedValue = s.SportId;
+        if (SportSelector.SelectedValue is not string selectedId || selectedId != s.SportId)
+        {
+            _sportSync = true;
+            try { SportSelector.SelectedValue = s.SportId; }
+            finally { _sportSync = false; }
+        }
         _eventCount = s.Events.Count;
     }
 
@@ -165,7 +173,6 @@ public partial class MainWindow : Window, IControlPanelHost
         _output?.SetBroadcastTheme(_preferences.Theme);
         ApplyHintVisibility();
         _panel.SetHintVisibility(_preferences.ShowHeadingHints);
-        if (_preferences.SeparateControls && _controlPanels.Count == 0) OpenControlPanel();
     }
 
     void NewPanel_Click(object sender, RoutedEventArgs e) => OpenControlPanel();
@@ -189,24 +196,96 @@ public partial class MainWindow : Window, IControlPanelHost
         ThemeManager.Apply(dialog, _preferences.Theme);
         dialog.ShowDialog();
         var activeId = SportSelector.SelectedValue as string;
-        RefreshSports();
-        if (_engine.Sports.Find(activeId) is not null) SportSelector.SelectedValue = activeId;
+        _sportSync = true;
+        try
+        {
+            RefreshSports();
+            if (_engine.Sports.Find(activeId) is not null) SportSelector.SelectedValue = activeId;
+        }
+        finally { _sportSync = false; }
+        if (!dialog.Changed) return;
+        // The catalog was edited in place, so the console and any detached panel rebuild from it
+        // now; only a new game re-reads the rules (timeouts, scoring buttons, period length).
+        _panel.Refresh();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
+        StatusText.Text = $"SPORT PROFILES SAVED · {_engine.Sport.Name} · start a new game to use the new rules";
     }
 
     void Sport_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_initializing || SportSelector.SelectedValue is not string id) return;
-        _engine.NewGame(id);
-        _preferences.LastSport = id;
-        try { PreferencesStore.Save(_preferences); } catch { }
+        if (_initializing || _sportSync || SportSelector.SelectedValue is not string id) return;
+        StartNewGame(id, announce: false);
         StatusText.Text = $"NEW {_engine.Sport.Name.ToUpperInvariant()} GAME";
     }
 
     void NewGame_Click(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show("Start a new game? This resets scores and the game clock.", "New game", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        _engine.NewGame(SportSelector.SelectedValue as string ?? "basketball");
-        StatusText.Text = "NEW GAME";
+        if (MessageBox.Show("Start a new game? This resets everything about the game — score, clocks, down, possession, stats and the on-air graphic. Your scorebug design is kept.", "New game", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        StartNewGame(SportSelector.SelectedValue as string ?? "basketball");
+    }
+
+    /// <summary>
+    /// A new game resets every piece of game state and takes the audience output with it, so nothing
+    /// from the previous game survives on air. Operator settings that are not part of a game — sport
+    /// profiles, keybinds, preferences, the media library and the scorebug design — are untouched.
+    /// </summary>
+    public void StartNewGame(string sportId, bool announce = true)
+    {
+        _engine.NewGame(sportId);
+        _projectPath = null;
+        _startNewAutosavePoint = true;
+        _preferences.LastSport = sportId;
+        try { PreferencesStore.Save(_preferences); } catch { }
+        // The saved design is the template for every new game, so a new game always looks like
+        // what the operator built in the studio.
+        ResetOutputToCurrentGame();
+        if (announce) StatusText.Text = $"NEW {_engine.Sport.Name.ToUpperInvariant()} GAME";
+    }
+
+    /// <summary>
+    /// Puts the published copy (preview and audience output) on the same fresh state and takes any
+    /// cued clip off the scorebug, so a new game really is a blank slate on air.
+    /// </summary>
+    void ResetOutputToCurrentGame()
+    {
+        _publishedEngine.LoadFromState(_engine.CloneState());
+        // Rebuild, not refresh: a new game gets brand-new visuals, so no score, down, possession
+        // or last video frame can be carried over from the game before it.
+        _preview?.Rebuild();
+        _output?.Publish();
+        _output?.Rebuild();
+        _panel.Refresh();
+        // Take the cued clip off the scorebug last, so a media hiccup cannot block the game reset.
+        _session.Stop();
+    }
+
+    bool LoadGame(string path)
+    {
+        try
+        {
+            _engine.Load(path);
+            _projectPath = path;
+            _startNewAutosavePoint = true;
+            // Point the picker at the loaded sport without letting that look like a sport change,
+            // which would start a brand new game and throw the loaded one away.
+            _sportSync = true;
+            try
+            {
+                RefreshSports();
+                SportSelector.SelectedValue = _engine.State.SportId;
+            }
+            finally { _sportSync = false; }
+            _publishedEngine.LoadFromState(_engine.CloneState());
+            _output?.Publish();
+            _preview?.Refresh();
+            StatusText.Text = $"GAME LOADED · {System.IO.Path.GetFileName(path)}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"COULD NOT OPEN GAME · {ex.Message}";
+            return false;
+        }
     }
 
     // ---------- output ----------
@@ -254,7 +333,7 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void Save_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SaveFileDialog { Filter = "Scoreboard Game (*.scoreboard)|*.scoreboard|JSON (*.json)|*.json", DefaultExt = "scoreboard", FileName = $"{_engine.State.HomeAbbreviation}-{_engine.State.AwayAbbreviation}" };
+        var dialog = new SaveFileDialog { Filter = "ScorePlus Game (*.spg)|*.spg|JSON (*.json)|*.json", DefaultExt = "spg", FileName = $"{_engine.State.HomeAbbreviation}-{_engine.State.AwayAbbreviation}" };
         if (dialog.ShowDialog() != true) return;
         _engine.Save(dialog.FileName);
         _projectPath = dialog.FileName;
@@ -263,23 +342,20 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void Open_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Filter = "Scoreboard Game (*.scoreboard;*.json)|*.scoreboard;*.json|All files (*.*)|*.*" };
+        var dialog = new OpenFileDialog { DefaultExt = "spg", Filter = "ScorePlus Game (*.spg)|*.spg|Scoreboard Game (*.scoreboard;*.json)|*.scoreboard;*.json|All files (*.*)|*.*" };
         if (dialog.ShowDialog() != true) return;
-        try
-        {
-            _engine.Load(dialog.FileName);
-            _projectPath = dialog.FileName;
-            RefreshSports();
-            SportSelector.SelectedValue = _engine.State.SportId;
-            StatusText.Text = "GAME LOADED";
-        }
-        catch (Exception ex) { MessageBox.Show($"Could not load game: {ex.Message}"); }
+        LoadGame(dialog.FileName);
     }
 
     // ---------- lifecycle ----------
     void AutoSave()
     {
-        try { _engine.Save(_recoveryPath); AutosaveText.Text = $"AUTOSAVED {DateTime.Now:HH:mm:ss}"; }
+        try
+        {
+            AutosaveStore.Save(_engine, _startNewAutosavePoint);
+            _startNewAutosavePoint = false;
+            AutosaveText.Text = $"AUTOSAVED {DateTime.Now:HH:mm:ss}";
+        }
         catch (Exception ex) { StatusText.Text = $"AUTOSAVE WARNING · {ex.Message}"; }
     }
 

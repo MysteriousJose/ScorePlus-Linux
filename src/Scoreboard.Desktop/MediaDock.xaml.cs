@@ -26,6 +26,12 @@ public partial class MediaDock : UserControl
 
     MediaSession? _session;
     bool _showHints;
+    bool _scrubbing;
+    // Guards the bar's own Value writes. Without it, a focused bar turns every transport update
+    // into another seek, which re-enters this method and storms the decoder until it dies.
+    bool _syncingBar;
+    // While a seek is being applied the bar must not snap back to the old position.
+    DateTime _settleUntil;
 
     public MediaDock()
     {
@@ -192,9 +198,17 @@ public partial class MediaDock : UserControl
         ElapsedText.Text = Stamp(TimeSpan.FromSeconds(_session.Position));
         var duration = _session.Duration;
         DurationText.Text = duration > 0 ? Stamp(TimeSpan.FromSeconds(duration)) : "—";
-        ScrubBar.Maximum = Math.Max(1, duration);
-        if (ScrubBar.IsMouseCaptureWithin) return;
-        ScrubBar.Value = Math.Min(ScrubBar.Maximum, _session.Position);
+        // Never move the bar under the operator: while they hold it, or while it has focus for
+        // arrow keys, the bar is the input, not the readout.
+        if (_scrubbing || _syncingBar || DateTime.UtcNow < _settleUntil || ScrubBar.IsMouseCaptureWithin || ScrubBar.IsKeyboardFocusWithin) return;
+        // Both writes are ours; the flag stops a coerced value from being read as a seek request.
+        _syncingBar = true;
+        try
+        {
+            ScrubBar.Maximum = Math.Max(1, duration);
+            ScrubBar.Value = Math.Min(ScrubBar.Maximum, _session.Position);
+        }
+        finally { _syncingBar = false; }
     }
 
     // ---------- handlers ----------
@@ -228,19 +242,27 @@ public partial class MediaDock : UserControl
 
     void Stop_Click(object sender, RoutedEventArgs e) => _session?.Stop();
 
-    void Scrub_Start(object sender, MouseButtonEventArgs e) => _session?.BeginScrub();
+    void Scrub_Start(object sender, MouseButtonEventArgs e)
+    {
+        _scrubbing = true;
+        _session?.BeginScrub();
+    }
 
     void Scrub_End(object sender, MouseButtonEventArgs e)
     {
-        if (_session is null) return;
+        if (_session is null) { _scrubbing = false; return; }
         _session.Seek(ScrubBar.Value);
         _session.EndScrub();
+        _scrubbing = false;
+        // Hold the bar at the requested point until the player has actually moved there.
+        _settleUntil = DateTime.UtcNow.AddMilliseconds(450);
     }
 
+    /// <summary>A click on the bar, a drag of the thumb and the arrow keys all land here.</summary>
     void Scrub_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_session is null) return;
-        if (!ScrubBar.IsMouseCaptureWithin) return;
+        if (_session is null || _syncingBar) return;
+        if (!_scrubbing && !ScrubBar.IsKeyboardFocusWithin) return;
         _session.Seek(e.NewValue);
     }
 

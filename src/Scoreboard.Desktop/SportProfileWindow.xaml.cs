@@ -9,6 +9,10 @@ public partial class SportProfileWindow : Window
     SportDefinition? _selected;
     bool _loading;
 
+    /// <summary>True once this session saved, duplicated, reset or deleted a profile, so the app
+    /// knows to refresh the sport picker and the console when the window closes.</summary>
+    public bool Changed { get; private set; }
+
     public SportProfileWindow(SportCatalog catalog)
     {
         InitializeComponent();
@@ -65,6 +69,7 @@ public partial class SportProfileWindow : Window
             var profile = ReadInputs(_selected);
             var saved = _catalog.SaveProfile(profile);
             _selected = saved;
+            Changed = true;
             RefreshList(saved.Id);
             ErrorText.Text = "Saved. New games use these settings.";
         }
@@ -99,6 +104,7 @@ public partial class SportProfileWindow : Window
             if (string.IsNullOrWhiteSpace(name) || _catalog.All.Any(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase) && s.Id != _selected.Id))
                 name = "Copy of " + _selected.Name;
             _catalog.Duplicate(_selected.Id, name);
+            Changed = true;
             var created = _catalog.Custom.Last();
             RefreshList(created.Id);
             Profiles.SelectedItem = Profiles.Items.Cast<ProfileItem>().FirstOrDefault(i => i.Profile.Id == created.Id);
@@ -112,6 +118,7 @@ public partial class SportProfileWindow : Window
         if (_selected is null || !_catalog.IsOverridden(_selected.Id)) return;
         if (MessageBox.Show($"Discard your saved changes to ‘{_selected.Name}’ and restore the original preset?", "Reset to preset", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         _catalog.ResetOverride(_selected.Id);
+        Changed = true;
         RefreshList(_selected.Id);
         Profiles.SelectedItem = Profiles.Items.Cast<ProfileItem>().FirstOrDefault(i => i.Profile.Id == _selected?.Id);
         ErrorText.Text = "Restored the original preset.";
@@ -122,6 +129,7 @@ public partial class SportProfileWindow : Window
         if (_selected is null || _catalog.IsBuiltIn(_selected.Id)) return;
         if (MessageBox.Show($"Delete the custom sport ‘{_selected.Name}’? Existing games keep their saved settings.", "Delete custom sport", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         _catalog.Delete(_selected.Id);
+        Changed = true;
         _selected = null;
         RefreshList();
     }

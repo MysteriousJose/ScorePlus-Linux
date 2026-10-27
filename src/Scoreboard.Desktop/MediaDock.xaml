@@ -116,7 +116,10 @@
         <Button x:Name="PlayPauseButton" Style="{StaticResource TransportButton}" Content="▶" Click="PlayPause_Click" ToolTip="Play or pause the selected clip"/>
         <TextBlock x:Name="ElapsedText" Grid.Column="1" Text="00:00" Foreground="{DynamicResource DockText}" FontFamily="Consolas" FontSize="13" VerticalAlignment="Center" Margin="2,0,8,0"/>
         <Slider x:Name="ScrubBar" Grid.Column="2" Minimum="0" Maximum="1" Value="0" VerticalAlignment="Center"
-                Style="{StaticResource TransportSlider}" SmallChange="1" LargeChange="10" ToolTip="Drag to scrub"/>
+                Style="{StaticResource TransportSlider}" SmallChange="1" LargeChange="10"
+                ToolTip="Click or drag to jump anywhere in the clip"
+                PreviewMouseLeftButtonDown="Scrub_Start" PreviewMouseLeftButtonUp="Scrub_End"
+                ValueChanged="Scrub_Changed"/>
         <TextBlock x:Name="DurationText" Grid.Column="3" Text="—" Foreground="{DynamicResource DockMuted}" FontFamily="Consolas" FontSize="13" VerticalAlignment="Center" Margin="8,0,8,0"/>
         <Button x:Name="StopButton" Grid.Column="4" Style="{StaticResource TransportButton}" Content="■" Click="Stop_Click" Margin="0" ToolTip="Stop playback and clear the scorebug video overlay"/>
       </Grid>

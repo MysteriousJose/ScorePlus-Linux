@@ -15,7 +15,6 @@
         <TextBlock Text="Applies to operator windows only. Scorebug and audience graphics keep their designed colors." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,14"/>
         <Separator/>
         <TextBlock Text="OPERATOR WORKFLOW" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
-        <CheckBox x:Name="SeparateControls" Content="Open the control panel in its own window" Checked="Controls_Changed" Unchecked="Controls_Changed"/>
         <CheckBox x:Name="ShowHints" Content="Show tips next to headings (for example 'scoring, timing, actions')" Checked="Controls_Changed" Unchecked="Controls_Changed"/>
         <TextBlock Text="Off by default. Turning it on adds the small explanatory labels in the header, the media dock and the console cards." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,8"/>
       </StackPanel>
