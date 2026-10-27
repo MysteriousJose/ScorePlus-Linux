@@ -23,7 +23,7 @@ public sealed record AutosaveEntry(string Path, DateTimeOffset SavedAt, string S
 public static class AutosaveStore
 {
     /// <summary>How many recoverable points are kept. Older ones are pruned.</summary>
-    public const int Keep = 12;
+    public const int Keep = 8;
 
     static readonly TimeSpan RollInterval = TimeSpan.FromSeconds(60);
     static string? _folderOverride;
@@ -81,6 +81,9 @@ public static class AutosaveStore
     }
 
     public static AutosaveEntry? Load(string path) => File.Exists(path) ? Read(path) : null;
+
+    /// <summary>Prunes the folder now; used at launch so old piles shrink without waiting for a save.</summary>
+    public static void Trim() => Prune();
 
     /// <summary>Brings the single recovery file from older builds into the list, once.</summary>
     public static void ImportLegacy()

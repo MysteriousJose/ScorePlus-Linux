@@ -65,8 +65,6 @@ public static class ControlActions
         new("football.series.new","Football","New series"),
         new("football.yards.home","Football","Home +10 yards"),
         new("football.yards.away","Football","Away +10 yards"),
-        new("football.turnover.home","Football","Home turnover"),
-        new("football.turnover.away","Football","Away turnover"),
         new("output.publish","Output","Update Output (publish staged changes)"),
         new("output.live.toggle","Output","Live score & clocks on / off"),
         new("basketball.foul.home","Basketball","Home foul"),

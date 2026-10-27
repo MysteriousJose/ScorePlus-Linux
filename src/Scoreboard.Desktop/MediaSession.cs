@@ -29,6 +29,7 @@ public sealed class MediaSession
     readonly Dictionary<string, ImageSource> _thumbs = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _pendingThumbs = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, int> _thumbAttempts = new(StringComparer.OrdinalIgnoreCase);
+    readonly List<string> _folders = [];
 
     bool _playing;
     bool _scrubbing;
@@ -49,6 +50,11 @@ public sealed class MediaSession
         foreach (var playlist in preferences.Playlists)
             if (!string.IsNullOrWhiteSpace(playlist.Name))
                 Playlists.Add(new MediaPlaylist { Name = playlist.Name.Trim(), Loop = playlist.Loop, Paths = playlist.Paths.ToList() });
+        foreach (var folder in preferences.MediaFolders)
+        {
+            var normalized = MediaLibrary.NormalizeFolder(folder);
+            if (normalized.Length > 0 && !_folders.Contains(normalized, StringComparer.OrdinalIgnoreCase)) _folders.Add(normalized);
+        }
 
         _player.MediaOpened += (_, _) =>
         {
@@ -103,7 +109,9 @@ public sealed class MediaSession
             ? Library.ToArray()
             : Library.Where(e => string.Equals(MediaLibrary.NormalizeFolder(e.Folder), FolderFilter, StringComparison.OrdinalIgnoreCase)).ToArray();
 
-    public IReadOnlyList<string> Folders => MediaLibrary.Folders(Library);
+    /// <summary>Every folder on the shelf: ones that hold clips plus ones created empty.</summary>
+    public IReadOnlyList<string> Folders => _folders.Concat(MediaLibrary.Folders(Library))
+        .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
 
     public bool IsPlaying => _playing;
 
@@ -144,6 +152,37 @@ public sealed class MediaSession
     public void BeginScrub() => _scrubbing = true;
 
     public void EndScrub() => _scrubbing = false;
+
+    /// <summary>Adds a folder to the shelf even before anything is filed in it.</summary>
+    public string CreateFolder(string? folder)
+    {
+        var normalized = MediaLibrary.NormalizeFolder(folder);
+        if (normalized.Length == 0) return "";
+        if (_folders.Contains(normalized, StringComparer.OrdinalIgnoreCase)) return normalized;
+        _folders.Add(normalized);
+        Save();
+        StateChanged?.Invoke();
+        Status?.Invoke($"FOLDER CREATED · {normalized}");
+        return normalized;
+    }
+
+    /// <summary>
+    /// Clears the organisation for a new game: no folders, no playlists, every clip unfiled. The
+    /// imported media itself is kept — a new game is a blank slate for the production, not a reason
+    /// to throw away the operator's asset library.
+    /// </summary>
+    public void ResetOrganization()
+    {
+        Stop(keepStatus: true);
+        Playlists.Clear();
+        _folders.Clear();
+        for (var index = 0; index < Library.Count; index++)
+            if (Library[index].Folder.Length > 0) Library[index] = Library[index] with { Folder = "" };
+        FolderFilter = null;
+        Save();
+        StateChanged?.Invoke();
+        Status?.Invoke("MEDIA · new game · folders and playlists cleared");
+    }
 
     public void SetFolderFilter(string? folder)
     {
@@ -465,6 +504,11 @@ public sealed class MediaSession
         Status?.Invoke($"{playlist.Name.ToUpperInvariant()} · − {entry.Label}");
     }
 
+    /// <summary>The playlist's clips in play order, skipping files that have left the library.</summary>
+    public IReadOnlyList<MediaEntry> PlaylistEntries(MediaPlaylist playlist) =>
+        playlist.Paths.Select(path => Library.FirstOrDefault(m => string.Equals(m.Path, path, StringComparison.OrdinalIgnoreCase)))
+            .Where(entry => entry is not null).Select(entry => entry!).ToArray();
+
     public void ClearPlaylist(MediaPlaylist playlist)
     {
         playlist.Paths.Clear();
@@ -478,6 +522,18 @@ public sealed class MediaSession
         Save();
         StateChanged?.Invoke();
         Status?.Invoke($"{playlist.Name.ToUpperInvariant()} · LOOP {(loop ? "ON" : "OFF")}");
+    }
+
+    /// <summary>Starts the playlist at one of its clips, used by double-clicking in an open list.</summary>
+    public void PlayPlaylistFrom(MediaPlaylist playlist, int index)
+    {
+        if (playlist.Count == 0)
+        {
+            Status?.Invoke($"PLAYLIST IS EMPTY · {playlist.Name}");
+            return;
+        }
+        _playlist = playlist;
+        PlayPlaylistIndex(Math.Clamp(index, 0, playlist.Count - 1));
     }
 
     /// <summary>Starts the playlist from its first clip.</summary>
@@ -523,6 +579,7 @@ public sealed class MediaSession
     {
         _preferences.Media = Library.ToList();
         _preferences.Playlists = Playlists.Select(p => new MediaPlaylist { Name = p.Name, Loop = p.Loop, Paths = p.Paths.ToList() }).ToList();
+        _preferences.MediaFolders = _folders.ToList();
         try { PreferencesStore.Save(_preferences); } catch { }
     }
 

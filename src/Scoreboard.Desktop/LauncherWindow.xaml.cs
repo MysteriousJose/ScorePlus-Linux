@@ -36,6 +36,8 @@ public partial class LauncherWindow : Window
     void RefreshAutosaves()
     {
         AutosaveStore.ImportLegacy();
+        // Trim before showing the list, so a folder that grew across old builds is cleaned up.
+        AutosaveStore.Trim();
         Autosaves = AutosaveStore.List();
         AutosaveList.ItemsSource = Autosaves;
         AutosaveEmpty.Visibility = Autosaves.Count == 0 ? Visibility.Visible : Visibility.Collapsed;

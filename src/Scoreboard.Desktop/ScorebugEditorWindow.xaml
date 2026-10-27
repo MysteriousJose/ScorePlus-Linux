@@ -1,6 +1,7 @@
 <Window x:Class="Scoreboard.Desktop.ScorebugEditorWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Scoreboard.Desktop"
         Title="ScorePlus — Scorebug Studio" Width="1360" Height="900" MinWidth="1120" MinHeight="720"
         WindowStartupLocation="CenterOwner" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI">
   <Window.Resources>
@@ -224,7 +225,10 @@
                     ToolTip="Use a fixed colour or one of the team palette colours"/>
           <DockPanel Margin="0,0,10,4">
             <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Click="TextColor_Click" ToolTip="Open the color palette"/>
-            <TextBox x:Name="ColorInput" Margin="10,0,0,0" TextChanged="Property_Changed"/>
+            <Border x:Name="TextColorSwatch" Width="24" Height="24" CornerRadius="4" Margin="10,0,6,0"
+                    BorderBrush="#3A4552" BorderThickness="1" VerticalAlignment="Center"
+                    local:ThemeManager.SkipTheme="True" ToolTip="The colour this element actually draws"/>
+            <TextBox x:Name="ColorInput" Margin="0" TextChanged="Property_Changed"/>
           </DockPanel>
         </StackPanel>
 
@@ -269,7 +273,10 @@
           <TextBlock Text="Background color" Style="{StaticResource FieldLabel}"/>
           <DockPanel Margin="0,0,10,4">
             <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Click="BackgroundColor_Click" ToolTip="Open the color palette"/>
-            <TextBox x:Name="BackgroundInput" Margin="10,0,0,0" TextChanged="Property_Changed"/>
+            <Border x:Name="BackgroundColorSwatch" Width="24" Height="24" CornerRadius="4" Margin="10,0,6,0"
+                    BorderBrush="#3A4552" BorderThickness="1" VerticalAlignment="Center"
+                    local:ThemeManager.SkipTheme="True" ToolTip="The colour painted behind this element"/>
+            <TextBox x:Name="BackgroundInput" Margin="0" TextChanged="Property_Changed"/>
           </DockPanel>
           <CheckBox x:Name="TransparentBackgroundInput" Content="No background box (transparent)" Margin="10,4,10,6"
                     Checked="Property_Changed" Unchecked="Property_Changed"/>

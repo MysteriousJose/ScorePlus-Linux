@@ -22,7 +22,9 @@ public partial class MainWindow : Window, IControlPanelHost
     readonly ControlPanelView _panel;
     readonly MediaSession _session;
     readonly MediaPlayback _playback;
-    OutputWindow? _output;
+    // Every audience window ever opened this session. Opening the output again adds another one
+    // instead of focusing the old window, so a show can spread the graphic over several displays.
+    readonly List<OutputWindow> _outputs = [];
     EventLogWindow? _log;
     ScorebugCanvasView? _preview;
     int _eventCount = -1;
@@ -36,6 +38,15 @@ public partial class MainWindow : Window, IControlPanelHost
     // The next autosave starts a fresh recoverable point instead of updating the newest one. Set
     // when a new game starts or a game is loaded, so the previous game keeps its own autosave.
     bool _startNewAutosavePoint = true;
+    // The game state as it was the last time it went into a .spg file (or started fresh).
+    string? _savedStateJson;
+    bool _closingAfterPrompt;
+
+    /// <summary>
+    /// The exit prompt is on for operators. The UI checks turn it off because they create and close
+    /// windows deliberately, and a modal prompt would stall an unattended run.
+    /// </summary>
+    public static bool PromptOnExit { get; set; } = true;
 
     /// <param name="mode">How the app was started: <see cref="LaunchMode.New"/> skips the autosave,
     /// <see cref="LaunchMode.Open"/> loads <paramref name="gamePath"/>. Null keeps the legacy
@@ -92,6 +103,8 @@ public partial class MainWindow : Window, IControlPanelHost
                 StatusText.Text = $"AUTOSAVE RESTORED · {newest.WhenLabel} (New Game starts fresh)";
         }
 
+        _savedStateJson ??= _engine.ExportJson();
+
         // Panels are opened deliberately with New Panel; starting a game never spawns a second window.
     }
 
@@ -130,7 +143,7 @@ public partial class MainWindow : Window, IControlPanelHost
         _scorebug.PublishLayout();
         _publishedEngine.LoadFromState(_engine.CloneState());
         _preview?.Refresh();
-        _output?.Publish();
+        foreach (var output in _outputs) output.Publish();
         StatusText.Text = $"OUTPUT UPDATED · {_scorebug.Layout.Name.ToUpperInvariant()} · {DateTime.Now:HH:mm:ss}";
         RefreshLayoutIndicators();
         _panel.Refresh();
@@ -213,7 +226,7 @@ public partial class MainWindow : Window, IControlPanelHost
         ThemeManager.Apply(this, _preferences.Theme);
         MediaControl.ApplyTheme(_preferences.Theme);
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.ApplyTheme(_preferences.Theme);
-        _output?.SetBroadcastTheme(_preferences.Theme);
+        foreach (var output in _outputs) output.SetBroadcastTheme(_preferences.Theme);
         ApplyHintVisibility();
         _panel.SetHintVisibility(_preferences.ShowHeadingHints);
     }
@@ -277,11 +290,17 @@ public partial class MainWindow : Window, IControlPanelHost
         _engine.NewGame(sportId);
         _projectPath = null;
         _startNewAutosavePoint = true;
+        _savedStateJson = _engine.ExportJson();
         _preferences.LastSport = sportId;
         try { PreferencesStore.Save(_preferences); } catch { }
-        // The saved design is the template for every new game, so a new game always looks like
-        // what the operator built in the studio.
+        // A new game really starts over: one factory layout and no folder/playlist organisation.
+        // Imported media files stay in the library; the game's design and shelves begin blank.
+        _scorebug.ResetToDefault();
+        _session.ResetOrganization();
+        MediaControl.ResetView();
+        foreach (var panel in _controlPanels.Where(panel => panel.IsVisible)) panel.Media.ResetView();
         ResetOutputToCurrentGame();
+        RefreshLayoutIndicators();
         if (announce) StatusText.Text = $"NEW {_engine.Sport.Name.ToUpperInvariant()} GAME";
     }
 
@@ -295,8 +314,7 @@ public partial class MainWindow : Window, IControlPanelHost
         // Rebuild, not refresh: a new game gets brand-new visuals, so no score, down, possession
         // or last video frame can be carried over from the game before it.
         _preview?.Rebuild();
-        _output?.Publish();
-        _output?.Rebuild();
+        foreach (var output in _outputs) { output.Publish(); output.Rebuild(); }
         _panel.Refresh();
         // Take the cued clip off the scorebug last, so a media hiccup cannot block the game reset.
         _session.Stop();
@@ -319,8 +337,11 @@ public partial class MainWindow : Window, IControlPanelHost
             }
             finally { _sportSync = false; }
             _publishedEngine.LoadFromState(_engine.CloneState());
-            _output?.Publish();
-            _preview?.Refresh();
+            // Rebuild, not refresh: visuals made before this game was read (for example a logo
+            // element built while the teams had no crests) must take the loaded values.
+            _preview?.Rebuild();
+            foreach (var output in _outputs) output.Rebuild();
+            _savedStateJson = _engine.ExportJson();
             StatusText.Text = $"GAME LOADED · {System.IO.Path.GetFileName(path)}";
             return true;
         }
@@ -332,13 +353,31 @@ public partial class MainWindow : Window, IControlPanelHost
     }
 
     // ---------- output ----------
-    void Output_Click(object sender, RoutedEventArgs e)
+    void Output_Click(object sender, RoutedEventArgs e) => OpenOutputWindow();
+
+    /// <summary>Opens a brand-new audience window; existing ones keep running alongside it.</summary>
+    OutputWindow OpenOutputWindow()
     {
-        if (_output is { IsVisible: true }) { _output.Activate(); return; }
-        _output = new OutputWindow(_publishedEngine, _scorebug, _preferences.Theme, _playback);
-        _output.Show();
-        if (_liveScoreClock) _output.UpdateLiveScoreClock(_engine.State);
-        else _output.RefreshDisplay();
+        var output = new OutputWindow(_publishedEngine, _scorebug, _preferences.Theme, _playback)
+        {
+            Title = $"ScorePlus — Audience Output {_outputs.Count + 1}"
+        };
+        _outputs.Add(output);
+        output.Closed += (_, _) => _outputs.Remove(output);
+        output.Show();
+        // Cascade each new window instead of stacking it exactly on top of the last one, so every
+        // output opened this session stays visibly on screen. Position is only known after Show.
+        var step = 32 * (_outputs.Count - 1);
+        if (step > 0)
+        {
+            output.WindowStartupLocation = WindowStartupLocation.Manual;
+            output.Left += step;
+            output.Top += step;
+        }
+        output.Activate();
+        if (_liveScoreClock) output.UpdateLiveScoreClock(_engine.State);
+        else output.RefreshDisplay();
+        return output;
     }
 
     void SetLiveScoreClock(bool enabled)
@@ -355,15 +394,10 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         if (!_publishedEngine.UpdateLiveScoreClock(_engine.State)) return;
         _preview?.Refresh();
-        if (_output is null || !_output.IsVisible) return;
-        _output.UpdateLiveScoreClock(_engine.State);
+        foreach (var output in _outputs.Where(o => o.IsVisible)) output.UpdateLiveScoreClock(_engine.State);
     }
 
-    void Fullscreen_Click(object sender, RoutedEventArgs e)
-    {
-        Output_Click(sender, e);
-        _output?.ToggleFullscreen();
-    }
+    void Fullscreen_Click(object sender, RoutedEventArgs e) => OpenOutputWindow().ToggleFullscreen();
 
     void GameReport_Click(object sender, RoutedEventArgs e)
     {
@@ -378,9 +412,66 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         var dialog = new SaveFileDialog { Filter = "ScorePlus Game (*.spg)|*.spg|JSON (*.json)|*.json", DefaultExt = "spg", FileName = $"{_engine.State.HomeAbbreviation}-{_engine.State.AwayAbbreviation}" };
         if (dialog.ShowDialog() != true) return;
-        _engine.Save(dialog.FileName);
-        _projectPath = dialog.FileName;
-        StatusText.Text = "GAME SAVED";
+        SaveGameTo(dialog.FileName);
+    }
+
+    /// <summary>Writes the game and remembers that this is now the saved state.</summary>
+    bool SaveGameTo(string path)
+    {
+        try
+        {
+            _engine.Save(path);
+            _projectPath = path;
+            _savedStateJson = _engine.ExportJson();
+            StatusText.Text = $"GAME SAVED · {System.IO.Path.GetFileName(path)}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"COULD NOT SAVE GAME · {ex.Message}";
+            return false;
+        }
+    }
+
+    bool HasUnsavedChanges() => _savedStateJson is not null && _savedStateJson != _engine.ExportJson();
+
+    /// <summary>Saves to the game's own file, or asks for one when the game has never been saved.</summary>
+    bool SaveBeforeClosing()
+    {
+        if (!string.IsNullOrWhiteSpace(_projectPath)) return SaveGameTo(_projectPath);
+        var dialog = new SaveFileDialog
+        {
+            Filter = "ScorePlus Game (*.spg)|*.spg|JSON (*.json)|*.json",
+            DefaultExt = "spg",
+            FileName = $"{_engine.State.HomeAbbreviation}-{_engine.State.AwayAbbreviation}"
+        };
+        return dialog.ShowDialog() == true && SaveGameTo(dialog.FileName);
+    }
+
+    string GameLabelForPrompt()
+    {
+        var s = _engine.State;
+        var away = string.IsNullOrWhiteSpace(s.AwayAbbreviation) ? s.AwayTeam : s.AwayAbbreviation;
+        var home = string.IsNullOrWhiteSpace(s.HomeAbbreviation) ? s.HomeTeam : s.HomeAbbreviation;
+        return $"{away} {s.AwayScore}   ·   {s.HomeScore} {home}";
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (PromptOnExit && !_closingAfterPrompt && HasUnsavedChanges())
+        {
+            e.Cancel = true;
+            var detail = "You have changes that are not in a saved game file. Autosave keeps a recovery point every few seconds, but the .spg on disk is out of date. Save it before closing?";
+            var choice = UnsavedChangesWindow.Ask(this, _preferences.Theme, GameLabelForPrompt(), detail);
+            if (choice == UnsavedChoice.Cancel) return;
+            if (choice == UnsavedChoice.Save && !SaveBeforeClosing()) return;
+            _closingAfterPrompt = true;
+            // WPF forbids Close/ShowDialog while the closing event is still running. Re-post the
+            // close once this cancellation has fully finished, so Discard really exits.
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(Close));
+            return;
+        }
+        base.OnClosing(e);
     }
 
     void Open_Click(object sender, RoutedEventArgs e)
@@ -416,7 +507,7 @@ public partial class MainWindow : Window, IControlPanelHost
         _preview?.Dispose();
         _session.Dispose();
         foreach (var panel in _controlPanels.ToArray()) panel.Close();
-        _output?.Close();
+        foreach (var output in _outputs.ToArray()) output.Close();
         _log?.Close();
         base.OnClosed(e);
     }

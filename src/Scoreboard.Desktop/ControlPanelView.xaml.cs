@@ -223,13 +223,10 @@ public partial class ControlPanelView : UserControl
         _ballSide.Content = s.BallOnHomeSide ? "HOME ▶" : "◀ VISITORS";
         if (!_quarterValue.IsKeyboardFocused) _quarterValue.Text = s.Period.ToString();
 
-        // Team identity: abbreviation, logo thumbnail and the two-colour bar under the name.
-        AwayAbbrText.Text = s.AwayAbbreviation;
-        HomeAbbrText.Text = s.HomeAbbreviation;
+        // Team identity: the logo thumbnail. The abbreviation and colours live in the team box;
+        // printing them beside VISITORS / HOME only repeated the heading.
         ApplyLogo(AwayLogoImage, ref _awayLogoLoaded, s.AwayLogoPath);
         ApplyLogo(HomeLogoImage, ref _homeLogoLoaded, s.HomeLogoPath);
-        AwayColorBar.Background = TeamBar(s.AwayPrimaryColor, s.AwaySecondaryColor);
-        HomeColorBar.Background = TeamBar(s.HomePrimaryColor, s.HomeSecondaryColor);
         LayoutLabel.Text = _host.LayoutLabel;
 
         if (!ClockValue.IsKeyboardFocused) ClockValue.Text = GameEngine.FormatClock(s.ClockSeconds);
@@ -298,26 +295,6 @@ public partial class ControlPanelView : UserControl
         catch { target.Source = null; }
     }
 
-    static Brush TeamBar(string primary, string secondary)
-    {
-        var brush = new LinearGradientBrush
-        {
-            StartPoint = new Point(0, 0),
-            EndPoint = new Point(1, 0)
-        };
-        brush.GradientStops.Add(new GradientStop(SafeColor(primary), 0));
-        brush.GradientStops.Add(new GradientStop(SafeColor(primary), 0.55));
-        brush.GradientStops.Add(new GradientStop(SafeColor(secondary), 0.55));
-        brush.GradientStops.Add(new GradientStop(SafeColor(secondary), 1));
-        brush.Freeze();
-        return brush;
-    }
-
-    static Color SafeColor(string value)
-    {
-        try { return (Color)ColorConverter.ConvertFromString(value)!; }
-        catch { return Color.FromRgb(90, 100, 112); }
-    }
 
     void AwayDetails_Click(object sender, RoutedEventArgs e) => EditTeam(false);
     void HomeDetails_Click(object sender, RoutedEventArgs e) => EditTeam(true);
@@ -557,8 +534,6 @@ public partial class ControlPanelView : UserControl
             case "football.series.new": _engine.NewSeries(); break;
             case "football.yards.home": _engine.AddFootballYards(true, 10); break;
             case "football.yards.away": _engine.AddFootballYards(false, 10); break;
-            case "football.turnover.home": _engine.AddTurnover(true); break;
-            case "football.turnover.away": _engine.AddTurnover(false); break;
             case "basketball.foul.home": _engine.AddFoul(true); break;
             case "basketball.foul.away": _engine.AddFoul(false); break;
             case "basketball.shotclock.toggle": _engine.ToggleShotClock(); break;

@@ -240,9 +240,10 @@ public partial class ScorebugEditorWindow : Window
                 block.ApplyStyle(item,_engine.State);
                 block.UpdateText(ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat),item.Transition);
             }
-            else if(visual.Content is Image)
+            else if(visual.Content is Image or ScorebugLogoView or System.Windows.Shapes.Shape)
                 ScorebugRender.ApplyToContent(visual.Content,item,_engine.State);
         }
+        RefreshColorSwatches();
     }
 
     void Layers_SelectionChanged(object sender,SelectionChangedEventArgs e)
@@ -283,6 +284,20 @@ public partial class ScorebugEditorWindow : Window
         }
         _loading=false;
         UpdatePropertyVisibility();
+        RefreshColorSwatches();
+    }
+
+    /// <summary>
+    /// Paints the two colour previews in the property panel. A hex box on its own never showed
+    /// what an element (or a team palette slot) actually draws; these swatches do.
+    /// </summary>
+    void RefreshColorSwatches()
+    {
+        var item=Selected;
+        TextColorSwatch.Background=item is null?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveForeground(item,_engine.State));
+        BackgroundColorSwatch.Background=item is null||item.TransparentBackground?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveBackground(item,_engine.State));
+        TextColorSwatch.ToolTip=item is null?null:$"Text colour: {ScorebugRender.ResolveForeground(item,_engine.State)}";
+        BackgroundColorSwatch.ToolTip=item is null?null:item.TransparentBackground?"No background box":$"Background colour: {ScorebugRender.ResolveBackground(item,_engine.State)}";
     }
 
     /// <summary>A colour box only takes typing when the element uses a fixed colour.</summary>

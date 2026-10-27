@@ -340,4 +340,16 @@ public sealed class ScorebugCatalog
         Layouts[index].Name = name.Trim();
         Save(); Changed?.Invoke();
     }
+
+    /// <summary>
+    /// Starts over with the single factory layout. A new game is a blank slate: no layouts from
+    /// the previous game, and the same default design every fresh install opens with.
+    /// </summary>
+    public void ResetToDefault()
+    {
+        Layouts = [ScorebugLayout.Default()];
+        ActiveIndex = 0;
+        PublishedIndex = 0;
+        Save(); Changed?.Invoke();
+    }
 }

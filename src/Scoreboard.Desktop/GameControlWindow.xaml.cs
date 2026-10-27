@@ -17,6 +17,9 @@ public partial class GameControlWindow : Window
 
     public ControlPanelView Panel { get; }
 
+    /// <summary>The media dock in this window; every panel shares one session but keeps its own view.</summary>
+    public MediaDock Media => MediaControl;
+
     public event Action? NewPanelRequested;
 
     public GameControlWindow(GameEngine engine, Action publishOutput, Action<bool> setLiveScoreClock, Func<bool> getLiveScoreClock, MediaSession? media = null)

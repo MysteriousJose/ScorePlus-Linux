@@ -41,26 +41,16 @@ internal static class ScorebugRender
         // Icons are drawn from live data rather than typed text: small bars per timeout, or a dot
         // showing which team has the ball.
         if (item.Kind == ScorebugElementKind.Text && item.Icon != ScorebugIcon.None) return new ScorebugIconView(item, state);
-        if (item.Kind == ScorebugElementKind.Logo)
-        {
-            var path = ResolveLogoPath(item, state?.Invoke());
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-            {
-                try { return new Image { Source = LoadLogo(path), Stretch = Stretch.Uniform }; }
-                catch { /* fall through to placeholder text */ }
-            }
-            // A team logo that has not been set yet is labelled in the studio and blank on air.
-            return showVideoPlaceholder
-                ? MakeText(item, item.LogoSide == ScorebugLogoSide.None ? item.Content : $"{item.LogoSide.ToString().ToUpperInvariant()} LOGO")
-                : new Grid();
-        }
+        // A logo view keeps its image slot whether or not a logo exists yet, so a team logo set
+        // after the graphic was built appears immediately instead of waiting for a rebuild.
+        if (item.Kind == ScorebugElementKind.Logo) return new ScorebugLogoView(item, state?.Invoke(), showVideoPlaceholder);
         if (item.Kind == ScorebugElementKind.Shape) return CreateShape(item, state?.Invoke());
         var text = state is null ? item.Content : ScoreboardTemplates.Bind(item.Content, state(), item.PeriodFormat);
-        return MakeText(item, text);
+        return MakeText(item, text, state?.Invoke());
     }
 
     /// <summary>Logos are copied into the app folder, but they still need a caching load.</summary>
-    static BitmapImage LoadLogo(string path)
+    internal static BitmapImage LoadLogo(string path)
     {
         var image = new BitmapImage();
         image.BeginInit();
@@ -71,9 +61,13 @@ internal static class ScorebugRender
         return image;
     }
 
-    public static ScorebugTextBlock MakeText(ScorebugElement item, string text)
+    public static ScorebugTextBlock MakeText(ScorebugElement item, string text, GameState? state = null)
     {
         var block = new ScorebugTextBlock(item);
+        // The constructor can only use the element's fixed colour. Studio, preview and output all
+        // build text before any refresh happens, so a team-palette slot has to resolve right here
+        // or the value draws in the wrong colour until something else repaints it.
+        block.ApplyStyle(item, state);
         block.UpdateText(text, ScorebugTransition.Cut);
         return block;
     }
@@ -112,6 +106,10 @@ internal static class ScorebugRender
                 shape.Fill = ParseBrush(ResolveBackground(item, state));
                 shape.Stroke = ParseBrush(ResolveForeground(item, state));
                 break;
+            case ScorebugLogoView logo:
+                // Logos are set from the console: pick one up, drop one, all without a rebuild.
+                logo.Update(item, state);
+                break;
             case Image image:
                 var path = ResolveLogoPath(item, state);
                 if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
@@ -125,6 +123,63 @@ internal static class ScorebugRender
                 }
                 break;
         }
+    }
+}
+
+/// <summary>
+/// A logo element that can gain or lose its image while it is already on screen. Building the
+/// picture only when a logo exists at creation time left an empty placeholder that a later team
+/// logo could never fill, which is why a restored game showed its text but not its crest.
+/// </summary>
+public sealed class ScorebugLogoView : Grid
+{
+    readonly Image _image = new() { Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+    readonly TextBlock? _placeholder;
+
+    public ScorebugLogoView(ScorebugElement item, GameState? state, bool showPlaceholder)
+    {
+        if (showPlaceholder)
+        {
+            _placeholder = new TextBlock
+            {
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap
+            };
+            Children.Add(_placeholder);
+        }
+        Children.Add(_image);
+        Update(item, state);
+    }
+
+    public void Update(ScorebugElement item, GameState? state)
+    {
+        var path = ScorebugRender.ResolveLogoPath(item, state);
+        var found = false;
+        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        {
+            try
+            {
+                _image.Source = ScorebugRender.LoadLogo(path);
+                found = true;
+            }
+            catch { _image.Source = null; }
+        }
+        else
+        {
+            // Removing a team logo clears the picture now, without rebuilding the graphic.
+            _image.Source = null;
+        }
+        _image.Visibility = found ? Visibility.Visible : Visibility.Collapsed;
+        if (_placeholder is null) return;
+        _placeholder.Text = item.LogoSide == ScorebugLogoSide.None ? item.Content : $"{item.LogoSide.ToString().ToUpperInvariant()} LOGO";
+        _placeholder.FontFamily = FontCatalog.Resolve(item.FontFamily);
+        _placeholder.FontSize = item.FontSize;
+        _placeholder.FontWeight = item.Bold ? FontWeights.Bold : FontWeights.Normal;
+        _placeholder.FontStyle = item.Italic ? FontStyles.Italic : FontStyles.Normal;
+        _placeholder.Foreground = ScorebugRender.ParseBrush(ScorebugRender.ResolveForeground(item, state));
+        _placeholder.Visibility = found ? Visibility.Collapsed : Visibility.Visible;
     }
 }
 
@@ -186,8 +241,7 @@ public sealed class ScorebugTextBlock : TextBlock
         _animating = true;
         _shown = text;
         var generation = _generation;
-        var duration = OutDuration(transition);
-        PlayOut(transition, duration, () =>
+        PlayOut(transition, OutDuration(transition), () =>
         {
             if (generation != _generation) return;
             Text = text;
@@ -201,6 +255,19 @@ public sealed class ScorebugTextBlock : TextBlock
     void Snap(string text)
     {
         _generation++;
+        ClearPhase();
+        Text = text;
+        _shown = text;
+        _animating = false;
+    }
+
+    /// <summary>
+    /// Ends a phase with the block at rest. Every animation holds its final value, then this clears
+    /// it and resets the transforms, so a wheel or a zoom can never leave the new value offset or
+    /// shrunken after the animation has finished.
+    /// </summary>
+    void ClearPhase()
+    {
         BeginAnimation(OpacityProperty, null);
         _scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
@@ -209,25 +276,22 @@ public sealed class ScorebugTextBlock : TextBlock
         Opacity = 1;
         _scale.ScaleX = _scale.ScaleY = 1;
         _translate.X = _translate.Y = 0;
-        Text = text;
-        _shown = text;
-        _animating = false;
     }
 
-    double Distance => Math.Max(8, FontSize * 1.15);
+    double Distance => Math.Max(8, FontSize * 1.1);
 
     static TimeSpan OutDuration(ScorebugTransition transition) => transition switch
     {
-        ScorebugTransition.Pop => TimeSpan.FromMilliseconds(90),
-        ScorebugTransition.Flip => TimeSpan.FromMilliseconds(130),
-        _ => TimeSpan.FromMilliseconds(120)
+        ScorebugTransition.Pop => TimeSpan.FromMilliseconds(70),
+        ScorebugTransition.Flip => TimeSpan.FromMilliseconds(90),
+        _ => TimeSpan.FromMilliseconds(80)
     };
 
     static TimeSpan InDuration(ScorebugTransition transition) => transition switch
     {
-        ScorebugTransition.Pop => TimeSpan.FromMilliseconds(220),
-        ScorebugTransition.Drop => TimeSpan.FromMilliseconds(190),
-        _ => TimeSpan.FromMilliseconds(160)
+        ScorebugTransition.Pop => TimeSpan.FromMilliseconds(190),
+        ScorebugTransition.Drop => TimeSpan.FromMilliseconds(140),
+        _ => TimeSpan.FromMilliseconds(120)
     };
 
     // ---------- out ----------
@@ -240,38 +304,38 @@ public sealed class ScorebugTextBlock : TextBlock
                 Animate(1, 0, duration, done);
                 break;
             case ScorebugTransition.FadeScale:
-                Animate(1, 0, duration, done, scale: 0.94);
+                Animate(1, 0, duration, done, scaleFrom: 1, scaleTo: 0.94);
                 break;
             case ScorebugTransition.SlideUp:
-                Animate(1, 0.35, duration, done, y: -Distance * 0.6);
+                Animate(1, 0.2, duration, done, yFrom: 0, yTo: -Distance * 0.75);
                 break;
             case ScorebugTransition.SlideDown:
-                Animate(1, 0.35, duration, done, y: Distance * 0.6);
+                Animate(1, 0.2, duration, done, yFrom: 0, yTo: Distance * 0.75);
                 break;
             case ScorebugTransition.SlideLeft:
-                Animate(1, 0.35, duration, done, x: -Distance * 0.6);
+                Animate(1, 0.2, duration, done, xFrom: 0, xTo: -Distance * 0.75);
                 break;
             case ScorebugTransition.SlideRight:
-                Animate(1, 0.35, duration, done, x: Distance * 0.6);
+                Animate(1, 0.2, duration, done, xFrom: 0, xTo: Distance * 0.75);
                 break;
             case ScorebugTransition.WheelUp:
                 // No fade: the old value rolls out like a drum, and the new one rolls in behind it.
-                Animate(1, 1, duration, done, y: -Distance);
+                Animate(1, 1, duration, done, yFrom: 0, yTo: -Distance);
                 break;
             case ScorebugTransition.WheelDown:
-                Animate(1, 1, duration, done, y: Distance);
+                Animate(1, 1, duration, done, yFrom: 0, yTo: Distance);
                 break;
             case ScorebugTransition.Flip:
-                Animate(1, 0.1, duration, done, scaleY: 0);
+                Animate(1, 0.15, duration, done, scaleYFrom: 1, scaleYTo: 0.05);
                 break;
             case ScorebugTransition.Zoom:
-                Animate(1, 0, duration, done, scale: 0.6);
+                Animate(1, 0, duration, done, scaleFrom: 1, scaleTo: 0.6);
                 break;
             case ScorebugTransition.Pop:
-                Animate(1, 0.2, duration, done, scale: 0.86);
+                Animate(1, 0.35, duration, done, scaleFrom: 1, scaleTo: 0.88);
                 break;
             case ScorebugTransition.Drop:
-                Animate(1, 0.25, duration, done, y: -Distance * 0.55);
+                Animate(1, 0.15, duration, done, yFrom: 0, yTo: -Distance * 0.4);
                 break;
             default:
                 Animate(1, 1, duration, done);
@@ -289,37 +353,37 @@ public sealed class ScorebugTextBlock : TextBlock
                 Animate(0, 1, duration, done);
                 break;
             case ScorebugTransition.FadeScale:
-                Animate(0, 1, duration, done, scale: 0.94, snapScale: true);
+                Animate(0, 1, duration, done, scaleFrom: 0.94, scaleTo: 1);
                 break;
             case ScorebugTransition.SlideUp:
-                Animate(0, 1, duration, done, y: Distance * 0.5, clearOffset: true);
+                Animate(0, 1, duration, done, yFrom: Distance * 0.7, yTo: 0);
                 break;
             case ScorebugTransition.SlideDown:
-                Animate(0, 1, duration, done, y: -Distance * 0.5, clearOffset: true);
+                Animate(0, 1, duration, done, yFrom: -Distance * 0.7, yTo: 0);
                 break;
             case ScorebugTransition.SlideLeft:
-                Animate(0, 1, duration, done, x: Distance * 0.5, clearOffset: true);
+                Animate(0, 1, duration, done, xFrom: Distance * 0.7, xTo: 0);
                 break;
             case ScorebugTransition.SlideRight:
-                Animate(0, 1, duration, done, x: -Distance * 0.5, clearOffset: true);
+                Animate(0, 1, duration, done, xFrom: -Distance * 0.7, xTo: 0);
                 break;
             case ScorebugTransition.WheelUp:
-                Animate(1, 1, duration, done, y: Distance, clearOffset: true);
+                Animate(1, 1, duration, done, yFrom: Distance, yTo: 0);
                 break;
             case ScorebugTransition.WheelDown:
-                Animate(1, 1, duration, done, y: -Distance, clearOffset: true);
+                Animate(1, 1, duration, done, yFrom: -Distance, yTo: 0);
                 break;
             case ScorebugTransition.Flip:
-                Animate(1, 1, duration, done, fromScaleY: 0.1);
+                Animate(1, 1, duration, done, scaleYFrom: 0.05, scaleYTo: 1);
                 break;
             case ScorebugTransition.Zoom:
-                Animate(0, 1, duration, done, scale: 0.6, snapScale: true);
+                Animate(0, 1, duration, done, scaleFrom: 0.6, scaleTo: 1);
                 break;
             case ScorebugTransition.Pop:
-                Animate(0, 1, duration, done, scale: 0.86, snapScale: true, overshoot: true);
+                Animate(0, 1, duration, done, scaleFrom: 0.88, scaleTo: 1, overshoot: true);
                 break;
             case ScorebugTransition.Drop:
-                Animate(0, 1, duration, done, y: -Distance * 0.5, clearOffset: true);
+                Animate(0, 1, duration, done, yFrom: Distance * 0.7, yTo: 0);
                 break;
             default:
                 Animate(1, 1, duration, done);
@@ -328,77 +392,63 @@ public sealed class ScorebugTextBlock : TextBlock
     }
 
     /// <summary>
-    /// Runs one phase. The opacity animation is always present, which gives a reliable completion
-    /// callback even for a wheel that only moves.
+    /// Runs one phase with explicit from/to values. The opacity animation is always present, which
+    /// gives a reliable completion callback even for a wheel that only moves. Holding the final
+    /// value (instead of stopping) means the callback clears a settled block, not one that is about
+    /// to snap back to a stale offset.
     /// </summary>
     void Animate(double fromOpacity, double toOpacity, TimeSpan duration, Action done,
-        double? x = null, double? y = null, double? scale = null, double? scaleY = null, double? fromScaleY = null,
-        bool clearOffset = false, bool snapScale = false, bool overshoot = false)
+        double? xFrom = null, double? xTo = null, double? yFrom = null, double? yTo = null,
+        double? scaleFrom = null, double? scaleTo = null, double? scaleYFrom = null, double? scaleYTo = null,
+        bool overshoot = false)
     {
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var finished = false;
         var fade = new DoubleAnimation(fromOpacity, toOpacity, duration)
         {
             EasingFunction = ease,
-            FillBehavior = FillBehavior.Stop
+            FillBehavior = FillBehavior.HoldEnd
         };
-        var finished = false;
         fade.Completed += (_, _) =>
         {
             if (finished) return;
             finished = true;
+            ClearPhase();
             done();
         };
         BeginAnimation(OpacityProperty, fade);
 
-        if (clearOffset)
-        {
-            _translate.X = x ?? 0;
-            _translate.Y = y ?? 0;
-            _translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(_translate.X, 0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
-            _translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(_translate.Y, 0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
-        }
-        else if (x is double || y is double)
-        {
-            _translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(x ?? 0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
-            _translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(y ?? 0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
-        }
-
-        if (snapScale && scale is double startScale)
-        {
-            _scale.ScaleX = _scale.ScaleY = startScale;
-            ScaleTo(1, duration, ease);
-        }
-        else if (scale is double endScale)
-        {
-            ScaleTo(endScale, duration, ease);
-        }
-
-        if (fromScaleY is double startScaleY)
-        {
-            _scale.ScaleY = startScaleY;
-            _scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(startScaleY, 1, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
-        }
-        else if (scaleY is double endScaleY)
-        {
-            _scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(endScaleY, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
-        }
+        if (xFrom is double || xTo is double)
+            _translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(xFrom ?? 0, xTo ?? 0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.HoldEnd });
+        if (yFrom is double || yTo is double)
+            _translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(yFrom ?? 0, yTo ?? 0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.HoldEnd });
 
         if (overshoot)
         {
             // A pop lands a touch too big and settles: the little bounce that reads as "new value".
-            var pop = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
-            pop.KeyFrames.Add(new EasingDoubleKeyFrame(1.06, KeyTime.FromPercent(0.65), new CubicEase { EasingMode = EasingMode.EaseOut }));
-            pop.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromPercent(1)));
-            _scale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
-            _scale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
+            var start = scaleFrom ?? 1;
+            var end = scaleTo ?? 1;
+            AnimationTimeline Pop()
+            {
+                var animation = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.HoldEnd };
+                animation.KeyFrames.Add(new EasingDoubleKeyFrame(start, KeyTime.FromPercent(0)));
+                animation.KeyFrames.Add(new EasingDoubleKeyFrame(end * 1.06, KeyTime.FromPercent(0.62), new CubicEase { EasingMode = EasingMode.EaseOut }));
+                animation.KeyFrames.Add(new EasingDoubleKeyFrame(end, KeyTime.FromPercent(1)));
+                return animation;
+            }
+            _scale.BeginAnimation(ScaleTransform.ScaleXProperty, Pop());
+            _scale.BeginAnimation(ScaleTransform.ScaleYProperty, Pop());
         }
-
-    }
-
-    void ScaleTo(double endScale, TimeSpan duration, IEasingFunction ease)
-    {
-        _scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(endScale, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
-        _scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(endScale, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
+        else
+        {
+            if (scaleFrom is double || scaleTo is double)
+            {
+                _scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(scaleFrom ?? 1, scaleTo ?? 1, duration) { EasingFunction = ease, FillBehavior = FillBehavior.HoldEnd });
+                _scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(scaleFrom ?? 1, scaleTo ?? 1, duration) { EasingFunction = ease, FillBehavior = FillBehavior.HoldEnd });
+            }
+            if (scaleYFrom is double || scaleYTo is double)
+                _scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(scaleYFrom ?? 1, scaleYTo ?? 1, duration) { EasingFunction = ease, FillBehavior = FillBehavior.HoldEnd });
+        }
     }
 }
 

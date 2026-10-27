@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Scoreboard.Core;
 using Scoreboard.Desktop;
 
@@ -29,6 +30,20 @@ internal static class Program
         AutosaveStore.UseFolder(autosavePath);
         try
         {
+            if (!MainWindow.PromptOnExit)
+                throw new Exception("FAIL: the unsaved-game prompt is not on by default");
+            // The checks open and close windows constantly; a modal prompt would stall the run.
+            MainWindow.PromptOnExit = false;
+
+            // The exit prompt is the app's own chrome, not a system message box.
+            var unsavedPrompt = new UnsavedChangesWindow("Dark", "AWY 0   ·   0 HOM", "detail");
+            unsavedPrompt.Show();
+            unsavedPrompt.UpdateLayout();
+            if (FindAll<Button>(unsavedPrompt).Count(b => (b.Content as string) is "Keep editing" or "Exit without saving" or "Save & exit") != 3)
+                throw new Exception("FAIL: the unsaved-game prompt does not offer keep, discard and save");
+            unsavedPrompt.Close();
+            Console.WriteLine("PASS: exiting a changed game asks with a themed save/discard/keep prompt");
+
             var engine = new GameEngine();
             engine.NewGame("football");
             var catalog = new ScorebugCatalog(layoutPath);
@@ -166,6 +181,24 @@ internal static class Program
             outWindow.UpdateLayout();
             outWindow.Close();
             Console.WriteLine("PASS: audience output loads");
+
+            // Pressing Audience Output opens a new window every time instead of focusing an old one.
+            var multiOutput = new MainWindow(LaunchMode.New) { Width = 1280, Height = 800 };
+            multiOutput.Show();
+            multiOutput.UpdateLayout();
+            var outputClick = FindAll<Button>(multiOutput).First(b => (b.Content as string) == "Audience Output");
+            var outputsBefore = Application.Current.Windows.OfType<OutputWindow>().Count(w => w.IsVisible);
+            outputClick.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            outputClick.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            multiOutput.UpdateLayout();
+            var outputsAfter = Application.Current.Windows.OfType<OutputWindow>().Count(w => w.IsVisible);
+            if (outputsAfter - outputsBefore != 2)
+                throw new Exception($"FAIL: Audience Output opened {outputsAfter - outputsBefore} window(s) instead of 2");
+            multiOutput.Close();
+            Pump(TimeSpan.FromMilliseconds(150));
+            if (Application.Current.Windows.OfType<OutputWindow>().Count(w => w.IsVisible) > outputsBefore)
+                throw new Exception("FAIL: closing the game left its audience windows open");
+            Console.WriteLine("PASS: every Audience Output press opens another window, and they close with the game");
 
 
             var preferencesWindow = new SettingsWindow(new UserPreferences());
@@ -391,6 +424,8 @@ internal static class Program
             var awayBox = (TextBox)view.FindName("AwayName")!;
             var homeBox = (TextBox)view.FindName("HomeName")!;
             if (Left(awayBox) >= Left(homeBox)) throw new Exception("FAIL: visitors are not left of home");
+            if (awayBox.ActualHeight > 40)
+                throw new Exception($"FAIL: the team name field is {awayBox.ActualHeight:0}px tall for one line of text");
             foreach (var card in FindAll<Border>(view).Where(b => b.Style == (Style)view.FindResource("Card")))
                 if (card.ActualHeight + 0.5 < card.DesiredSize.Height)
                     throw new Exception($"FAIL: a section is squeezed ({card.ActualHeight:0} of {card.DesiredSize.Height:0} needed)");
@@ -400,6 +435,11 @@ internal static class Program
                 throw new Exception($"FAIL: Update Output is off the page ({updateBottom:0} of {view.ActualHeight:0})");
             var scrollers = FindAll<ScrollViewer>(view).Where(s => s.IsVisible && s.ScrollableHeight > 0).ToArray();
             if (scrollers.Length > 0) throw new Exception($"FAIL: {scrollers.Length} section(s) need scrolling at the smallest window ({string.Join(", ", scrollers.Select(s => $"{s.Name}:{s.ScrollableHeight:0}/{s.ActualHeight:0}"))})");
+            var logoFrame = (Border)view.FindName("AwayLogoFrame")!;
+            if (logoFrame.Width < 60)
+                throw new Exception($"FAIL: the team logo thumbnail is still small ({logoFrame.Width:0})");
+            if (FindAll<Button>(view).Any(b => (b.Tag as string)?.StartsWith("football.turnover", StringComparison.Ordinal) == true))
+                throw new Exception("FAIL: the removed Home/Away turnover buttons are still on the console");
             if (((FrameworkElement)view.FindName("PlayClockRow")!).Visibility != Visibility.Visible)
                 throw new Exception("FAIL: play clock is hidden for football");
             if (((TextBlock)view.FindName("TimeoutClockValue")!).Text.Length == 0)
@@ -826,6 +866,12 @@ internal static class Program
             if (Application.Current.Windows.OfType<GameControlWindow>().Count(w => w.IsVisible) > panelsBeforeGame)
                 throw new Exception("FAIL: opening a game popped out another control panel");
             freshGame.Engine.SetTeams("Old Home", "Old Away");
+            var staleLogo = Path.Combine(Path.GetTempPath(), $"smoke-stale-logo-{Guid.NewGuid():N}.png");
+            WritePng(staleLogo, Color.FromRgb(0x99, 0x22, 0x22));
+            freshGame.Engine.SetTeamIdentity(false, "Old Away", "OA", staleLogo, "#FFAA0000", "#FF222222");
+            freshGame.Scorebug.AddLayout("Old second layout");
+            var freshDock = FindAll<MediaDock>(freshGame).First();
+            ((TextBox)freshDock.FindName("SearchBox")!).Text = "old";
             freshGame.Engine.Score(true, 21);
             freshGame.Engine.AdvanceDown();
             freshGame.Engine.AddStat("Penalties");
@@ -841,8 +887,118 @@ internal static class Program
             var previewTexts = FindAll<TextBlock>(previewView).Select(t => t.Text).ToArray();
             if (previewTexts.Any(t => t.Contains("Old Home", StringComparison.Ordinal) || t.Contains("Old Away", StringComparison.Ordinal) || t == "21"))
                 throw new Exception($"FAIL: the scorebug preview still shows the previous game ({string.Join(" | ", previewTexts)})");
+            if (freshGame.Engine.State.AwayLogoPath is not null || freshGame.PublishedState.AwayLogoPath is not null
+                || FindAll<Image>(previewView).Any(i => i.Source is BitmapImage))
+                throw new Exception("FAIL: New Game kept the previous team logo on the control panel or graphic");
+            if (freshGame.Scorebug.Layouts.Count != 1)
+                throw new Exception($"FAIL: New Game kept {freshGame.Scorebug.Layouts.Count} layouts instead of starting with one");
+            if (((TextBox)freshDock.FindName("SearchBox")!).Text.Length != 0)
+                throw new Exception("FAIL: New Game left the media search filtering the blank library");
+            try { File.Delete(staleLogo); } catch { }
             freshGame.Close();
-            Console.WriteLine("PASS: New Game resets the game and clears the previous game from the output");
+            Console.WriteLine("PASS: New Game clears the logo, extra layouts and the previous game from the output");
+
+            // A saved game comes back complete after a relaunch: text, score and the team logo.
+            var reloadLogo = Path.Combine(Path.GetTempPath(), $"smoke-reload-logo-{Guid.NewGuid():N}.png");
+            var reloadGame = Path.Combine(Path.GetTempPath(), $"smoke-reload-{Guid.NewGuid():N}.spg");
+            try
+            {
+                WritePng(reloadLogo, Color.FromRgb(0xCC, 0x33, 0x55));
+                var saved = new MainWindow(LaunchMode.New);
+                saved.Show();
+                saved.UpdateLayout();
+                saved.Engine.SetTeams("Loaded Home", "Loaded Away");
+                saved.Engine.SetTeamIdentity(false, "Loaded Away", "LAW", reloadLogo, "#FFCC3355", "#FF223344");
+                saved.Engine.Score(true, 7);
+                saved.Engine.Save(reloadGame);
+                saved.Close();
+
+                var reopened = new MainWindow(LaunchMode.Open, reloadGame) { Width = 1280, Height = 800 };
+                reopened.Show();
+                reopened.UpdateLayout();
+                if (reopened.PublishedState.HomeTeam != "Loaded Home" || reopened.PublishedState.AwayTeam != "Loaded Away" || reopened.PublishedState.HomeScore != 7)
+                    throw new Exception($"FAIL: reopening a saved game lost its values ({reopened.PublishedState.HomeTeam} {reopened.PublishedState.HomeScore} / {reopened.PublishedState.AwayTeam})");
+                var reopenedPreview = FindAll<ScorebugCanvasView>(reopened).FirstOrDefault()
+                    ?? throw new Exception("FAIL: the reopened game has no program preview");
+                if (!FindAll<Image>(reopenedPreview).Any(i => i.Source is BitmapImage))
+                    throw new Exception("FAIL: the saved team logo did not appear after reopening the game");
+                reopened.Close();
+            }
+            finally
+            {
+                if (File.Exists(reloadLogo)) File.Delete(reloadLogo);
+                if (File.Exists(reloadGame)) File.Delete(reloadGame);
+            }
+            Console.WriteLine("PASS: reopening a saved game restores its text, score and team logo");
+
+            // Closing a changed game opens the app's own prompt; Keep editing leaves it open.
+            MainWindow.PromptOnExit = true;
+            var dirty = new MainWindow(LaunchMode.New);
+            dirty.Show();
+            dirty.UpdateLayout();
+            dirty.Engine.Score(true, 3);
+            var promptTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+            promptTimer.Tick += (_, _) =>
+            {
+                var prompt = Application.Current.Windows.OfType<UnsavedChangesWindow>().FirstOrDefault();
+                if (prompt is null) return;
+                promptTimer.Stop();
+                var keep = FindAll<Button>(prompt).FirstOrDefault(b => (b.Content as string) == "Keep editing")
+                    ?? throw new Exception("FAIL: the exit prompt has no Keep editing action");
+                keep.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            };
+            promptTimer.Start();
+            dirty.Close();
+            if (!dirty.IsVisible)
+                throw new Exception("FAIL: the exit prompt did not stop a changed game from closing");
+            MainWindow.PromptOnExit = false;
+            dirty.Close();
+
+            // Choosing Exit without saving must actually close, and must do so after OnClosing
+            // has finished (calling Close from inside it is what raised the WPF error).
+            MainWindow.PromptOnExit = true;
+            var discarding = new MainWindow(LaunchMode.New);
+            discarding.Show();
+            discarding.UpdateLayout();
+            discarding.Engine.Score(true, 2);
+            var discardTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+            discardTimer.Tick += (_, _) =>
+            {
+                var prompt = Application.Current.Windows.OfType<UnsavedChangesWindow>().FirstOrDefault();
+                if (prompt is null) return;
+                discardTimer.Stop();
+                var discard = FindAll<Button>(prompt).FirstOrDefault(b => (b.Content as string) == "Exit without saving")
+                    ?? throw new Exception("FAIL: the exit prompt has no discard action");
+                discard.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            };
+            discardTimer.Start();
+            discarding.Close();
+            Pump(TimeSpan.FromMilliseconds(250));
+            if (discarding.IsVisible)
+                throw new Exception("FAIL: Exit without saving left the game window open");
+            MainWindow.PromptOnExit = false;
+            Console.WriteLine("PASS: closing a changed game asks first, Keep editing returns, and Exit without saving closes cleanly");
+
+            // The studio's working surface keeps the navy artwork backdrop in both themes: it is
+            // the same surface the audience graphic is designed on, not an operator panel.
+            var studioThemePath = Path.Combine(Path.GetTempPath(), $"smoke-studio-theme-{Guid.NewGuid():N}.json");
+            try
+            {
+                var themeCatalog = new ScorebugCatalog(studioThemePath);
+                foreach (var theme in new[] { "Dark", "Light" })
+                {
+                    var themeStudio = new ScorebugEditorWindow(themeCatalog, engine, theme: theme);
+                    themeStudio.Show();
+                    Pump(TimeSpan.FromMilliseconds(150));
+                    themeStudio.UpdateLayout();
+                    var designCanvas = (Canvas)themeStudio.FindName("DesignCanvas")!;
+                    if (designCanvas.Background is not SolidColorBrush brush || brush.Color != Color.FromRgb(0x09, 0x10, 0x18))
+                        throw new Exception($"FAIL: the {theme} studio canvas is {designCanvas.Background}, not the navy artwork backdrop");
+                    themeStudio.Close();
+                }
+            }
+            finally { if (File.Exists(studioThemePath)) File.Delete(studioThemePath); }
+            Console.WriteLine("PASS: the studio canvas keeps its navy artwork backdrop in both themes");
 
             // Studio: layer order, context-sensitive properties and the element's own quarter style.
             var contextPath = Path.Combine(Path.GetTempPath(), $"smoke-studio-{Guid.NewGuid():N}.json");
@@ -924,7 +1080,13 @@ internal static class Program
                 styleCatalog.Update(layout =>
                 {
                     layout.Elements.Clear();
-                    layout.Elements.Add(new ScorebugElement { Name = "Styled", Content = "{{HOME_TEAM}}", X = 10, Y = 10, Width = 420, Height = 90, FontSize = 48 });
+                    layout.Elements.Add(new ScorebugElement
+                    {
+                        Name = "Styled", Content = "{{HOME_TEAM}}", X = 10, Y = 10, Width = 420, Height = 90, FontSize = 48,
+                        // A team-palette slot with a stale fixed colour underneath it: opening the studio
+                        // has to show the team colour straight away, not wait for a click to repaint it.
+                        ForegroundSource = ScorebugColorSource.HomePrimary, Foreground = "#FF000000"
+                    });
                 });
                 var styleEngine = new GameEngine();
                 styleEngine.NewGame("football");
@@ -932,6 +1094,10 @@ internal static class Program
                 var styleEditor = new ScorebugEditorWindow(styleCatalog, styleEngine);
                 styleEditor.Show();
                 styleEditor.UpdateLayout();
+                var openingText = FindAll<ScorebugTextBlock>((Canvas)styleEditor.FindName("DesignCanvas")!).FirstOrDefault();
+                if (openingText is null) throw new Exception("FAIL: the studio canvas is empty when it opens");
+                if (openingText.Foreground is not SolidColorBrush openingBrush || openingBrush.Color != Color.FromRgb(0x33, 0x66, 0xCC))
+                    throw new Exception($"FAIL: the studio opened without painting the team colour ({openingText.Foreground})");
                 ((ListBox)styleEditor.FindName("Layers")!).SelectedIndex = 0;
                 styleEditor.UpdateLayout();
                 ((ComboBox)styleEditor.FindName("TransitionInput")!).SelectedItem = ScorebugTransition.WheelUp;
@@ -952,7 +1118,42 @@ internal static class Program
                     throw new Exception("FAIL: italic / underline / strike did not reach the canvas text");
                 if (styledText.Foreground is not SolidColorBrush teamBrush || teamBrush.Color != Color.FromRgb(0x33, 0x66, 0xCC))
                     throw new Exception($"FAIL: the home primary colour did not reach the text ({styledText.Foreground})");
+                if (((Border)styleEditor.FindName("TextColorSwatch")!).Background is not SolidColorBrush slotSwatch
+                    || slotSwatch.Color != Color.FromRgb(0x33, 0x66, 0xCC))
+                    throw new Exception("FAIL: the colour swatch does not show the resolved team colour");
+
+                // A typed custom colour must show on the canvas and in the swatch.
+                ((ComboBox)styleEditor.FindName("ForegroundSourceInput")!).SelectedIndex = 0; // Custom colour
+                ((TextBox)styleEditor.FindName("ColorInput")!).Text = "#FF10C0FF";
+                Pump(TimeSpan.FromMilliseconds(700));
+                styleEditor.UpdateLayout();
+                var recoloured = FindAll<ScorebugTextBlock>((Canvas)styleEditor.FindName("DesignCanvas")!).FirstOrDefault(t => t.Text == "Home Town")
+                    ?? throw new Exception("FAIL: the recoloured text vanished from the canvas");
+                if (recoloured.Foreground is not SolidColorBrush typedBrush || typedBrush.Color != Color.FromRgb(0x10, 0xC0, 0xFF))
+                    throw new Exception($"FAIL: a typed colour did not reach the studio canvas ({recoloured.Foreground})");
+                if (((Border)styleEditor.FindName("TextColorSwatch")!).Background is not SolidColorBrush typedSwatch
+                    || typedSwatch.Color != Color.FromRgb(0x10, 0xC0, 0xFF))
+                    throw new Exception("FAIL: the colour swatch does not follow a typed colour");
+                // A shape pointed at a team colour must repaint when the team's palette changes.
+                styleCatalog.Update(layout => layout.Elements.Add(new ScorebugElement
+                {
+                    Name = "Bar", Kind = ScorebugElementKind.Shape, Shape = ScorebugShape.Rectangle,
+                    X = 40, Y = 240, Width = 200, Height = 40,
+                    BackgroundSource = ScorebugColorSource.HomeSecondary
+                }));
+                styleEditor.UpdateLayout();
+                var canvasShapes = (Canvas)styleEditor.FindName("DesignCanvas")!;
+                bool HasFill(Color wanted) => FindAll<System.Windows.Shapes.Shape>(canvasShapes)
+                    .Any(s => s.Fill is SolidColorBrush fill && fill.Color == wanted);
+                if (!HasFill(Color.FromRgb(0x22, 0x33, 0x44)))
+                    throw new Exception("FAIL: a team colour slot did not reach the studio shape");
+                styleEngine.SetTeamIdentity(true, "Home Town", "HT", null, "#FF3366CC", "#FFEE1122");
+                Pump(TimeSpan.FromMilliseconds(400));
+                styleEditor.UpdateLayout();
+                if (!HasFill(Color.FromRgb(0xEE, 0x11, 0x22)) || HasFill(Color.FromRgb(0x22, 0x33, 0x44)))
+                    throw new Exception("FAIL: changing a team colour did not repaint the studio shape");
                 styleEditor.Close();
+                Console.WriteLine("PASS: the studio canvas and colour swatch show the element's colour, and team colours repaint shapes live");
                 Console.WriteLine("PASS: fonts, bold/italic/underline/strike, team colour slots and value transitions reach the canvas");
             }
             finally { if (File.Exists(stylePath)) File.Delete(stylePath); }
@@ -1066,23 +1267,33 @@ internal static class Program
                 // A team logo imported in the console reaches a logo element on the graphic.
                 var logoPath = Path.Combine(Path.GetTempPath(), $"smoke-team-logo-{Guid.NewGuid():N}.png");
                 WritePng(logoPath, Color.FromRgb(0x22, 0x88, 0xFF));
+                // Build the logo element while the team still has no crest: setting one afterwards
+                // must fill the existing graphic, the way it does after loading a saved game.
                 colorCatalog.Update(layout =>
                 {
                     layout.Elements.Add(new ScorebugElement { Name = "Away logo", Kind = ScorebugElementKind.Logo, LogoSide = ScorebugLogoSide.Away, X = 900, Y = 40, Width = 160, Height = 120 });
                 });
-                colorEngine.SetTeamIdentity(false, "Rovers FC", "RFC", logoPath, "#FF00FF00", "#FF223344");
-                colorView.Rebuild();
                 colorView.Measure(new Size(1280, 720));
                 colorView.Arrange(new Rect(0, 0, 1280, 720));
                 colorView.UpdateLayout();
+                if (FindAll<Image>(colorView).Any(i => i.Source is BitmapImage))
+                    throw new Exception("FAIL: a logo element showed an image before a team logo was set");
+                colorEngine.SetTeamIdentity(false, "Rovers FC", "RFC", logoPath, "#FF00FF00", "#FF223344");
+                colorView.Refresh();
+                colorView.UpdateLayout();
                 if (!FindAll<Image>(colorView).Any(i => i.Source is BitmapImage))
-                    throw new Exception("FAIL: the team logo did not reach the scorebug");
+                    throw new Exception("FAIL: a team logo set after the element was built did not reach the scorebug");
+                colorEngine.SetTeamIdentity(false, "Rovers FC", "RFC", null, "#FF00FF00", "#FF223344");
+                colorView.Refresh();
+                colorView.UpdateLayout();
+                if (FindAll<Image>(colorView).Any(i => i.Source is BitmapImage))
+                    throw new Exception("FAIL: removing a team logo left the old image on the scorebug");
                 colorView.Dispose();
                 try { File.Delete(logoPath); } catch { }
 
                 // A value change must finish on the new value, whatever the animation, and a value
                 // that changes mid-flight must not leave the old one on the graphic.
-                foreach (var transition in new[] { ScorebugTransition.WheelUp, ScorebugTransition.Pop, ScorebugTransition.Flip })
+                foreach (var transition in new[] { ScorebugTransition.WheelUp, ScorebugTransition.SlideRight, ScorebugTransition.Pop, ScorebugTransition.Flip })
                 {
                     var block = new ScorebugTextBlock(new ScorebugElement { Transition = transition, FontSize = 40 });
                     var transitionHost = new Window { Width = 360, Height = 160, Content = block };
@@ -1093,6 +1304,13 @@ internal static class Program
                     Pump(TimeSpan.FromMilliseconds(650));
                     if (block.Text != "17" || block.Opacity < 0.95)
                         throw new Exception($"FAIL: the {transition} animation left the value at '{block.Text}' with opacity {block.Opacity:0.00}");
+                    // A finished transition must sit exactly in its box: not offset like the wheel
+                    // used to be, and not still scaled like the pop.
+                    var transform = (TransformGroup)block.RenderTransform;
+                    var translate = transform.Children.OfType<TranslateTransform>().First();
+                    var scale = transform.Children.OfType<ScaleTransform>().First();
+                    if (Math.Abs(translate.X) > 0.5 || Math.Abs(translate.Y) > 0.5 || Math.Abs(scale.ScaleX - 1) > 0.01 || Math.Abs(scale.ScaleY - 1) > 0.01)
+                        throw new Exception($"FAIL: the {transition} animation settled off-centre (translate {translate.X:0.0},{translate.Y:0.0} scale {scale.ScaleX:0.00},{scale.ScaleY:0.00})");
                     block.UpdateText("21", transition);
                     Pump(TimeSpan.FromMilliseconds(40));
                     block.UpdateText("24", transition);
@@ -1128,20 +1346,39 @@ internal static class Program
                 var folderWindow = new Window { Width = 470, Height = 680, Content = folderDock };
                 folderWindow.Show();
                 folderWindow.UpdateLayout();
-                var folderFilter = (ComboBox)folderDock.FindName("FolderFilter")!;
-                if ((folderFilter.SelectedItem as string) != "All folders")
-                    throw new Exception($"FAIL: the folder filter starts at {folderFilter.SelectedItem}");
+                // Folders are a shelf of tiles, not a dropdown, and every tile accepts a clip.
+                if (folderDock.FindName("FolderFilter") is not null || folderDock.FindName("FolderBox") is not null || folderDock.FindName("PlaylistBox") is not null)
+                    throw new Exception("FAIL: the media dock still files clips through dropdowns");
+                var folderRail = (StackPanel)folderDock.FindName("FolderRail")!;
+                var playlistRail = (StackPanel)folderDock.FindName("PlaylistRail")!;
+                var allTile = folderRail.Children.OfType<Border>().FirstOrDefault(b => b.ToolTip is string tip && tip.StartsWith("Every clip"))
+                    ?? throw new Exception("FAIL: the folder shelf has no All tile");
+                if (!allTile.AllowDrop)
+                    throw new Exception("FAIL: the All tile does not accept dragged clips");
                 playlistSession.MoveToFolder(playlistSession.Library[1], "Openers");
+                playlistSession.CreateFolder("Empty");
                 folderWindow.UpdateLayout();
+                if (!FindAll<Border>(folderDock).Any(b => b.Tag is string folder && folder == "Openers"))
+                    throw new Exception("FAIL: a folder that holds a clip has no tile");
+                if (!FindAll<Border>(folderDock).Any(b => b.Tag is string folder && folder == "Empty"))
+                    throw new Exception("FAIL: an empty folder has no tile on the shelf");
+                // The shelf scrollbar is the dock's slim themed bar, not the default system one.
+                var railRow = (DockPanel)folderDock.FindName("FolderRailRow")!;
+                var railBar = FindAll<System.Windows.Controls.Primitives.ScrollBar>(railRow)
+                    .FirstOrDefault(bar => bar.Orientation == Orientation.Horizontal && bar.IsVisible);
+                var themedBar = (Style)folderDock.FindResource("DockHScrollBar");
+                if (railBar is null || (railBar.Style != themedBar && !ReferenceEquals(railBar.Style?.BasedOn, themedBar)))
+                    throw new Exception("FAIL: the folder shelf uses the default system scrollbar instead of the dock's themed bar");
                 var tiles = (WrapPanel)folderDock.FindName("Tiles")!;
                 if (tiles.Children.Count != 3)
                     throw new Exception($"FAIL: the dock shows {tiles.Children.Count} clips for a library of 3");
-                folderFilter.SelectedItem = "Openers";
+                playlistSession.SetFolderFilter("Openers");
                 folderWindow.UpdateLayout();
                 if (tiles.Children.Count != 1)
                     throw new Exception($"FAIL: choosing a folder did not filter the library ({tiles.Children.Count} tiles)");
-                if (((ComboBox)folderDock.FindName("FolderBox")!).Text != "Openers")
-                    throw new Exception("FAIL: the selected clip's folder is not shown in the dock");
+                var openersTile = FindAll<Border>(folderDock).First(b => b.Tag is string folder && folder == "Openers");
+                if (openersTile.BorderThickness.Left < 2 || openersTile.BorderBrush is not SolidColorBrush highlight || highlight.Color != Color.FromRgb(0x38, 0xD7, 0xA3))
+                    throw new Exception("FAIL: the folder on screen is not marked as selected");
 
                 playlistSession.SetFolderFilter(null);
                 playlistSession.Select(playlistSession.Library[0]);
@@ -1156,11 +1393,28 @@ internal static class Program
                 playlistSession.AddToPlaylist(playlist, playlistSession.Library[1]);
                 playlistSession.SetPlaylistLoop(playlist, true);
                 folderWindow.UpdateLayout();
-                var playlistBox = (ComboBox)folderDock.FindName("PlaylistBox")!;
-                if (!playlistBox.Items.Cast<string>().Contains("Run of show"))
-                    throw new Exception("FAIL: a new playlist does not appear in the dock");
-                if (((CheckBox)folderDock.FindName("PlaylistLoopBox")!).IsChecked != true)
-                    throw new Exception("FAIL: the playlist loop setting does not reach the dock");
+                var playlistTile = FindAll<Border>(folderDock).FirstOrDefault(b => ReferenceEquals(b.Tag, playlist))
+                    ?? throw new Exception("FAIL: a new playlist has no tile on the shelf");
+                if (!playlistTile.AllowDrop)
+                    throw new Exception("FAIL: a playlist tile does not accept dropped clips");
+                // Opening the playlist replaces the rail with everything it holds.
+                playlistTile.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
+                folderWindow.UpdateLayout();
+                if (((TextBlock)folderDock.FindName("ViewTitle")!).Text != "RUN OF SHOW")
+                    throw new Exception("FAIL: clicking a playlist did not open it");
+                if (tiles.Children.Count != 2)
+                    throw new Exception($"FAIL: the open playlist shows {tiles.Children.Count} clips for a playlist of 2");
+                var playlistLoop = (CheckBox)folderDock.FindName("PlaylistLoopBox")!;
+                if (playlistLoop.IsChecked != true || playlistLoop.Visibility != Visibility.Visible)
+                    throw new Exception("FAIL: the playlist loop setting does not appear in the open playlist");
+                playlistLoop.IsChecked = false;
+                folderWindow.UpdateLayout();
+                if (playlist.Loop) throw new Exception("FAIL: switching playlist loop off did not reach the playlist");
+                playlistLoop.IsChecked = true;
+                folderWindow.UpdateLayout();
+                if (!playlist.Loop) throw new Exception("FAIL: switching playlist loop on did not reach the playlist");
+                if (playlistRail.Children.Count < 2 || folderDock.FindName("FolderRailRow") is not DockPanel)
+                    throw new Exception("FAIL: the media shelves are not laid out as tiles");
                 playlistSession.PlayPlaylist(playlist);
                 if (playlistSession.ActivePlaylist?.Name != "Run of show" || playlistSession.PlaylistPosition != 0)
                     throw new Exception("FAIL: a playlist did not start at its first clip");
@@ -1174,12 +1428,65 @@ internal static class Program
                 if (playlistSession.PlaylistPosition != 0)
                     throw new Exception("FAIL: a looping playlist did not wrap to its first clip");
                 playlistSession.Stop();
+                // Back to the library keeps the shelves and the full library on screen.
+                ((Button)folderDock.FindName("BackToLibraryButton")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                folderWindow.UpdateLayout();
+                if (tiles.Children.Count != 3)
+                    throw new Exception($"FAIL: leaving a playlist returned {tiles.Children.Count} library clips instead of 3");
+                if (((TextBlock)folderDock.FindName("ViewTitle")!).Text != "LIBRARY")
+                    throw new Exception("FAIL: leaving a playlist did not return to the library title");
+                // Search is library-wide: a clip is never hidden because it lives in a folder or playlist.
+                var searchBox = (TextBox)folderDock.FindName("SearchBox")!;
+                var searchClear = (Button)folderDock.FindName("SearchClearButton")!;
+                playlistSession.SetFolderFilter("Openers");
+                folderWindow.UpdateLayout();
+                searchBox.Text = Path.GetFileName(clipA);
+                folderWindow.UpdateLayout();
+                if (tiles.Children.Count != 1)
+                    throw new Exception($"FAIL: search found {tiles.Children.Count} clips for a clip inside another folder");
+                if (((TextBlock)folderDock.FindName("ViewTitle")!).Text != "SEARCH" || searchClear.Visibility != Visibility.Visible)
+                    throw new Exception("FAIL: the media search did not switch to a search view");
+                searchBox.Text = "Run of show";
+                folderWindow.UpdateLayout();
+                if (tiles.Children.Count != 2)
+                    throw new Exception($"FAIL: searching a playlist name showed {tiles.Children.Count} of its 2 clips");
+                if (!FindAll<Border>(folderDock).Any(b => b.Tag is MediaPlaylist p && p.Name == "Run of show"))
+                    throw new Exception("FAIL: searching a playlist name did not show the playlist tile");
+                searchBox.Text = "Openers";
+                folderWindow.UpdateLayout();
+                if (!FindAll<Border>(folderDock).Any(b => b.Tag is string folder && folder == "Openers"))
+                    throw new Exception("FAIL: searching a folder name did not show the folder tile");
+                playlistSession.SetFolderFilter(null);
+                searchClear.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                folderWindow.UpdateLayout();
+                if (searchBox.Text.Length != 0 || tiles.Children.Count != 3)
+                    throw new Exception($"FAIL: clearing search did not restore the full library ({tiles.Children.Count} tiles)");
+
                 var savedMedia = PreferencesStore.Load();
                 var savedPlaylist = savedMedia.Playlists.SingleOrDefault(p => p.Name == "Run of show");
                 if (savedPlaylist is null || savedPlaylist.Count != 2 || !savedPlaylist.Loop || savedMedia.Media.All(m => m.Path != clipA))
                     throw new Exception("FAIL: playlists, folders and clips did not survive a preferences save");
+                if (!savedMedia.MediaFolders.Contains("Empty"))
+                    throw new Exception("FAIL: an empty folder did not survive a preferences save");
+
+                // A new game starts with no folders or playlists, but keeps the imported asset files.
+                var resetSession = new MediaSession(new UserPreferences());
+                try
+                {
+                    resetSession.Import([clipA], "Ads", "Ads");
+                    var tempPlaylist = resetSession.CreatePlaylist("Temp");
+                    resetSession.AddToPlaylist(tempPlaylist, resetSession.Library[0]);
+                    resetSession.SetFolderFilter("Ads");
+                    resetSession.ResetOrganization();
+                    if (resetSession.Folders.Count != 0 || resetSession.Playlists.Count != 0 || resetSession.FolderFilter is not null
+                        || resetSession.Library.Any(entry => entry.Folder.Length != 0))
+                        throw new Exception("FAIL: resetting for a new game left folders or playlists behind");
+                    if (resetSession.Library.Count != 1)
+                        throw new Exception("FAIL: resetting for a new game threw away the imported media library");
+                }
+                finally { resetSession.Dispose(); }
                 folderWindow.Close();
-                Console.WriteLine("PASS: folders organise the library, playlists run clip after clip with loop, and a clip can loop on its own");
+                Console.WriteLine("PASS: folders are drop tiles, playlists open into their clip list, search spans every folder and playlist, and new-game reset clears the organisation");
             }
             finally
             {
