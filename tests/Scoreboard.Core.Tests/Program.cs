@@ -136,3 +136,29 @@ try
 }
 finally{if(File.Exists(styledPath))File.Delete(styledPath);}
 Check(Enum.GetValues<ScorebugTransition>().Length>=10&&Enum.GetValues<ScorebugColorSource>().Length==5,"there are at least ten value animations and five colour sources");
+
+// ---------- rotation, borders and a configurable transition speed ----------
+var decorPath=Path.Combine(Path.GetTempPath(),$"decor-{Guid.NewGuid():N}.json");
+try
+{
+    var decor=new ScorebugCatalog(decorPath);
+    decor.Update(layout=>layout.Elements.Add(new ScorebugElement
+    {
+        Name="Slanted",Rotation=-7.5,BorderThickness=3,BorderColor="#FF00FF00",
+        BorderSource=ScorebugColorSource.AwaySecondary,TransitionSeconds=2.4
+    }));
+    var reloadedDecor=new ScorebugCatalog(decorPath).Layout.Elements[^1];
+    Check(reloadedDecor.Rotation==-7.5&&reloadedDecor.BorderThickness==3&&reloadedDecor.BorderColor=="#FF00FF00"&&reloadedDecor.BorderSource==ScorebugColorSource.AwaySecondary&&reloadedDecor.TransitionSeconds==2.4,"rotation, border and transition speed persist in the layout");
+    decor.Update(layout=>{layout.Elements[^1].Rotation=900;layout.Elements[^1].TransitionSeconds=9;layout.Elements[^1].BorderThickness=90;});
+    var clampedDecor=new ScorebugCatalog(decorPath).Layout.Elements[^1];
+    Check(clampedDecor.Rotation==360&&clampedDecor.TransitionSeconds==5&&clampedDecor.BorderThickness==40,"rotation, transition speed and border width are clamped to safe ranges");
+}
+finally{if(File.Exists(decorPath))File.Delete(decorPath);}
+
+// ---------- play clock reaches and prints zero ----------
+var playClock=new GameEngine();playClock.NewGame("football");
+playClock.SetPlayClock(2);playClock.TogglePlayClock();Thread.Sleep(1150);playClock.Tick();
+Check(playClock.State.PlayClockSeconds<=1&&playClock.State.PlayClockRunning,"the play clock counts down while it runs");
+Thread.Sleep(1250);playClock.Tick();
+Check(playClock.State.PlayClockSeconds==0&&!playClock.State.PlayClockRunning,"the play clock reaches zero and stops there");
+Check(ScoreboardTemplates.Bind("{{PLAY_CLOCK}}",playClock.State)=="0","the graphic prints zero when the play clock expires");

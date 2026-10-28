@@ -442,8 +442,13 @@ internal static class Program
                 throw new Exception("FAIL: the removed Home/Away turnover buttons are still on the console");
             if (((FrameworkElement)view.FindName("PlayClockRow")!).Visibility != Visibility.Visible)
                 throw new Exception("FAIL: play clock is hidden for football");
-            if (((TextBlock)view.FindName("TimeoutClockValue")!).Text.Length == 0)
+            // Everything in Miscellaneous is typed over, not just nudged with buttons.
+            var timeoutClockBox = view.FindName("TimeoutClockValue") as TextBox
+                ?? throw new Exception("FAIL: the timeout clock is not an editable text box");
+            if (timeoutClockBox.Text.Length == 0)
                 throw new Exception("FAIL: timeout clock is missing");
+            if (view.FindName("ShotClockValue") is not TextBox)
+                throw new Exception("FAIL: the shot clock is not an editable text box");
             // A long stat list must not push the page: it scrolls inside its own card.
             engine.AddStat("Red zone trips");
             engine.AddStat("Explosive plays");
@@ -478,6 +483,16 @@ internal static class Program
             ballView.UpdateLayout();
             if ((sideButton.Content as string) != "HOME ▶" || !ballEngine.State.BallOnHomeSide)
                 throw new Exception("FAIL: changing possession moved the ball to the other half");
+            // + raises the yard line and − lowers it, like every other console stepper.
+            var ballBefore = ballEngine.State.YardsToGoal;
+            var ballPlus = FindAll<Button>(ballView).First(b => (b.Tag as string) == "football.ball.plus");
+            var ballMinus = FindAll<Button>(ballView).First(b => (b.Tag as string) == "football.ball.minus");
+            ballPlus.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (ballEngine.State.YardsToGoal != ballBefore + 1)
+                throw new Exception($"FAIL: the ball spot + button moved it {ballBefore}→{ballEngine.State.YardsToGoal}");
+            ballMinus.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (ballEngine.State.YardsToGoal != ballBefore)
+                throw new Exception("FAIL: the ball spot − button did not undo the + button");
             ballEngine.SetBallSide(false);
             ballView.UpdateLayout();
             if ((sideButton.Content as string) != "◀ VISITORS")
@@ -696,6 +711,30 @@ internal static class Program
                 videoView.Dispose();
                 Console.WriteLine("PASS: video overlays only show media from their own tag");
 
+                // ANY is the catch-all tag: a box watching ANY plays whatever is cued, camera included.
+                if (!playback.Matches(ad, MediaLibrary.AnyTag) || !playback.Matches(highlight, "any"))
+                    throw new Exception("FAIL: the ANY tag did not accept every clip");
+                var camera = new MediaEntry(MediaLibrary.CameraPath(0), "Camera");
+                if (!camera.IsCamera || !camera.IsVideo)
+                    throw new Exception("FAIL: a camera source is not treated as a video source");
+                playback.Start(camera);
+                if (playback.ActiveFor(MediaLibrary.AnyTag)?.IsCamera != true)
+                    throw new Exception("FAIL: a live camera did not route into an ANY video box");
+                playback.Start(ad);
+                Console.WriteLine("PASS: ANY plays whatever is cued, and a live camera routes like a clip");
+
+                // Each clip carries its own level and speaker.
+                var quietAd = ad with { Volume = 0.35, AudioDevice = "Speaker B" };
+                if (quietAd.VolumePercent != 35 || quietAd.AudioLabel != "Speaker B")
+                    throw new Exception("FAIL: per-clip volume and speaker did not stick");
+                playback.Start(quietAd);
+                if (Math.Abs(playback.Volume - 0.35) > 0.001 || !playback.RoutedToDevice)
+                    throw new Exception("FAIL: the scorebug did not read the clip's own level and speaker");
+                playback.Start(ad);
+                if (playback.RoutedToDevice || Math.Abs(playback.Volume - 1) > 0.001)
+                    throw new Exception("FAIL: the next clip inherited the previous clip's audio");
+                Console.WriteLine("PASS: every video has its own volume and output speaker");
+
                 // Canvas size presets scale the layout and persist.
                 var presetStudio = new ScorebugEditorWindow(videoCatalog, engine);
                 presetStudio.Show();
@@ -798,6 +837,128 @@ internal static class Program
             if (publishCount != 1) throw new Exception($"FAIL: the Update Output keybind fired {publishCount} times");
             publishPanel.Close();
             Console.WriteLine("PASS: Update Output can be bound to a key");
+
+            // The speaker picker must actually reach the session and stay on the chosen device.
+            var speakerPath = Path.Combine(Path.GetTempPath(), $"smoke-speaker-{Guid.NewGuid():N}.wav");
+            WriteSilentWav(speakerPath, 1);
+            var speakerSession = new MediaSession(new UserPreferences());
+            try
+            {
+                speakerSession.Import([speakerPath], "General");
+                speakerSession.Select(speakerSession.Library[0]);
+                var speakerDock = new MediaDock();
+                speakerDock.Attach(speakerSession);
+                var speakerHost = new Window { Width = 420, Height = 780, Content = speakerDock };
+                speakerHost.Show();
+                speakerHost.UpdateLayout();
+                var speakerBox = (ComboBox)speakerDock.FindName("AudioDeviceBox")!;
+                if (speakerBox.Items.Count > 1)
+                {
+                    var last = speakerBox.Items.Count - 1;
+                    var chosen = ((AudioRouter.OutputDevice)speakerBox.Items[last]).Id;
+                    speakerBox.SelectedIndex = last;
+                    Pump(TimeSpan.FromMilliseconds(250));
+                    if (speakerSession.Library[0].AudioDevice != chosen)
+                        throw new Exception("FAIL: picking a speaker in the dock did not reach the clip");
+                    if (speakerBox.SelectedIndex != last)
+                        throw new Exception($"FAIL: the speaker picker snapped back to {speakerBox.SelectedIndex} after the choice");
+                    speakerSession.Select(speakerSession.Library[0]);
+                    Pump(TimeSpan.FromMilliseconds(150));
+                    if (speakerBox.SelectedIndex != last)
+                        throw new Exception("FAIL: a refresh reset the chosen speaker to Default");
+                    speakerBox.SelectedIndex = 0;
+                    Pump(TimeSpan.FromMilliseconds(200));
+                    if (speakerSession.Library[0].AudioDevice is not null)
+                        throw new Exception("FAIL: choosing Default output did not clear the clip's speaker");
+                }
+                else Console.WriteLine("SKIP: only one output device on this machine, speaker routing was not exercised");
+                speakerHost.Close();
+            }
+            finally
+            {
+                speakerSession.Dispose();
+                try { File.Delete(speakerPath); } catch { }
+            }
+            Console.WriteLine("PASS: the dock's speaker picker sticks to the chosen device");
+
+            // Clear empties the media side and blanks whatever was on air.
+            var clearSession = new MediaSession(new UserPreferences());
+            try
+            {
+                clearSession.Library.Add(new MediaEntry(Path.Combine(Path.GetTempPath(), "smoke-clear.mp4"), "Ads"));
+                clearSession.Playback.Start(new MediaEntry(Path.Combine(Path.GetTempPath(), "smoke-clear.mp4"), "Ads"));
+                clearSession.ClearAll();
+                if (clearSession.Library.Count != 0 || clearSession.Playlists.Count != 0 || clearSession.Playback.NowPlaying is not null)
+                    throw new Exception("FAIL: Clear left media or a cued clip behind");
+                clearSession.SetReplaySeconds(25);
+                if (clearSession.ReplaySeconds != 25 || PreferencesStore.Load().ReplaySeconds != 25)
+                    throw new Exception($"FAIL: the replay length did not stick ({clearSession.ReplaySeconds})");
+            }
+            finally { clearSession.Dispose(); }
+            Console.WriteLine("PASS: Clear blanks the media side and the replay length is remembered");
+
+            // F11 on an audience window is Broadcast Fullscreen; Escape gives it back.
+            var fsEngine = new GameEngine();
+            fsEngine.NewGame("football");
+            var fsCatalog = new ScorebugCatalog(Path.Combine(Path.GetTempPath(), $"smoke-f11-{Guid.NewGuid():N}.json"));
+            var fsOutput = new OutputWindow(fsEngine, fsCatalog, "Dark");
+            fsOutput.Show();
+            fsOutput.UpdateLayout();
+            var fsSource = PresentationSource.FromVisual(fsOutput);
+            RaiseKey(fsOutput, fsSource, Key.F11);
+            Pump(TimeSpan.FromMilliseconds(200));
+            if (!fsOutput.IsFullscreen || fsOutput.WindowStyle != WindowStyle.None)
+                throw new Exception("FAIL: F11 did not make the audience window fullscreen");
+            var fsContent = (FrameworkElement)fsOutput.Content;
+            if (Math.Abs(fsContent.ActualWidth - SystemParameters.PrimaryScreenWidth) > 2 || Math.Abs(fsContent.ActualHeight - SystemParameters.PrimaryScreenHeight) > 2)
+                throw new Exception($"FAIL: fullscreen content is {fsContent.ActualWidth:0}×{fsContent.ActualHeight:0} on a {SystemParameters.PrimaryScreenWidth:0}×{SystemParameters.PrimaryScreenHeight:0} screen");
+            RaiseKey(fsOutput, fsSource, Key.Escape);
+            Pump(TimeSpan.FromMilliseconds(200));
+            if (fsOutput.IsFullscreen)
+                throw new Exception("FAIL: Escape did not leave fullscreen");
+
+            // The reported defect: size the window to the whole screen first, then go fullscreen.
+            // The old code maximized against the stale work area and left a strip down each side.
+            fsOutput.Width = 1600;
+            fsOutput.Height = 1000;
+            Pump(TimeSpan.FromMilliseconds(250));
+            RaiseKey(fsOutput, PresentationSource.FromVisual(fsOutput), Key.F11);
+            Pump(TimeSpan.FromMilliseconds(300));
+            var resizedContent = (FrameworkElement)fsOutput.Content;
+            var layoutAspect = (double)fsCatalog.Layout.Width / fsCatalog.Layout.Height;
+            var barError = Math.Abs(resizedContent.ActualWidth / resizedContent.ActualHeight - layoutAspect);
+            if (barError > 0.01 && Math.Abs(layoutAspect - SystemParameters.PrimaryScreenWidth / SystemParameters.PrimaryScreenHeight) < 0.01)
+                throw new Exception($"FAIL: a resized window fullscreened to {resizedContent.ActualWidth:0}×{resizedContent.ActualHeight:0}, pillarboxing a {layoutAspect:0.000} layout ({barError:0.000} off)");
+            RaiseKey(fsOutput, PresentationSource.FromVisual(fsOutput), Key.Escape);
+            Pump(TimeSpan.FromMilliseconds(200));
+            fsOutput.Close();
+            Console.WriteLine("PASS: F11 fills the screen on an audience window and Escape restores it");
+
+            // A typed play clock must hand the box back to the clock, or the display freezes on the
+            // typed value and never counts down to 0.
+            var playEngine = new GameEngine();
+            playEngine.NewGame("football");
+            var playHost = new GameControlWindow(playEngine, () => { }, _ => { }, () => true);
+            playHost.Show();
+            playHost.UpdateLayout();
+            var playBox = (TextBox)playHost.Panel.FindName("PlayClockValue")!;
+            playBox.Focus();
+            playBox.Text = "2";
+            var clockSource = PresentationSource.FromVisual(playHost);
+            playBox.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, clockSource!, 0, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
+            Pump(TimeSpan.FromMilliseconds(100));
+            if (ReferenceEquals(Keyboard.FocusedElement, playBox))
+                throw new Exception("FAIL: the play clock box kept keyboard focus after Enter, freezing the display");
+            playEngine.TogglePlayClock();
+            var clockTick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
+            clockTick.Tick += (_, _) => playEngine.Tick();
+            clockTick.Start();
+            var shown = new List<string>();
+            for (var i = 0; i < 10; i++) { Pump(TimeSpan.FromMilliseconds(400)); shown.Add(playBox.Text); }
+            clockTick.Stop();
+            if (shown[^1] != "0") throw new Exception($"FAIL: the play clock display never showed 0 ({string.Join(",", shown)})");
+            playHost.Close();
+            Console.WriteLine($"PASS: the play clock display follows the clock to 0 after typing ({string.Join(",", shown)})");
 
             // A detached panel carries the same media dock, so media is reachable from any panel.
             var sharedPrefs = new UserPreferences();
@@ -1322,6 +1483,69 @@ internal static class Program
                 Console.WriteLine("PASS: any colour can point at a team's primary or secondary colour, team logos reach the graphic, and value animations land on the newest value");
             }
             finally { if (File.Exists(colorPath)) File.Delete(colorPath); }
+
+            // ---------- rotation, borders, drift and a configurable transition speed ----------
+            var decorPath = Path.Combine(Path.GetTempPath(), $"smoke-decor-{Guid.NewGuid():N}.json");
+            try
+            {
+                var decorCatalog = new ScorebugCatalog(decorPath);
+                decorCatalog.Update(layout =>
+                {
+                    layout.Elements.Clear();
+                    layout.Elements.Add(new ScorebugElement { Name = "Slanted", Content = "TILT", X = 40, Y = 40, Width = 400, Height = 120, FontSize = 48, Rotation = -22 });
+                    layout.Elements.Add(new ScorebugElement
+                    {
+                        Name = "Hollow bar", Kind = ScorebugElementKind.Shape, Shape = ScorebugShape.Rectangle,
+                        X = 40, Y = 200, Width = 300, Height = 80, TransparentBackground = true,
+                        BorderThickness = 6, BorderColor = "#FFFF0000", Background = "#FF0000FF"
+                    });
+                    layout.Elements.Add(new ScorebugElement { Name = "Drifter", Content = "DRIFT", X = 420, Y = 320, Width = 200, Height = 80, Animation = ScorebugAnimation.Drift });
+                });
+                var decorView = new ScorebugCanvasView(decorCatalog, engine);
+                decorView.Measure(new Size(1280, 720));
+                decorView.Arrange(new Rect(0, 0, 1280, 720));
+                decorView.UpdateLayout();
+
+                var slanted = FindAll<TextBlock>(decorView).First(t => t.Text == "TILT");
+                var rotation = ((TransformGroup)slanted.RenderTransform).Children.OfType<RotateTransform>().First();
+                if (Math.Abs(rotation.Angle + 22) > 0.01)
+                    throw new Exception($"FAIL: text rotation reached the graphic at {rotation.Angle:0.0}°");
+
+                var hollow = FindAll<System.Windows.Shapes.Shape>(decorView).OfType<System.Windows.Shapes.Rectangle>().First();
+                if (Math.Abs(hollow.StrokeThickness - 6) > 0.01)
+                    throw new Exception($"FAIL: the shape border is {hollow.StrokeThickness:0.#}px instead of 6");
+                if (hollow.Stroke is not SolidColorBrush borderBrush || borderBrush.Color != Colors.Red)
+                    throw new Exception($"FAIL: the shape border ignored its own colour ({hollow.Stroke})");
+                if (hollow.Fill is not null && hollow.Fill != Brushes.Transparent)
+                    throw new Exception("FAIL: a transparent shape still painted a fill over its background");
+
+                // Drift must animate its transform; animating the host itself moved nothing.
+                if (!FindAll<Border>(decorView).Any(b => b.RenderTransform is TranslateTransform drift && drift.HasAnimatedProperties))
+                    throw new Exception("FAIL: the Drift animation is not moving anything");
+                decorView.Dispose();
+
+                // 0 seconds is an instant swap; a long transition is still crossing after 100 ms.
+                var instant = new ScorebugTextBlock(new ScorebugElement { FontSize = 40 });
+                instant.UpdateText("A", ScorebugTransition.Cut);
+                instant.UpdateText("B", ScorebugTransition.Fade, 0);
+                if (instant.Text != "B")
+                    throw new Exception("FAIL: a 0-second transition did not snap to the new value");
+                var slow = new ScorebugTextBlock(new ScorebugElement { FontSize = 40, TransitionSeconds = 3 });
+                var slowHost = new Window { Width = 320, Height = 140, Content = slow };
+                slowHost.Show();
+                slowHost.UpdateLayout();
+                slow.UpdateText("A", ScorebugTransition.Cut);
+                slow.UpdateText("B", ScorebugTransition.Fade, 3);
+                Pump(TimeSpan.FromMilliseconds(100));
+                if (slow.Text == "B")
+                    throw new Exception("FAIL: a 3-second transition finished instantly");
+                Pump(TimeSpan.FromMilliseconds(3200));
+                if (slow.Text != "B")
+                    throw new Exception("FAIL: a long transition did not land on the new value");
+                slowHost.Close();
+                Console.WriteLine("PASS: text rotates, shapes carry custom borders, Drift moves, and the transition speed is honoured");
+            }
+            finally { if (File.Exists(decorPath)) File.Delete(decorPath); }
 
             // ---------- media: folders, playlists and per-clip loop ----------
             var clipA = Path.Combine(Path.GetTempPath(), $"smoke-playlist-a-{Guid.NewGuid():N}.wav");

@@ -75,7 +75,8 @@ public partial class ControlPanelView : UserControl
 
         _ballOn = new Stepper("BALL ON", 26);
         _ballOn.ToolTip = "Ball spot as a yard line, 0–50, on either team's half. Its side is independent of possession.";
-        _ballOn.SetButtons([new("+", -1, "football.ball.plus")], [new("−", 1, "football.ball.minus")]);
+        // + raises the yard line, − lowers it, matching every other stepper on the panel.
+        _ballOn.SetButtons([new("+", 1, "football.ball.plus")], [new("−", -1, "football.ball.minus")]);
         _ballOn.Stepped += Step;
         _ballOn.Committed += value => _engine.SetFootballDistance(_engine.State.YardsToGo, value);
         // A full-size console button, keybindable like the rest, naming the half the ball is on.
@@ -231,8 +232,8 @@ public partial class ControlPanelView : UserControl
 
         if (!ClockValue.IsKeyboardFocused) ClockValue.Text = GameEngine.FormatClock(s.ClockSeconds);
         if (!PlayClockValue.IsKeyboardFocused) PlayClockValue.Text = s.PlayClockSeconds.ToString();
-        ShotClockValue.Text = s.ShotClockSeconds.ToString();
-        TimeoutClockValue.Text = GameEngine.FormatClock(s.TimeoutClockSeconds);
+        if (!ShotClockValue.IsKeyboardFocused) ShotClockValue.Text = s.ShotClockSeconds.ToString();
+        if (!TimeoutClockValue.IsKeyboardFocused) TimeoutClockValue.Text = GameEngine.FormatClock(s.TimeoutClockSeconds);
         ClockToggle.Content = s.ClockRunning ? "Stop" : "Start";
         PlayClockToggle.Content = s.PlayClockRunning ? "Stop" : "Start";
         ShotClockToggle.Content = s.ShotClockRunning ? "Stop" : "Start";
@@ -315,6 +316,56 @@ public partial class ControlPanelView : UserControl
     }
 
     void ShotClock14_Click(object sender, RoutedEventArgs e) => _engine.SetShotClock(14);
+
+    // Shot clock and timeout clock are typed over exactly like the game clock: the misc section
+    // should not have second-class values that can only be nudged with buttons.
+    void ShotClock_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitShotClock();
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            ShotClockValue.Text = _engine.State.ShotClockSeconds.ToString();
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+    }
+
+    void ShotClock_LostFocus(object sender, KeyboardFocusChangedEventArgs e) => CommitShotClock();
+
+    void CommitShotClock()
+    {
+        if (int.TryParse(ShotClockValue.Text.Trim(), out var seconds)) _engine.SetShotClock(seconds);
+        else ShotClockValue.Text = _engine.State.ShotClockSeconds.ToString();
+    }
+
+    void TimeoutClock_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitTimeoutClock();
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            TimeoutClockValue.Text = GameEngine.FormatClock(_engine.State.TimeoutClockSeconds);
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+    }
+
+    void TimeoutClock_LostFocus(object sender, KeyboardFocusChangedEventArgs e) => CommitTimeoutClock();
+
+    void CommitTimeoutClock()
+    {
+        if (ClockFormat.TryParse(TimeoutClockValue.Text, out var seconds)) _engine.SetTimeoutClock(seconds);
+        else TimeoutClockValue.Text = GameEngine.FormatClock(_engine.State.TimeoutClockSeconds);
+    }
 
     void RebuildScoreButtons(GameState state)
     {
@@ -436,7 +487,9 @@ public partial class ControlPanelView : UserControl
         {
             if (ClockFormat.TryParse(ClockValue.Text, out var seconds)) _engine.SetClock(seconds);
             else ClockValue.Text = GameEngine.FormatClock(_engine.State.ClockSeconds);
-            ClockValue.SelectAll();
+            // Leave the box: while it holds focus the display deliberately stops following the
+            // engine, so a typed value would freeze the clock on screen (no countdown, no 0).
+            Keyboard.ClearFocus();
             e.Handled = true;
         }
         else if (e.Key == Key.Escape) { ClockValue.Text = GameEngine.FormatClock(_engine.State.ClockSeconds); Keyboard.ClearFocus(); e.Handled = true; }
@@ -453,7 +506,9 @@ public partial class ControlPanelView : UserControl
         if (e.Key == Key.Enter)
         {
             CommitPlayClock();
-            PlayClockValue.SelectAll();
+            // Hand the box back to the running clock; otherwise it keeps the typed value on screen
+            // and the play clock never counts down (or prints its final 0).
+            Keyboard.ClearFocus();
             e.Handled = true;
         }
         else if (e.Key == Key.Escape) { PlayClockValue.Text = _engine.State.PlayClockSeconds.ToString(); Keyboard.ClearFocus(); e.Handled = true; }
@@ -528,9 +583,9 @@ public partial class ControlPanelView : UserControl
             case "football.down.previous": _engine.PreviousDown(); break;
             case "football.distance.minus": _engine.SetFootballDistance(_engine.State.YardsToGo - 1); break;
             case "football.distance.plus": _engine.SetFootballDistance(_engine.State.YardsToGo + 1); break;
-            case "football.ball.minus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Min(50, _engine.State.YardsToGoal + 1)); break;
+            case "football.ball.minus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Max(0, _engine.State.YardsToGoal - 1)); break;
             case "football.ball.side": _engine.SetBallSide(!_engine.State.BallOnHomeSide); break;
-            case "football.ball.plus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Max(0, _engine.State.YardsToGoal - 1)); break;
+            case "football.ball.plus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Min(50, _engine.State.YardsToGoal + 1)); break;
             case "football.series.new": _engine.NewSeries(); break;
             case "football.yards.home": _engine.AddFootballYards(true, 10); break;
             case "football.yards.away": _engine.AddFootballYards(false, 10); break;

@@ -15,11 +15,16 @@ public partial class ScorebugEditorWindow : Window
     readonly GameEngine _engine;
     readonly MediaPlayback? _playback;
     readonly string _theme;
-    readonly List<VideoSurface> _videoSurfaces = [];
+    // Keyed by element id: a rebuild reuses the surface so a playing clip is never restarted.
+    readonly Dictionary<string, VideoSurface> _videoSurfaces = [];
+    // Property edits save through the catalog; the resulting Changed event must not rebuild the
+    // whole canvas (and the video surfaces with it). RefreshAllVisuals repaints in place instead.
+    bool _skipRebuild;
+    readonly System.Windows.Threading.DispatcherTimer _wallClock = new() { Interval=TimeSpan.FromSeconds(1) };
     bool _canvasLoading;
     bool _layoutLoading;
     readonly System.Windows.Threading.DispatcherTimer _propertySave = new() { Interval=TimeSpan.FromMilliseconds(350) };
-    readonly Dictionary<string,(Border Host, FrameworkElement Content, Border Handle)> _visuals = [];
+    readonly Dictionary<string,(Border Host, FrameworkElement Content, Border Handle, ScorebugElementKind Kind)> _visuals = [];
     readonly Dictionary<string,(ScorebugElementKind Kind, ScorebugShape Shape, string? Image, ScorebugAnimation Animation, double Opacity)> _applied = [];
     bool _loading;
     bool _syncingLayers;
@@ -81,6 +86,7 @@ public partial class ScorebugEditorWindow : Window
         PeriodFormatInput.ItemsSource=PeriodOptions;
         ForegroundSourceInput.ItemsSource=ColorSources;
         BackgroundSourceInput.ItemsSource=ColorSources;
+        BorderSourceInput.ItemsSource=ColorSources;
         LogoInput.ItemsSource=Logos;
         FontInput.ItemsSource=FontCatalog.All;
         CanvasPreset.ItemsSource=ScorebugLayout.SizePresets.Select(p=>p.Name).ToArray();
@@ -92,7 +98,17 @@ public partial class ScorebugEditorWindow : Window
         _propertySave.Tick+=(_,_)=>{_propertySave.Stop();SaveProperties();RefreshAllVisuals();};
         _catalog.Changed += Render;
         _engine.Changed += RefreshBoundText;
+        _wallClock.Tick+=(_,_)=>{if(UsesWallClock())RefreshBoundText();};
+        _wallClock.Start();
         Render();
+    }
+
+    /// <summary>True when any element prints the date or the time of day.</summary>
+    bool UsesWallClock()
+    {
+        foreach(var item in _catalog.Layout.Elements)
+            if(item.Content.Contains("{{TIME}}",StringComparison.OrdinalIgnoreCase)||item.Content.Contains("{{DATE}}",StringComparison.OrdinalIgnoreCase))return true;
+        return false;
     }
 
     ScorebugElement? Selected => _selectedId is null ? null : _catalog.Layout.Elements.FirstOrDefault(x=>x.Id==_selectedId);
@@ -100,6 +116,7 @@ public partial class ScorebugEditorWindow : Window
     void Render()
     {
         if(!Dispatcher.CheckAccess()){Dispatcher.BeginInvoke(Render);return;}
+        if(_skipRebuild)return;
         if(_dragElement is not null)return; // never rebuild under an active gesture
         if(_selectedId is not null && _catalog.Layout.Elements.All(x=>x.Id!=_selectedId))_selectedId=null;
         _loading=true;
@@ -111,7 +128,8 @@ public partial class ScorebugEditorWindow : Window
         LayerCount.Text=ordered.Length==0?"no elements":$"{ordered.Length} element{(ordered.Length==1?"":"s")}";
         _syncingLayers=false;
         SyncLayoutPicker();
-        foreach(var surface in _videoSurfaces) surface.Dispose();
+        var previousVideos=new Dictionary<string,VideoSurface>(_videoSurfaces);
+        var previousVisuals=new Dictionary<string,(Border Host, FrameworkElement Content, Border Handle, ScorebugElementKind Kind)>(_visuals);
         _videoSurfaces.Clear();
         DesignCanvas.Width=_catalog.Layout.Width; DesignCanvas.Height=_catalog.Layout.Height;
         // Elements (video especially) must never paint outside the artwork they belong to.
@@ -125,8 +143,32 @@ public partial class ScorebugEditorWindow : Window
             CanvasPreset.SelectedIndex=PresetIndex(_catalog.Layout.Width,_catalog.Layout.Height);
             _canvasLoading=false;
         }
-        DesignCanvas.Children.Clear(); _visuals.Clear(); _applied.Clear();
-        foreach(var item in _catalog.Layout.Elements) DesignCanvas.Children.Add(CreateVisual(item));
+        // Reuse the visual for every element that still exists instead of clearing the canvas. Taking
+        // a MediaElement out of the visual tree stops its decoder, so a full rebuild on each edit
+        // restarted every video and left the dock's playhead behind it.
+        _visuals.Clear(); _applied.Clear();
+        var zIndex=0;
+        foreach(var item in _catalog.Layout.Elements)
+        {
+            Border host;
+            if(previousVisuals.TryGetValue(item.Id,out var prior)&&prior.Kind==item.Kind)
+            {
+                host=prior.Host;
+                if(prior.Content is VideoSurface video)video.SetElement(item);
+                _visuals[item.Id]=(host,prior.Content,prior.Handle,item.Kind);
+                if(prior.Content is VideoSurface kept)_videoSurfaces[item.Id]=kept;
+            }
+            else host=CreateVisual(item,previousVideos);
+            // A new visual is added here; a reused one is already on the canvas and must stay put,
+            // because removing it would take a playing video out of the tree.
+            if(!DesignCanvas.Children.Contains(host))DesignCanvas.Children.Add(host);
+            Panel.SetZIndex(host,zIndex++);
+        }
+        foreach(var child in DesignCanvas.Children.OfType<UIElement>().ToList())
+            if(!_visuals.Values.Any(visual=>ReferenceEquals(visual.Host,child)))DesignCanvas.Children.Remove(child);
+        foreach(var (id,surface) in previousVideos)
+            if(!_videoSurfaces.ContainsKey(id))surface.Dispose();
+        RefreshAllVisuals();
         _loading=false;
         LoadProperties();
     }
@@ -150,10 +192,18 @@ public partial class ScorebugEditorWindow : Window
         finally { _layoutLoading=false; }
     }
 
-    Border CreateVisual(ScorebugElement item)
+    Border CreateVisual(ScorebugElement item,Dictionary<string,VideoSurface>? previous=null)
     {
-        var content=ScorebugRender.CreateContent(item,()=>_engine.State,_playback,true,showVideoPlaceholder:true);
-        if(content is VideoSurface videoSurface)_videoSurfaces.Add(videoSurface);
+        FrameworkElement content;
+        if(previous is not null&&previous.TryGetValue(item.Id,out var kept))
+        {
+            // Detach from the old host and re-point at the edited element: the picture keeps running.
+            if(kept.Parent is Border oldClip)oldClip.Child=null;
+            kept.SetElement(item);
+            content=kept;
+        }
+        else content=ScorebugRender.CreateContent(item,()=>_engine.State,_playback,true,showVideoPlaceholder:true);
+        if(content is VideoSurface videoSurface)_videoSurfaces[item.Id]=videoSurface;
         var handle=new Border
         {
             Width=16, Height=16, Background=Brushes.DeepSkyBlue, BorderBrush=Brushes.White,
@@ -176,12 +226,12 @@ public partial class ScorebugEditorWindow : Window
             Width=item.Width, Height=item.Height, Background=ScorebugRender.HostBackground(item,_engine.State),
             ClipToBounds=true,
             Opacity=item.Opacity, Cursor=Cursors.SizeAll, Tag=item, Child=stack,
-            BorderBrush=item.Id==_selectedId?Brushes.DeepSkyBlue:Brushes.Transparent,
-            BorderThickness=new Thickness(item.Id==_selectedId?2:1)
+            BorderBrush=item.Id==_selectedId?Brushes.DeepSkyBlue:ScorebugRender.HostBorder(item,_engine.State),
+            BorderThickness=new Thickness(item.Id==_selectedId?2:Math.Max(1,item.BorderThickness))
         };
         Canvas.SetLeft(host,item.X); Canvas.SetTop(host,item.Y); Panel.SetZIndex(host,_catalog.Layout.Elements.IndexOf(item));
         host.MouseLeftButtonDown+=Element_MouseDown; host.MouseMove+=Element_MouseMove; host.MouseLeftButtonUp+=Element_MouseUp;
-        _visuals[item.Id]=(host,content,handle);
+        _visuals[item.Id]=(host,content,handle,item.Kind);
         ApplyAnimation(item,host);
         return host;
     }
@@ -190,15 +240,19 @@ public partial class ScorebugEditorWindow : Window
     {
         if(_applied.TryGetValue(item.Id,out var applied)&&applied.Animation==item.Animation&&Math.Abs(applied.Opacity-item.Opacity)<0.0001)return;
         host.BeginAnimation(UIElement.OpacityProperty,null);
-        if(host.RenderTransform is TranslateTransform previous){previous.BeginAnimation(TranslateTransform.XProperty,null);host.RenderTransform=Transform.Identity;}
+        if(host.RenderTransform is TranslateTransform previous){previous.BeginAnimation(TranslateTransform.XProperty,null);previous.BeginAnimation(TranslateTransform.YProperty,null);host.RenderTransform=Transform.Identity;}
         switch(item.Animation)
         {
             case ScorebugAnimation.Pulse:
                 host.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(item.Opacity*0.72,item.Opacity,TimeSpan.FromSeconds(1.1)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever});
                 break;
             case ScorebugAnimation.Drift:
-                host.RenderTransform=new TranslateTransform();
-                host.BeginAnimation(TranslateTransform.XProperty,new DoubleAnimation(0,10,TimeSpan.FromSeconds(2)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever});
+                // Animate the transform, not the host: the old call animated X on the Border itself,
+                // which moved nothing, so Drift looked broken.
+                var drift=new TranslateTransform();
+                host.RenderTransform=drift;
+                drift.BeginAnimation(TranslateTransform.XProperty,new DoubleAnimation(0,14,TimeSpan.FromSeconds(3.2)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever,EasingFunction=new SineEase{EasingMode=EasingMode.EaseInOut}});
+                drift.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(0,7,TimeSpan.FromSeconds(2.1)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever,EasingFunction=new SineEase{EasingMode=EasingMode.EaseInOut}});
                 break;
         }
         _applied[item.Id]=(item.Kind,item.Shape,item.ImagePath,item.Animation,item.Opacity);
@@ -221,10 +275,13 @@ public partial class ScorebugEditorWindow : Window
             if(item.Animation!=ScorebugAnimation.Pulse)visual.Host.Opacity=item.Opacity;
             Canvas.SetLeft(visual.Host,item.X); Canvas.SetTop(visual.Host,item.Y);
             visual.Handle.Visibility=item.Id==_selectedId?Visibility.Visible:Visibility.Collapsed;
-            visual.Host.BorderBrush=item.Id==_selectedId?Brushes.DeepSkyBlue:Brushes.Transparent;
-            visual.Host.BorderThickness=new Thickness(item.Id==_selectedId?2:1);
+            visual.Host.BorderBrush=item.Id==_selectedId?Brushes.DeepSkyBlue:ScorebugRender.HostBorder(item,_engine.State);
+            visual.Host.BorderThickness=new Thickness(item.Id==_selectedId?2:Math.Max(1,item.BorderThickness));
             ApplyAnimation(item,visual.Host);
         }
+        // The property panel's colour previews follow the typed colours in place, since an edit no
+        // longer rebuilds the canvas and therefore no longer reloads the panel.
+        RefreshColorSwatches();
     }
 
     void RefreshBoundText()
@@ -238,7 +295,7 @@ public partial class ScorebugEditorWindow : Window
             else if(visual.Content is ScorebugTextBlock block)
             {
                 block.ApplyStyle(item,_engine.State);
-                block.UpdateText(ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat),item.Transition);
+                block.UpdateText(ScoreboardTemplates.Bind(item.Content,_engine.State,item.PeriodFormat),item.Transition,item.TransitionSeconds);
             }
             else if(visual.Content is Image or ScorebugLogoView or System.Windows.Shapes.Shape)
                 ScorebugRender.ApplyToContent(visual.Content,item,_engine.State);
@@ -260,20 +317,24 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,ColorInput,BackgroundInput,AnimationInput,TransitionInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput})
             control.IsEnabled=has;
         if(has)
         {
             NameInput.Text=e!.Name; ContentInput.Text=e.Content; XInput.Text=e.X.ToString("0"); YInput.Text=e.Y.ToString("0");
             WidthInput.Text=e.Width.ToString("0"); HeightInput.Text=e.Height.ToString("0");
             FontInputSize.Text=e.FontSize.ToString("0");
+            RotationInput.Text=e.Rotation.ToString("0");
             var font=FontCatalog.ChoiceFor(e.FontFamily);
             FontInput.SelectedItem=FontCatalog.All.FirstOrDefault(c=>string.Equals(c.Source,font.Source,StringComparison.OrdinalIgnoreCase))??font;
             BoldInput.IsChecked=e.Bold; ItalicInput.IsChecked=e.Italic;
             UnderlineInput.IsChecked=e.Underline; StrikeInput.IsChecked=e.StrikeThrough;
             ColorInput.Text=e.Foreground; BackgroundInput.Text=e.Background;
+            BorderColorInput.Text=e.BorderColor; BorderWidthInput.Text=e.BorderThickness.ToString("0.#");
+            TransitionSpeedInput.Text=e.TransitionSeconds.ToString("0.00");
             ForegroundSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.ForegroundSource)??ColorSources[0];
             BackgroundSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.BackgroundSource)??ColorSources[0];
+            BorderSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.BorderSource)??ColorSources[0];
             UpdateColorAvailability();
             AnimationInput.SelectedItem=e.Animation; TransitionInput.SelectedItem=e.Transition; ShapeInput.SelectedItem=e.Shape;
             VisibleInput.IsChecked=e.Visible; TransparentBackgroundInput.IsChecked=e.TransparentBackground;
@@ -296,8 +357,10 @@ public partial class ScorebugEditorWindow : Window
         var item=Selected;
         TextColorSwatch.Background=item is null?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveForeground(item,_engine.State));
         BackgroundColorSwatch.Background=item is null||item.TransparentBackground?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveBackground(item,_engine.State));
+        BorderColorSwatch.Background=item is null||item.BorderThickness<=0?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveBorder(item,_engine.State));
         TextColorSwatch.ToolTip=item is null?null:$"Text colour: {ScorebugRender.ResolveForeground(item,_engine.State)}";
         BackgroundColorSwatch.ToolTip=item is null?null:item.TransparentBackground?"No background box":$"Background colour: {ScorebugRender.ResolveBackground(item,_engine.State)}";
+        BorderColorSwatch.ToolTip=item is null||item.BorderThickness<=0?"No border":$"Border colour: {ScorebugRender.ResolveBorder(item,_engine.State)}";
     }
 
     /// <summary>A colour box only takes typing when the element uses a fixed colour.</summary>
@@ -305,6 +368,7 @@ public partial class ScorebugEditorWindow : Window
     {
         ColorInput.IsEnabled=Selected is not null && (ForegroundSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
         BackgroundInput.IsEnabled=Selected is not null && (BackgroundSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
+        BorderColorInput.IsEnabled=Selected is not null && (BorderSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
     }
 
     /// <summary>Shows only the properties that mean something for this kind of element.</summary>
@@ -354,6 +418,11 @@ public partial class ScorebugEditorWindow : Window
         var wOk=double.TryParse(WidthInput.Text,out var w); var hOk=double.TryParse(HeightInput.Text,out var h);
         var fOk=double.TryParse(FontInputSize.Text,out var f);
         var foregroundOk=TryColor(ColorInput.Text,out _); var backgroundOk=TryColor(BackgroundInput.Text,out _);
+        var rotationOk=double.TryParse(RotationInput.Text,out var rotation);
+        var borderWidthOk=double.TryParse(BorderWidthInput.Text,out var borderWidth);
+        var borderColorOk=TryColor(BorderColorInput.Text,out _);
+        var transitionSpeedOk=double.TryParse(TransitionSpeedInput.Text,out var transitionSpeed);
+        var borderSource=(BorderSourceInput.SelectedItem as ColorSourceOption)?.Source??item.BorderSource;
         var animation=AnimationInput.SelectedItem is ScorebugAnimation a?a:item.Animation;
         var transition=TransitionInput.SelectedItem is ScorebugTransition t?t:item.Transition;
         var shape=ShapeInput.SelectedItem is ScorebugShape s?s:item.Shape;
@@ -374,8 +443,16 @@ public partial class ScorebugEditorWindow : Window
             &&item.MediaTag==mediaTag&&item.PeriodFormat==periodFormat
             &&item.Icon==icon&&item.IconVisitors==iconVisitors&&item.IconFlipped==iconFlipped
             &&item.FontFamily==font&&item.Bold==bold&&item.Italic==italic&&item.Underline==underline&&item.StrikeThrough==strike
-            &&item.ForegroundSource==foregroundSource&&item.BackgroundSource==backgroundSource&&item.LogoSide==logoSide)return;
+            &&item.ForegroundSource==foregroundSource&&item.BackgroundSource==backgroundSource&&item.LogoSide==logoSide
+            &&(!rotationOk||Math.Abs(item.Rotation-rotation)<0.001)&&(!borderWidthOk||Math.Abs(item.BorderThickness-borderWidth)<0.001)
+            &&(!borderColorOk||item.BorderColor==BorderColorInput.Text)&&item.BorderSource==borderSource
+            &&(!transitionSpeedOk||Math.Abs(item.TransitionSeconds-transitionSpeed)<0.001))return;
         var id=item.Id;
+        // The save raises Changed, which would rebuild the canvas and restart every video; this
+        // edit paints in place through RefreshAllVisuals instead.
+        _skipRebuild=true;
+        try
+        {
         _catalog.Update(layout=>{
             var target=layout.Elements.FirstOrDefault(z=>z.Id==id); if(target is null)return;
             target.Name=name; target.Content=content;
@@ -391,8 +468,15 @@ public partial class ScorebugEditorWindow : Window
             target.Underline=underline; target.StrikeThrough=strike;
             target.ForegroundSource=foregroundSource; target.BackgroundSource=backgroundSource;
             target.LogoSide=logoSide;
+            if(rotationOk)target.Rotation=Math.Clamp(rotation,-360,360);
+            if(borderWidthOk)target.BorderThickness=Math.Clamp(borderWidth,0,40);
+            if(borderColorOk)target.BorderColor=BorderColorInput.Text;
+            target.BorderSource=borderSource;
+            if(transitionSpeedOk)target.TransitionSeconds=Math.Clamp(transitionSpeed,0,5);
             if(target.Kind==ScorebugElementKind.Logo&&target.LogoSide==ScorebugLogoSide.None)target.LogoSide=ScorebugLogoSide.Home;
         });
+        }
+        finally { _skipRebuild=false; }
     }
 
     static bool TryColor(string value,out Color color){try{color=(Color)ColorConverter.ConvertFromString(value)!;return true;}catch{color=Colors.White;return false;}}
@@ -482,7 +566,7 @@ public partial class ScorebugEditorWindow : Window
         var add=new Button{Content="Add shape",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right};
         add.Click+=(_,_)=>{
             var kind=(ScorebugShape)(shape.SelectedItem??ScorebugShape.Rectangle);
-            Add(new ScorebugElement{Name=$"New {kind.ToString().ToLowerInvariant()}",Kind=ScorebugElementKind.Shape,Shape=kind,Content="",X=450,Y=470,Width=kind==ScorebugShape.Rectangle?200:140,Height=kind==ScorebugShape.Rectangle?100:140,TransparentBackground=true});
+            Add(new ScorebugElement{Name=$"New {kind.ToString().ToLowerInvariant()}",Kind=ScorebugElementKind.Shape,Shape=kind,Content="",X=450,Y=470,Width=kind==ScorebugShape.Rectangle?200:140,Height=kind==ScorebugShape.Rectangle?100:140,TransparentBackground=true,BorderThickness=2});
             picker.DialogResult=true; picker.Close();
         };
         panel.Children.Add(shape); panel.Children.Add(add); picker.Content=panel; ThemeManager.Apply(picker,_theme); picker.ShowDialog();
@@ -523,9 +607,9 @@ public partial class ScorebugEditorWindow : Window
         var picker=new Window{Title="Add video element",Width=380,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner,Background=new SolidColorBrush(Color.FromRgb(23,28,37)),Foreground=Brushes.White};
         var panel=new StackPanel{Margin=new Thickness(14)};
         panel.Children.Add(new TextBlock{Text="Which media tag should play inside this element?",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(4,0,4,8)});
-        var tag=new ComboBox{IsEditable=true,Text=MediaLibrary.DefaultTag,ItemsSource=MediaLibrary.SuggestedTags.ToArray(),Margin=new Thickness(4)};
+        var tag=new ComboBox{IsEditable=true,Text=MediaLibrary.AnyTag,ItemsSource=MediaLibrary.SuggestedTags.ToArray(),Margin=new Thickness(4)};
         panel.Children.Add(tag);
-        panel.Children.Add(new TextBlock{Text="Only clips assigned this tag appear. Leave it empty to show whichever clip is playing.",TextWrapping=TextWrapping.Wrap,FontSize=11,Margin=new Thickness(4,6,4,0)});
+        panel.Children.Add(new TextBlock{Text="ANY plays whatever clip is cued, whatever tag it carries. Name a tag (Ads, Highlights…) to show only that tag's clips.",TextWrapping=TextWrapping.Wrap,FontSize=11,Margin=new Thickness(4,6,4,0)});
         var add=new Button{Content="Add video box",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(4,12,4,0)};
         add.Click+=(_,_)=>{
             var width=Math.Round(_catalog.Layout.Width*0.36); var height=Math.Round(width*9/16);
@@ -707,6 +791,7 @@ public partial class ScorebugEditorWindow : Window
 
     void TextColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(ColorInput);
     void BackgroundColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(BackgroundInput);
+    void BorderColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(BorderColorInput);
     void Fit_Click(object sender,RoutedEventArgs e)
     {
         if(CanvasFrame.ActualWidth<10||CanvasFrame.ActualHeight<10)return;
@@ -729,8 +814,9 @@ public partial class ScorebugEditorWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _propertySave.Stop(); SaveProperties();
-        foreach(var surface in _videoSurfaces) surface.Dispose();
+        foreach(var surface in _videoSurfaces.Values) surface.Dispose();
         _videoSurfaces.Clear();
+        _wallClock.Stop();
         _catalog.Changed-=Render; _engine.Changed-=RefreshBoundText;
         base.OnClosed(e);
     }

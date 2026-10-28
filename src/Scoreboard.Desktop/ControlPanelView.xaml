@@ -284,7 +284,9 @@
                 <ColumnDefinition Width="Auto"/>
               </Grid.ColumnDefinitions>
               <TextBlock Text="SHOT CLOCK" Style="{StaticResource Caption}" Margin="0,0,8,0"/>
-              <TextBlock x:Name="ShotClockValue" Grid.Column="1" FontFamily="Consolas" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"/>
+              <TextBox x:Name="ShotClockValue" Grid.Column="1" Style="{StaticResource ClockBox}"
+                       KeyDown="ShotClock_KeyDown" LostKeyboardFocus="ShotClock_LostFocus"
+                       ToolTip="Click and type a shot clock value, then press Enter"/>
               <Button x:Name="ShotClockToggle" Grid.Column="2" Style="{StaticResource Tiny}" Content="Start" Tag="basketball.shotclock.toggle" Click="Action_Click"/>
             </Grid>
             <UniformGrid Grid.Row="1" Columns="4" Margin="0,1,0,0">
@@ -344,7 +346,9 @@
             <Border Style="{StaticResource Accent}"/>
             <TextBlock Text="TIMEOUT CLOCK" Style="{StaticResource CardTitle}"/>
           </StackPanel>
-          <TextBlock x:Name="TimeoutClockValue" Text="1:00" FontFamily="Consolas" FontSize="30" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,4,0,2"/>
+          <TextBox x:Name="TimeoutClockValue" Text="1:00" Style="{StaticResource ClockBox}" FontSize="30"
+                   KeyDown="TimeoutClock_KeyDown" LostKeyboardFocus="TimeoutClock_LostFocus"
+                   ToolTip="Click and type M:SS, then press Enter"/>
           <UniformGrid Columns="3">
             <Button Style="{StaticResource Tiny}" Content="↺ 1:00" Tag="timeoutclock.reset" Click="Action_Click" ToolTip="Reset the timeout clock to one minute"/>
             <Button x:Name="TimeoutClockToggle" Style="{StaticResource Tiny}" Content="Start" Tag="timeoutclock.toggle" Click="Action_Click"/>

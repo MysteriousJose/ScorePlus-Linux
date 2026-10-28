@@ -82,6 +82,18 @@ public sealed class ScorebugElement
     public string Foreground { get; set; } = "#FFFFFFFF";
     public string Background { get; set; } = "#CC141D28";
 
+    /// <summary>Clockwise rotation of the element's content, in degrees. Mainly for slanted text.</summary>
+    public double Rotation { get; set; }
+
+    /// <summary>Outline drawn around the element. Zero hides the border entirely.</summary>
+    public double BorderThickness { get; set; }
+
+    /// <summary>The outline's fixed colour, used unless <see cref="BorderSource"/> names a team slot.</summary>
+    public string BorderColor { get; set; } = "#FFFFFFFF";
+
+    /// <summary>Where the border colour comes from. A team slot wins over <see cref="BorderColor"/>.</summary>
+    public ScorebugColorSource BorderSource { get; set; } = ScorebugColorSource.Custom;
+
     /// <summary>Where the text colour comes from. A team slot wins over <see cref="Foreground"/>.</summary>
     public ScorebugColorSource ForegroundSource { get; set; } = ScorebugColorSource.Custom;
 
@@ -95,6 +107,9 @@ public sealed class ScorebugElement
 
     /// <summary>How the value changes: dissolve, wheel, flip, and so on.</summary>
     public ScorebugTransition Transition { get; set; } = ScorebugTransition.Cut;
+
+    /// <summary>How long a value change takes, in seconds: 0 snaps, 5 is a slow dissolve.</summary>
+    public double TransitionSeconds { get; set; } = 0.2;
 
     /// <summary>Which team logo a logo element draws. Configured in the control panel.</summary>
     public ScorebugLogoSide LogoSide { get; set; } = ScorebugLogoSide.None;
@@ -262,6 +277,10 @@ public sealed class ScorebugCatalog
                 item.Height = Math.Clamp(double.IsFinite(item.Height) ? item.Height : 50, 24, layout.Height);
                 item.FontSize = Math.Clamp(double.IsFinite(item.FontSize) ? item.FontSize : 24, 8, 480);
                 item.Opacity = Math.Clamp(double.IsFinite(item.Opacity) ? item.Opacity : 1, 0, 1);
+                item.Rotation = Math.Clamp(double.IsFinite(item.Rotation) ? item.Rotation : 0, -360, 360);
+                item.BorderThickness = Math.Clamp(double.IsFinite(item.BorderThickness) ? item.BorderThickness : 0, 0, 40);
+                item.TransitionSeconds = Math.Clamp(double.IsFinite(item.TransitionSeconds) ? item.TransitionSeconds : 0.2, 0, 5);
+                if (string.IsNullOrWhiteSpace(item.BorderColor)) item.BorderColor = "#FFFFFFFF";
                 if (item.PeriodFormat is not ("Full" or "Short" or "Number")) item.PeriodFormat = null;
                 if (string.IsNullOrWhiteSpace(item.FontFamily)) item.FontFamily = "Segoe UI";
             }

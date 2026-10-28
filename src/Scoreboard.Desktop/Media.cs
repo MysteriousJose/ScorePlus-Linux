@@ -6,14 +6,31 @@ namespace Scoreboard.Desktop;
 /// One clip in the operator's media library. <see cref="Tag"/> is the scorebug routing bucket
 /// (a video element only shows clips carrying its tag) and <see cref="Folder"/> is purely for
 /// organising the library. <see cref="Loop"/> restarts the clip when it ends.
+/// <see cref="Volume"/> and <see cref="AudioDevice"/> are per-clip audio, so an anthem can play
+/// quietly on the arena speakers while an ad plays at full level on the broadcast feed.
+/// A live camera is simply another media entry (its path is <c>camera:0</c>), so it routes by tag
+/// and shows in a scorebug video element exactly like a file does.
 /// </summary>
-public sealed record MediaEntry(string Path, string Tag = MediaLibrary.DefaultTag, string Folder = "", bool Loop = false)
+public sealed record MediaEntry(
+    string Path,
+    string Tag = MediaLibrary.DefaultTag,
+    string Folder = "",
+    bool Loop = false,
+    double Volume = 1,
+    string? AudioDevice = null)
 {
-    public string Label => System.IO.Path.GetFileName(Path);
-    public bool IsVideo => MediaLibrary.IsVideoFile(Path);
-    public string KindLabel => IsVideo ? "VIDEO" : "AUDIO";
+    public string Label => IsCamera ? $"Live camera {CameraIndex + 1}" : System.IO.Path.GetFileName(Path);
+    public bool IsCamera => MediaLibrary.CameraIndex(Path) is not null;
+    public int CameraIndex => MediaLibrary.CameraIndex(Path) ?? 0;
+    public bool IsVideo => IsCamera || MediaLibrary.IsVideoFile(Path);
+    public string KindLabel => IsCamera ? "LIVE" : IsVideo ? "VIDEO" : "AUDIO";
     public string FolderLabel => string.IsNullOrWhiteSpace(Folder) ? MediaLibrary.RootFolderLabel : Folder;
     public string TagAndFolder => string.IsNullOrWhiteSpace(Folder) ? Tag : $"{Tag} · {Folder}";
+
+    /// <summary>0–100, as shown on the dock's knob.</summary>
+    public int VolumePercent => (int)Math.Round(Math.Clamp(Volume, 0, 1) * 100);
+
+    public string AudioLabel => string.IsNullOrWhiteSpace(AudioDevice) ? "Default output" : AudioDevice;
 }
 
 /// <summary>A named, ordered set of clips that plays one after another.</summary>
@@ -32,13 +49,27 @@ public static class MediaLibrary
 {
     public const string DefaultTag = "General";
 
+    /// <summary>A video element tagged ANY plays whatever is cued, whatever tag it carries.</summary>
+    public const string AnyTag = "ANY";
+
     /// <summary>Clips with no folder still need a name in the filter list.</summary>
     public const string RootFolderLabel = "Unfiled";
 
-    public static readonly string[] SuggestedTags = ["General", "Ads", "Highlights", "Music", "Anthem", "Sponsors"];
+    /// <summary>Where a camera source's path lives. <c>camera:0</c> is the first capture device.</summary>
+    public const string CameraPrefix = "camera:";
 
-    public static bool IsVideoFile(string path) =>
-        System.IO.Path.GetExtension(path).ToLowerInvariant() is ".mp4" or ".mov" or ".mkv" or ".webm" or ".avi" or ".m4v";
+    public static readonly string[] SuggestedTags = [AnyTag, "General", "Ads", "Highlights", "Music", "Anthem", "Sponsors", "Camera"];
+
+    public static bool IsVideoFile(string path) => Path.GetExtension(path).ToLowerInvariant() is ".mp4" or ".mov" or ".mkv" or ".webm" or ".avi" or ".m4v";
+
+    public static string CameraPath(int index) => $"{CameraPrefix}{Math.Max(0, index)}";
+
+    /// <summary>The capture device number behind a camera path, or null for a real file.</summary>
+    public static int? CameraIndex(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !path.StartsWith(CameraPrefix, StringComparison.OrdinalIgnoreCase)) return null;
+        return int.TryParse(path[CameraPrefix.Length..], out var index) ? index : 0;
+    }
 
     public static string NormalizeTag(string? tag)
     {
@@ -83,6 +114,34 @@ public static class MediaLibrary
         library[index] = updated;
         return updated;
     }
+
+    /// <summary>Sets this clip's own output level, in place. 0–1.</summary>
+    public static MediaEntry? SetVolume(IList<MediaEntry> library, MediaEntry selected, double volume)
+    {
+        var index = library.IndexOf(selected);
+        if (index < 0) return null;
+        var updated = selected with { Volume = Math.Clamp(double.IsFinite(volume) ? volume : 1, 0, 1) };
+        library[index] = updated;
+        return updated;
+    }
+
+    /// <summary>Sends this clip to one speaker (a WASAPI render device id), or back to the default.</summary>
+    public static MediaEntry? SetAudioDevice(IList<MediaEntry> library, MediaEntry selected, string? device)
+    {
+        var index = library.IndexOf(selected);
+        if (index < 0) return null;
+        var updated = selected with { AudioDevice = string.IsNullOrWhiteSpace(device) ? null : device.Trim() };
+        library[index] = updated;
+        return updated;
+    }
+
+    /// <summary>True when a scorebug element with this tag should show this clip. ANY and blank match everything.</summary>
+    public static bool TagMatches(string? elementTag, string clipTag)
+    {
+        if (string.IsNullOrWhiteSpace(elementTag)) return true;
+        if (string.Equals(elementTag.Trim(), AnyTag, StringComparison.OrdinalIgnoreCase)) return true;
+        return string.Equals(NormalizeTag(clipTag), NormalizeTag(elementTag), StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>
@@ -102,6 +161,29 @@ public sealed class MediaPlayback
     /// <summary>Bumped on every explicit seek so an element can tell a seek from a play/pause.</summary>
     public int SeekVersion { get; private set; }
 
+    /// <summary>The cued clip's own output level (0–1), so every screen plays it at the same volume.</summary>
+    public double Volume => NowPlaying?.Volume ?? 1;
+
+    /// <summary>
+    /// True when the clip's audio is being sent to a chosen speaker instead of the element. A
+    /// speaker that could not be opened reports false again, so the element keeps the sound.
+    /// </summary>
+    public bool RoutedToDevice => !string.IsNullOrWhiteSpace(NowPlaying?.AudioDevice) && !RoutingFailed;
+
+    /// <summary>True when the chosen speaker could not be opened and the clip fell back to the default.</summary>
+    public bool RoutingFailed { get; private set; }
+
+    /// <summary>The transport reports whether routing worked, so no clip ever goes silent.</summary>
+    public void ReportRouting(bool failed)
+    {
+        if (RoutingFailed == failed) return;
+        RoutingFailed = failed;
+        Changed?.Invoke();
+    }
+
+    /// <summary>True while the cued source is a live camera rather than a file.</summary>
+    public bool IsCamera => NowPlaying?.IsCamera == true;
+
     public event Action? Changed;
 
     public void Start(MediaEntry? entry)
@@ -109,6 +191,7 @@ public sealed class MediaPlayback
         NowPlaying = entry;
         IsPlaying = entry is not null;
         Position = 0;
+        RoutingFailed = false;
         SeekVersion++;
         Changed?.Invoke();
     }
@@ -118,6 +201,31 @@ public sealed class MediaPlayback
     {
         Position = Math.Max(0, seconds);
         SeekVersion++;
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Where playback has actually reached, tracked by the transport. Deliberately separate from
+    /// <see cref="Position"/> (the last explicit seek) so a rebuilt video surface can pick the clip
+    /// up where it is without turning every tick into a seek.
+    /// </summary>
+    public double LivePosition { get; private set; }
+
+    /// <summary>Notes where the transport actually is; never counts as a seek.</summary>
+    public void ReportPosition(double seconds) => LivePosition = Math.Max(0, seconds);
+
+    /// <summary>Re-reads the cued entry after its volume or speaker changed, without restarting it.</summary>
+    public void RefreshAudio()
+    {
+        if (NowPlaying is null) return;
+        Changed?.Invoke();
+    }
+
+    /// <summary>Swaps in an edited copy of the cued clip, keeping its position and play state.</summary>
+    public void UpdateEntry(MediaEntry entry)
+    {
+        if (NowPlaying is null || !string.Equals(NowPlaying.Path, entry.Path, StringComparison.OrdinalIgnoreCase)) return;
+        NowPlaying = entry;
         Changed?.Invoke();
     }
 
@@ -131,11 +239,7 @@ public sealed class MediaPlayback
         Changed?.Invoke();
     }
 
-    public bool Matches(MediaEntry entry, string? elementTag)
-    {
-        if (string.IsNullOrWhiteSpace(elementTag)) return true;
-        return string.Equals(MediaLibrary.NormalizeTag(entry.Tag), MediaLibrary.NormalizeTag(elementTag), StringComparison.OrdinalIgnoreCase);
-    }
+    public bool Matches(MediaEntry entry, string? elementTag) => MediaLibrary.TagMatches(elementTag, entry.Tag);
 
     /// <summary>The video this element should be showing right now, or null. Audio cues never fill a video box.</summary>
     public MediaEntry? ActiveFor(string? elementTag)

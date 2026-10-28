@@ -38,6 +38,10 @@
       <Setter Property="BorderBrush" Value="{DynamicResource DockBorder}"/>
       <Setter Property="Foreground" Value="{DynamicResource DockText}"/>
     </Style>
+    <Style x:Key="ClearAction" TargetType="Button" BasedOn="{StaticResource DockAction}">
+      <Setter Property="Foreground" Value="#FFD166"/>
+      <Setter Property="BorderBrush" Value="#6B5A2A"/>
+    </Style>
     <Style x:Key="DockLabel" TargetType="TextBlock">
       <Setter Property="FontSize" Value="9"/>
       <Setter Property="FontWeight" Value="Bold"/>
@@ -201,19 +205,50 @@
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
-      <DockPanel Margin="0,0,0,5">
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-          <Button x:Name="RemoveButton" Content="Remove" Style="{StaticResource DockAction}" Click="Remove_Click" ToolTip="Remove the selected clip from the library"/>
-          <Button Content="Import" Style="{StaticResource DockAction}" Click="Import_Click" ToolTip="Import audio or video clips"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal">
-          <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,6,0"/>
-          <TextBlock Text="MEDIA" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center"/>
-          <TextBlock x:Name="HintText" Text="  tags route to the scorebug · folders organise" FontSize="10" Foreground="{DynamicResource DockMuted}" Opacity="0.7" VerticalAlignment="Center" Visibility="Collapsed"/>
-        </StackPanel>
-      </DockPanel>
+      <!-- Header: library actions on the first line, live camera on the second, so nothing is
+           clipped when the dock is only a rail wide. -->
+      <StackPanel Margin="0,0,0,5">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <Button x:Name="RemoveButton" Content="Remove" Style="{StaticResource DockAction}" Click="Remove_Click" ToolTip="Remove the selected clip from the library"/>
+            <Button Content="Import" Style="{StaticResource DockAction}" Click="Import_Click" ToolTip="Import audio or video clips"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal">
+            <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,6,0"/>
+            <TextBlock Text="MEDIA" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center"/>
+            <TextBlock x:Name="HintText" Text="  tags route to the scorebug · folders organise" FontSize="10" Foreground="{DynamicResource DockMuted}" Opacity="0.7" VerticalAlignment="Center" Visibility="Collapsed"/>
+          </StackPanel>
+        </DockPanel>
+        <DockPanel Margin="0,4,0,0">
+          <TextBlock Text="CAMERA" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+          <StackPanel Orientation="Horizontal">
+            <Button Content="Camera" Style="{StaticResource DockAction}" Click="Camera_Click" ToolTip="Add the next capture device to the library — it routes by tag like any other clip"/>
+            <Button x:Name="ReplayButton" Content="Replay" Style="{StaticResource DockAction}" Click="Replay_Click" ToolTip="Cut to the clip the live camera has just recorded"/>
+            <Button x:Name="LiveButton" Content="Live" Style="{StaticResource DockAction}" Click="Live_Click" ToolTip="Back to the live camera"/>
+          </StackPanel>
+        </DockPanel>
+        <!-- Which camera is live: pick another capture device here and it takes over on air. -->
+        <DockPanel Margin="0,3,0,0">
+          <TextBlock Text="LIVE" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+          <ComboBox x:Name="CameraBox" Style="{StaticResource DockCombo}" SelectionChanged="Camera_Changed"
+                    ToolTip="Choose which capture device is on air"/>
+        </DockPanel>
+        <!-- Instant replay length and the panic button that blanks every scorebug video box. -->
+        <DockPanel Margin="0,3,0,0">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <ComboBox x:Name="ReplayLengthBox" Style="{StaticResource DockCombo}" Width="74"
+                      SelectionChanged="ReplayLength_Changed"
+                      ToolTip="How long an instant replay runs before it cuts back to the live camera"/>
+            <Button Content="Clear" Style="{StaticResource ClearAction}" Click="Clear_Click"
+                    ToolTip="Stop playback, close the camera and blank every scorebug video box"/>
+          </StackPanel>
+          <TextBlock Text="REPLAY" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+        </DockPanel>
+      </StackPanel>
 
       <!-- Search is library-wide: it deliberately ignores the open folder so a clip is never
            hidden just because it lives in a folder or on a playlist. -->
@@ -335,6 +370,32 @@
                     ToolTip="Start the playlist again after the last clip"/>
         </StackPanel>
         <TextBlock x:Name="ClipCountText" Grid.Column="1" Text="" FontSize="10" Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center"/>
+      </Grid>
+
+      <!-- Audio for the selected clip: its own level, and which speaker it comes out of. -->
+      <Grid Grid.Row="9" Margin="0,5,0,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Text="VOLUME" Style="{StaticResource DockLabel}" VerticalAlignment="Center"/>
+        <Slider x:Name="VolumeSlider" Grid.Column="1" Minimum="0" Maximum="100" Value="100"
+                Style="{StaticResource TransportSlider}" VerticalAlignment="Center" Margin="4,0,6,0"
+                SmallChange="5" LargeChange="10" ToolTip="This clip's own output level"
+                ValueChanged="Volume_Changed"/>
+        <TextBlock x:Name="VolumeText" Grid.Column="2" Text="100%" FontFamily="Consolas" FontSize="11"
+                   Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center" Width="42" TextAlignment="Right"/>
+      </Grid>
+
+      <Grid Grid.Row="10" Margin="0,4,0,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Text="SPEAKER" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+        <ComboBox x:Name="AudioDeviceBox" Grid.Column="1" Style="{StaticResource DockCombo}" SelectionChanged="AudioDevice_Changed"
+                  ToolTip="Play this clip's sound on a specific speaker; Default uses the Windows output"/>
       </Grid>
     </Grid>
   </Border>

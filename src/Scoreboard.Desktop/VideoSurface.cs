@@ -14,14 +14,22 @@ namespace Scoreboard.Desktop;
 /// </summary>
 public sealed class VideoSurface : Grid
 {
-    readonly ScorebugElement _item;
+    ScorebugElement _item;
     readonly MediaPlayback? _playback;
     readonly MediaElement _element;
     readonly TextBlock? _placeholder = null;
     readonly RectangleGeometry _clip = new();
+    // Live camera frames are drawn on this image instead of the MediaElement.
+    readonly Image _live = new() { Stretch = Stretch.UniformToFill, Visibility = Visibility.Collapsed };
+    readonly bool _mute;
+    CameraFeed? _feed;
+    int _cameraIndex = -1;
     string? _loadedPath;
     bool _playing;
     int _appliedSeek;
+    // True once the decoder has opened the file, so a re-attached surface knows it already has
+    // media loaded and should resume rather than treat itself as brand new.
+    bool _opened;
     // A seek while playing pauses the picture and resumes it on the next dispatcher turn; the
     // queued resume owns Play() so this method does not start it inside the same tick.
     bool _resumeQueued;
@@ -32,6 +40,7 @@ public sealed class VideoSurface : Grid
     {
         _item = item;
         _playback = playback;
+        _mute = mute;
         ClipToBounds = true;
         // MediaElement's video texture can paint past its layout slot when the aspect ratios differ,
         // so the picture is clipped to the element box explicitly instead of relying on layout only.
@@ -48,13 +57,28 @@ public sealed class VideoSurface : Grid
             ScrubbingEnabled = true,
             ClipToBounds = true
         };
-        // Re-apply once the MediaElement is in the tree so Play() is honoured.
-        _element.Loaded += (_, _) => { _loadedPath = null; _playing = false; Apply(); };
+        // Re-apply once the MediaElement is in the tree so Play() is honoured. A surface that is
+        // re-attached (the studio rebuilt its canvas) picks the picture up where the transport is
+        // instead of clearing its source and restarting from frame one.
+        _element.Loaded += (_, _) =>
+        {
+            if (_opened && _playback is { LivePosition: > 0.05 } transport)
+            {
+                try { _element.Position = TimeSpan.FromSeconds(transport.LivePosition); } catch { }
+                _appliedSeek = _playback.SeekVersion;
+                _playing = false;
+            }
+            Apply();
+        };
         // A newly opened clip starts from the top; a paused cue holds its very first frame.
         _element.MediaOpened += (_, _) =>
         {
-            // Open at wherever the operator has scrubbed to, not always the first frame.
-            try { _element.Position = TimeSpan.FromSeconds(Math.Max(0, _playback?.Position ?? 0)); } catch { }
+            _opened = true;
+            // Open where the clip actually is: a rebuilt scorebug resumes the picture instead of
+            // restarting it, and a fresh cue still starts from the operator's last seek.
+            var resume = _playback?.LivePosition ?? 0;
+            if (resume <= 0.05) resume = _playback?.Position ?? 0;
+            try { _element.Position = TimeSpan.FromSeconds(Math.Max(0, resume)); } catch { }
             _appliedSeek = _playback?.SeekVersion ?? 0;
             if (_playback is { IsPlaying: false } && !_playing)
             {
@@ -70,6 +94,7 @@ public sealed class VideoSurface : Grid
         // down. Catch it and blank the element instead, so the show keeps running.
         _element.MediaFailed += (_, _) => Fail();
         Children.Add(_element);
+        Children.Add(_live);
 
         if (showPlaceholder)
         {
@@ -88,6 +113,19 @@ public sealed class VideoSurface : Grid
         }
 
         if (_playback is not null) _playback.Changed += Apply;
+        Apply();
+    }
+
+    /// <summary>
+    /// Points an existing surface at a freshly edited element. Reusing the surface is what keeps a
+    /// playing clip running when anything else in the studio changes; rebuilding it restarted the
+    /// picture from frame one.
+    /// </summary>
+    public void SetElement(ScorebugElement item)
+    {
+        _item = item;
+        if (_placeholder is not null)
+            _placeholder.Text = string.IsNullOrWhiteSpace(item.MediaTag) ? "VIDEO" : $"VIDEO · {item.MediaTag.ToUpperInvariant()}";
         Apply();
     }
 
@@ -116,6 +154,17 @@ public sealed class VideoSurface : Grid
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Apply); return; }
         SyncClip();
         var entry = _playback?.ActiveFor(_item.MediaTag);
+
+        // A live camera has no file to open: its frames replace the MediaElement until the
+        // operator cuts to an instant replay or another clip.
+        if (entry is { IsCamera: true })
+        {
+            ShowLiveCamera(entry.CameraIndex);
+            if (_placeholder is not null) _placeholder.Visibility = Visibility.Collapsed;
+            return;
+        }
+        HideLiveCamera();
+
         var matches = entry is not null && File.Exists(entry.Path);
 
         if (!matches)
@@ -124,6 +173,7 @@ public sealed class VideoSurface : Grid
             {
                 try { _element.Stop(); _element.Source = null; } catch { }
                 _loadedPath = null;
+                _opened = false;
             }
             _playing = false;
             if (_placeholder is not null) _placeholder.Visibility = Visibility.Visible;
@@ -131,6 +181,15 @@ public sealed class VideoSurface : Grid
         }
 
         if (_placeholder is not null) _placeholder.Visibility = Visibility.Collapsed;
+
+        // Each clip carries its own level, and a clip routed to a chosen speaker is muted here so
+        // its sound never comes out of two places at once.
+        try
+        {
+            _element.IsMuted = _mute || (_playback?.RoutedToDevice ?? false);
+            _element.Volume = (float)Math.Clamp(_playback?.Volume ?? 1, 0, 1);
+        }
+        catch { }
 
         if (_loadedPath != entry!.Path)
         {
@@ -189,11 +248,46 @@ public sealed class VideoSurface : Grid
         catch { }
     }
 
+    void ShowLiveCamera(int index)
+    {
+        if (_cameraIndex != index)
+        {
+            HideLiveCamera();
+            _cameraIndex = index;
+            if (_loadedPath is not null)
+            {
+                try { _element.Stop(); _element.Source = null; } catch { }
+                _loadedPath = null;
+                _opened = false;
+                _playing = false;
+            }
+            _feed = CameraFeed.Get(index);
+            _feed.FrameReady += OnCameraFrame;
+            _feed.Start();
+        }
+        _live.Visibility = Visibility.Visible;
+        _element.Visibility = Visibility.Collapsed;
+    }
+
+    void OnCameraFrame(ImageSource frame) => _live.Source = frame;
+
+    void HideLiveCamera()
+    {
+        if (_cameraIndex < 0) return;
+        if (_feed is not null) _feed.FrameReady -= OnCameraFrame;
+        _feed = null;
+        _cameraIndex = -1;
+        _live.Source = null;
+        _live.Visibility = Visibility.Collapsed;
+        _element.Visibility = Visibility.Visible;
+    }
+
     /// <summary>Blanks the element after a decode failure instead of letting it crash the app.</summary>
     void Fail()
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Fail); return; }
         _playing = false;
+        _opened = false;
         _loadedPath = null;
         try { _element.Stop(); _element.Source = null; } catch { }
         if (_placeholder is not null) _placeholder.Visibility = Visibility.Visible;
@@ -202,7 +296,9 @@ public sealed class VideoSurface : Grid
     public void Dispose()
     {
         if (_playback is not null) _playback.Changed -= Apply;
+        HideLiveCamera();
         _playing = false;
+        _opened = false;
         try { _element.Stop(); _element.Source = null; } catch { }
     }
 }

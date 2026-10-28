@@ -1,5 +1,8 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Runtime.InteropServices;
 using Scoreboard.Core;
 namespace Scoreboard.Desktop;
 public partial class OutputWindow : Window
@@ -10,6 +13,8 @@ public partial class OutputWindow : Window
     readonly ScorebugCanvasView _scorebugView;
     string _broadcastTheme;
     WindowStyle _style; WindowState _state; bool _full;
+    double _left, _top, _width, _height;
+    bool _geometrySaved;
     public OutputWindow(GameEngine engine, ScorebugCatalog catalog,string broadcastTheme="Dark",MediaPlayback? playback=null) {InitializeComponent(); _broadcastTheme=broadcastTheme; _engine = engine; _catalog=catalog; _displayState=engine.CloneState();        // The audience only ever sees the layout that was published, never the one being designed.
         _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState,playback,muteVideo:false,publishedLayout:true); ScorebugHost.Children.Add(_scorebugView); _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update(); }
     public void Publish(){_displayState=_engine.CloneState();Update();_scorebugView.Refresh();}
@@ -72,10 +77,110 @@ public partial class OutputWindow : Window
     static System.Windows.Media.Brush ColorBrush(string value)=>(System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString(value)!;
     static string Dots(int count) => string.Join(" ", Enumerable.Repeat("●", count));
     static string OrdinalSuffix(int value)=>value switch{1=>"st",2=>"nd",3=>"rd",_=>"th"};
+    /// <summary>True while this window is filling its screen.</summary>
+    public bool IsFullscreen => _full;
+
     public void ToggleFullscreen()
     {
-        _full = !_full; if (_full) { _style = WindowStyle; _state = WindowState; WindowStyle = WindowStyle.None; WindowState = WindowState.Maximized; Topmost = true; }
-        else { Topmost = false; WindowStyle = _style; WindowState = _state; }
+        if (_full) ExitFullscreen();
+        else EnterFullscreen();
+    }
+
+    void EnterFullscreen()
+    {
+        _full = true;
+        _style = WindowStyle;
+        _state = WindowState;
+        _left = Left;
+        _top = Top;
+        _width = Width;
+        _height = Height;
+        _geometrySaved = true;
+        // Drop back to a normal window before the chrome goes: maximizing while the style is being
+        // changed makes WPF size the window to the old work area, which is what left a strip down
+        // each side of a 16:9 graphic (the "black borders" in fullscreen).
+        WindowState = WindowState.Normal;
+        WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.NoResize;
+        FillMonitor();
+        Topmost = true;
+    }
+
+    void ExitFullscreen()
+    {
+        _full = false;
+        Topmost = false;
+        WindowStyle = _style;
+        ResizeMode = ResizeMode.CanResize;
+        if (_geometrySaved)
+        {
+            Left = _left;
+            Top = _top;
+            Width = _width;
+            Height = _height;
+            _geometrySaved = false;
+        }
+        WindowState = _state;
+    }
+
+    /// <summary>Takes the window to the full bounds of the monitor it is on, taskbar included.</summary>
+    void FillMonitor()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero) return;
+        var monitor = MonitorFromWindow(handle, MonitorDefaultToNearest);
+        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+        if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return;
+        // GetMonitorInfo is in physical pixels; WPF's Left/Top/Width/Height are device-independent.
+        var dpi = VisualTreeHelper.GetDpi(this);
+        Left = info.Monitor.Left / dpi.DpiScaleX;
+        Top = info.Monitor.Top / dpi.DpiScaleY;
+        Width = (info.Monitor.Right - info.Monitor.Left) / dpi.DpiScaleX;
+        Height = (info.Monitor.Bottom - info.Monitor.Top) / dpi.DpiScaleY;
+    }
+
+    const uint MonitorDefaultToNearest = 2;
+
+    [DllImport("user32.dll")]
+    static extern IntPtr MonitorFromWindow(IntPtr handle, uint flags);
+
+    [DllImport("user32.dll")]
+    static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct NativeRect
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MonitorInfo
+    {
+        public int Size;
+        public NativeRect Monitor;
+        public NativeRect Work;
+        public uint Flags;
+    }
+
+    /// <summary>
+    /// F11 on the audience window is the same as Broadcast Fullscreen from the main menu: the
+    /// graphic fills the screen. Escape gives the window back.
+    /// </summary>
+    protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.F11)
+        {
+            ToggleFullscreen();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == System.Windows.Input.Key.Escape && _full)
+        {
+            ToggleFullscreen();
+            e.Handled = true;
+            return;
+        }
+        base.OnPreviewKeyDown(e);
     }
     protected override void OnClosed(EventArgs e) { _engine.Changed-=Update; _engine.Changed-=_scorebugView.Refresh; _catalog.Changed-=Publish; _scorebugView.Dispose(); base.OnClosed(e); }
 }

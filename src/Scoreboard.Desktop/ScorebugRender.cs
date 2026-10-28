@@ -26,6 +26,14 @@ internal static class ScorebugRender
     public static string ResolveBackground(ScorebugElement item, GameState? state) =>
         state?.ColorFor(item.BackgroundSource) ?? item.Background;
 
+    /// <summary>The colour of the element's outline, after its team-palette slot is resolved.</summary>
+    public static string ResolveBorder(ScorebugElement item, GameState? state) =>
+        state?.ColorFor(item.BorderSource) ?? item.BorderColor;
+
+    /// <summary>The outline an element draws around its own box, or nothing when it is switched off.</summary>
+    public static Brush HostBorder(ScorebugElement item, GameState? state = null) =>
+        item.BorderThickness <= 0 ? Brushes.Transparent : ParseBrush(ResolveBorder(item, state));
+
     /// <summary>Background painted behind an element. Shapes/logo draw themselves, so their host stays clear.</summary>
     public static Brush HostBackground(ScorebugElement item, GameState? state = null) =>
         item.Kind is ScorebugElementKind.Shape or ScorebugElementKind.Logo || item.TransparentBackground
@@ -81,9 +89,13 @@ internal static class ScorebugRender
             _ => new Rectangle { RadiusX = 8, RadiusY = 8 }
         };
         shape.Stretch = Stretch.Fill;
-        shape.Fill = ParseBrush(ResolveBackground(item, state));
-        shape.Stroke = ParseBrush(ResolveForeground(item, state));
-        shape.StrokeThickness = 2;
+        // A transparent shape has no fill, only its outline — the old code always painted the
+        // background, which is why a hollow shape could never be made.
+        shape.Fill = item.TransparentBackground ? Brushes.Transparent : ParseBrush(ResolveBackground(item, state));
+        shape.Stroke = HostBorder(item, state);
+        shape.StrokeThickness = Math.Max(0, item.BorderThickness);
+        shape.StrokeStartLineCap = PenLineCap.Round;
+        shape.StrokeEndLineCap = PenLineCap.Round;
         return shape;
     }
 
@@ -97,14 +109,15 @@ internal static class ScorebugRender
                 break;
             case ScorebugTextBlock block:
                 block.ApplyStyle(item, state);
-                block.UpdateText(text ?? item.Content, item.Transition);
+                block.UpdateText(text ?? item.Content, item.Transition, item.TransitionSeconds);
                 break;
             case TextBlock plain:
                 plain.Text = text ?? item.Content;
                 break;
             case Shape shape:
-                shape.Fill = ParseBrush(ResolveBackground(item, state));
-                shape.Stroke = ParseBrush(ResolveForeground(item, state));
+                shape.Fill = item.TransparentBackground ? Brushes.Transparent : ParseBrush(ResolveBackground(item, state));
+                shape.Stroke = HostBorder(item, state);
+                shape.StrokeThickness = Math.Max(0, item.BorderThickness);
                 break;
             case ScorebugLogoView logo:
                 // Logos are set from the console: pick one up, drop one, all without a rebuild.
@@ -192,6 +205,7 @@ public sealed class ScorebugTextBlock : TextBlock
 {
     readonly TranslateTransform _translate = new();
     readonly ScaleTransform _scale = new(1, 1);
+    readonly RotateTransform _rotate = new();
     string _shown = "";
     bool _animating;
     // A transition is two phases with callbacks; a newer value (or a snap) bumps the generation,
@@ -209,6 +223,7 @@ public sealed class ScorebugTextBlock : TextBlock
         RenderTransformOrigin = new Point(0.5, 0.5);
         var group = new TransformGroup();
         group.Children.Add(_scale);
+        group.Children.Add(_rotate);
         group.Children.Add(_translate);
         RenderTransform = group;
         ApplyStyle(item, null);
@@ -225,15 +240,19 @@ public sealed class ScorebugTextBlock : TextBlock
         if (item.Underline) decorations.Add(System.Windows.TextDecorations.Underline[0]);
         if (item.StrikeThrough) decorations.Add(System.Windows.TextDecorations.Strikethrough[0]);
         TextDecorations = decorations.Count == 0 ? null : decorations;
+        // Slanted text: rotation is part of the element's design, not part of the animation.
+        _rotate.Angle = item.Rotation;
         _style = item;
     }
 
     /// <summary>Shows a new value, crossing to it with the element's chosen animation.</summary>
-    public void UpdateText(string text, ScorebugTransition transition)
+    /// <param name="seconds">How long the whole crossing takes: 0 snaps, 5 is a slow dissolve.</param>
+    public void UpdateText(string text, ScorebugTransition transition, double seconds = 0.2)
     {
         text ??= "";
+        var total = Math.Clamp(double.IsFinite(seconds) ? seconds : 0.2, 0, 5);
         if (_shown == text && !_animating) return;
-        if (transition == ScorebugTransition.Cut || !IsLoaded || _animating)
+        if (transition == ScorebugTransition.Cut || total < 0.02 || !IsLoaded || _animating)
         {
             Snap(text);
             return;
@@ -241,11 +260,15 @@ public sealed class ScorebugTextBlock : TextBlock
         _animating = true;
         _shown = text;
         var generation = _generation;
-        PlayOut(transition, OutDuration(transition), () =>
+        // The value leaves a little faster than it arrives, which reads as a deliberate cross
+        // rather than a symmetric dissolve.
+        var outDuration = TimeSpan.FromSeconds(total * 0.42);
+        var inDuration = TimeSpan.FromSeconds(Math.Max(0.01, total - total * 0.42));
+        PlayOut(transition, outDuration, () =>
         {
             if (generation != _generation) return;
             Text = text;
-            PlayIn(transition, InDuration(transition), () =>
+            PlayIn(transition, inDuration, () =>
             {
                 if (generation == _generation) _animating = false;
             });
@@ -279,20 +302,6 @@ public sealed class ScorebugTextBlock : TextBlock
     }
 
     double Distance => Math.Max(8, FontSize * 1.1);
-
-    static TimeSpan OutDuration(ScorebugTransition transition) => transition switch
-    {
-        ScorebugTransition.Pop => TimeSpan.FromMilliseconds(70),
-        ScorebugTransition.Flip => TimeSpan.FromMilliseconds(90),
-        _ => TimeSpan.FromMilliseconds(80)
-    };
-
-    static TimeSpan InDuration(ScorebugTransition transition) => transition switch
-    {
-        ScorebugTransition.Pop => TimeSpan.FromMilliseconds(190),
-        ScorebugTransition.Drop => TimeSpan.FromMilliseconds(140),
-        _ => TimeSpan.FromMilliseconds(120)
-    };
 
     // ---------- out ----------
 
@@ -548,7 +557,7 @@ public sealed class ScorebugIconView : Grid
         if (_text is not null)
         {
             var value = text ?? (state is null ? _item.Content : ScoreboardTemplates.Bind(_item.Content, state, _item.PeriodFormat));
-            _text.UpdateText(value, _item.Transition);
+            _text.UpdateText(value, _item.Transition, _item.TransitionSeconds);
         }
     }
 }

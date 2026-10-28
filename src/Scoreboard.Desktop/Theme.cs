@@ -16,6 +16,9 @@ public sealed class UserPreferences
     public string Theme { get; set; } = "Dark";
     public bool ShowHeadingHints { get; set; }
 
+    /// <summary>How long an instant replay runs before it cuts back to the live camera.</summary>
+    public int ReplaySeconds { get; set; } = 10;
+
     /// <summary>The sport the operator last ran, so a launcher "New Game" opens the game they expect.</summary>
     public string LastSport { get; set; } = "football";
 
@@ -35,6 +38,7 @@ public sealed class UserPreferences
         Schema = Schema,
         Theme = Theme,
         ShowHeadingHints = ShowHeadingHints,
+        ReplaySeconds = ReplaySeconds,
         LastSport = LastSport,
         Media = [.. Media],
         Playlists = Playlists.Select(p => new MediaPlaylist { Name = p.Name, Loop = p.Loop, Paths = p.Paths.ToList() }).ToList(),

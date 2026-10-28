@@ -19,4 +19,9 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Scoreboard.Core/Scoreboard.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="3.3.0" />
+    <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
+  </ItemGroup>
 </Project>

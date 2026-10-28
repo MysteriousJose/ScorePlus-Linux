@@ -213,6 +213,9 @@
           </DockPanel>
           <TextBlock Text="Font size" Style="{StaticResource FieldLabel}"/>
           <TextBox x:Name="FontInputSize" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+          <TextBlock Text="Rotation (degrees)" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="RotationInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                   ToolTip="Slant this element clockwise, for example −8 for rising text"/>
           <TextBlock Text="Text style" Style="{StaticResource FieldLabel}"/>
           <WrapPanel Margin="8,0,8,2">
             <CheckBox x:Name="BoldInput" Content="Bold" Margin="2,2,10,2" Checked="Property_Changed" Unchecked="Property_Changed"/>
@@ -280,12 +283,28 @@
           </DockPanel>
           <CheckBox x:Name="TransparentBackgroundInput" Content="No background box (transparent)" Margin="10,4,10,6"
                     Checked="Property_Changed" Unchecked="Property_Changed"/>
+          <TextBlock Text="Border width (0 = none)" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="BorderWidthInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                   ToolTip="Outline thickness in design pixels"/>
+          <TextBlock Text="Border color" Style="{StaticResource FieldLabel}"/>
+          <ComboBox x:Name="BorderSourceInput" Margin="10,0,10,3" SelectionChanged="Property_Changed"
+                    ToolTip="Use a fixed colour or one of the team palette colours"/>
+          <DockPanel Margin="0,0,10,4">
+            <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Click="BorderColor_Click" ToolTip="Open the color palette"/>
+            <Border x:Name="BorderColorSwatch" Width="24" Height="24" CornerRadius="4" Margin="10,0,6,0"
+                    BorderBrush="#3A4552" BorderThickness="1" VerticalAlignment="Center"
+                    local:ThemeManager.SkipTheme="True" ToolTip="The colour this element's outline draws"/>
+            <TextBox x:Name="BorderColorInput" Margin="0" TextChanged="Property_Changed"/>
+          </DockPanel>
         </StackPanel>
 
         <TextBlock Text="BEHAVIOUR" Style="{StaticResource SectionTitle}"/>
         <TextBlock Text="Value change" Style="{StaticResource FieldLabel}"/>
         <ComboBox x:Name="TransitionInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
                   ToolTip="How this value crosses to a new number or name"/>
+        <TextBlock Text="Transition time (0–5 seconds)" Style="{StaticResource FieldLabel}"/>
+        <TextBox x:Name="TransitionSpeedInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                 ToolTip="0 is an instant swap, 5 a very slow dissolve. The value leaves slightly faster than it arrives."/>
         <TextBlock Text="Motion" Style="{StaticResource FieldLabel}"/>
         <ComboBox x:Name="AnimationInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"/>
         <CheckBox x:Name="VisibleInput" Content="Visible on output" Margin="10,4,10,8" Checked="Property_Changed" Unchecked="Property_Changed"/>

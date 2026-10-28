@@ -220,7 +220,9 @@ public sealed class GameEngine
         var elapsed = (int)((now - _lastTick) / Stopwatch.Frequency);
         if (elapsed <= 0) return;
         _lastTick += (long)elapsed * Stopwatch.Frequency;
-        var wasRunning = State.ClockRunning || State.ShotClockRunning;
+        // Every clock counts: a play or timeout clock that expires on its own must still raise the
+        // event, or the panel never repaints the final 0.
+        var wasRunning = State.ClockRunning || State.ShotClockRunning || State.PlayClockRunning || State.TimeoutClockRunning;
         if (State.ClockRunning)
         {
             State.ClockSeconds = State.ClockCountsUp ? State.ClockSeconds + elapsed : Math.Max(0, State.ClockSeconds - elapsed);
@@ -283,8 +285,13 @@ public sealed class GameEngine
     public void TogglePlayClock()
     {
         if (State.SportId != "football") return;
-        Tick(); SaveUndo("Play clock"); State.PlayClockRunning = !State.PlayClockRunning; _lastTick = _watch.ElapsedTicks;
-        Log("Play clock", State.PlayClockRunning ? "Play clock started" : "Play clock stopped"); Changed?.Invoke();
+        Tick(); SaveUndo("Play clock");
+        State.PlayClockRunning = !State.PlayClockRunning;
+        // Starting an expired clock reloads it: otherwise it would sit at 0 and stop again a
+        // second later, which looks like the button does nothing.
+        if (State.PlayClockRunning && State.PlayClockSeconds <= 0) State.PlayClockSeconds = 40;
+        _lastTick = _watch.ElapsedTicks;
+        Log("Play clock", State.PlayClockRunning ? $"Play clock started at {State.PlayClockSeconds}" : "Play clock stopped"); Changed?.Invoke();
     }
 
     public void SetPlayClock(int seconds)

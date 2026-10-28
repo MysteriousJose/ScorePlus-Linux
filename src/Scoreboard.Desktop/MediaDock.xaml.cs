@@ -52,9 +52,27 @@ public partial class MediaDock : UserControl
     Point _dragOrigin;
     MediaEntry? _dragEntry;
 
+    // "Default output" plus every active speaker. Enumerated once per dock: asking WASAPI on
+    // every transport tick would be far too expensive.
+    static readonly AudioRouter.OutputDevice DefaultOutput = new("", "Default output");
+    IReadOnlyList<AudioRouter.OutputDevice> _audioDevices = [];
+
+    // Instant-replay lengths offered by the dock. The chosen one is remembered in preferences.
+    static readonly int[] ReplayLengths = [3, 5, 10, 15, 20, 30, 45, 60];
+    IReadOnlyList<CameraChoice> _cameraChoices = [];
+
+    /// <summary>A capture device in the LIVE picker; <see cref="ToString"/> is what the combo shows.</summary>
+    sealed record CameraChoice(MediaEntry Entry)
+    {
+        public override string ToString() => Entry.Label;
+    }
+
     public MediaDock()
     {
         InitializeComponent();
+        _audioDevices = new[] { DefaultOutput }.Concat(AudioRouter.Devices()).ToArray();
+        AudioDeviceBox.ItemsSource = _audioDevices;
+        AudioDeviceBox.SelectedIndex = 0;
         // The dock paints itself from this palette; ThemeManager must not repaint parts of it.
         ThemeManager.SetSkipTheme(this, true);
         TagBox.ItemsSource = MediaLibrary.SuggestedTags;
@@ -184,10 +202,76 @@ public partial class MediaDock : UserControl
             }
             ClipLoopBox.IsChecked = selected?.Loop == true;
             ClipLoopBox.IsEnabled = selected is not null;
+
+            // Audio: the selected clip's own level and speaker.
+            var level = Math.Round((selected?.Volume ?? 1) * 100);
+            VolumeSlider.Value = level;
+            VolumeSlider.IsEnabled = selected is not null;
+            VolumeText.Text = $"{(int)level}%";
+            AudioDeviceBox.IsEnabled = selected is not null;
+            SyncSpeaker(selected);
+
+            SyncCameraPicker();
+            SyncReplayLength();
+
+            // Camera transport: Replay has something to cut to while live, Live goes back again.
+            ReplayButton.IsEnabled = _session.IsCameraLive || _session.IsReplaying;
+            LiveButton.IsEnabled = _session.IsReplaying;
         }
         finally { _syncing = false; }
 
         RefreshTransport();
+    }
+
+    /// <summary>
+    /// Shows the clip's chosen speaker. A device that has since been unplugged is kept in the list
+    /// instead of falling back to Default, so the picker always tells the truth about the clip.
+    /// </summary>
+    void SyncSpeaker(MediaEntry? selected)
+    {
+        // Setting SelectedItem raises SelectionChanged; the flag keeps that from being read back as
+        // another operator choice (which recursed until the stack ran out).
+        var wasSyncing = _syncing;
+        _syncing = true;
+        try { SyncSpeakerCore(selected); }
+        finally { _syncing = wasSyncing; }
+    }
+
+    void SyncSpeakerCore(MediaEntry? selected)
+    {
+        var device = selected?.AudioDevice;
+        if (!string.IsNullOrWhiteSpace(device) && !_audioDevices.Any(d => string.Equals(d.Id, device, StringComparison.OrdinalIgnoreCase)))
+        {
+            _audioDevices = [.. _audioDevices, new AudioRouter.OutputDevice(device, "Missing speaker")];
+            AudioDeviceBox.ItemsSource = _audioDevices;
+        }
+        AudioDeviceBox.SelectedItem = _audioDevices.FirstOrDefault(d => string.Equals(d.Id, device, StringComparison.OrdinalIgnoreCase)) ?? _audioDevices[0];
+    }
+
+    /// <summary>Lists the capture devices already in the library and marks the one on air.</summary>
+    void SyncCameraPicker()
+    {
+        if (_session is null) return;
+        var cameras = _session.Library.Where(entry => entry.IsCamera).Select(entry => new CameraChoice(entry)).ToArray();
+        if (!cameras.SequenceEqual(_cameraChoices))
+        {
+            _cameraChoices = cameras;
+            CameraBox.ItemsSource = _cameraChoices;
+        }
+        var active = _session.Current?.IsCamera == true ? _session.Current
+            : _session.Selected?.IsCamera == true ? _session.Selected : null;
+        CameraBox.IsEnabled = _cameraChoices.Count > 0;
+        CameraBox.SelectedItem = active is null
+            ? null
+            : _cameraChoices.FirstOrDefault(choice => string.Equals(choice.Entry.Path, active.Path, StringComparison.OrdinalIgnoreCase));
+    }
+
+    void SyncReplayLength()
+    {
+        if (_session is null) return;
+        if (ReplayLengthBox.Items.Count == 0) ReplayLengthBox.ItemsSource = ReplayLengths.Select(seconds => $"{seconds}s").ToArray();
+        var index = Array.IndexOf(ReplayLengths, _session.ReplaySeconds);
+        if (index >= 0 && ReplayLengthBox.SelectedIndex != index) ReplayLengthBox.SelectedIndex = index;
     }
 
     // ---------- search ----------
@@ -579,7 +663,7 @@ public partial class MediaDock : UserControl
         {
             thumb.Children.Add(new TextBlock
             {
-                Text = entry.IsVideo ? "▶" : "♪",
+                Text = entry.IsCamera ? "●" : entry.IsVideo ? "▶" : "♪",
                 Style = (Style)Resources["TileGlyph"],
                 FontSize = 22
             });
@@ -670,6 +754,21 @@ public partial class MediaDock : UserControl
     {
         if (_session is null) return;
         PlayPauseButton.Content = _session.IsPlaying ? "❚❚" : "▶";
+        if (_session.Current?.IsCamera == true)
+        {
+            // A live feed has no timeline to scrub: the bar is a status light instead.
+            ElapsedText.Text = "LIVE";
+            DurationText.Text = _session.Error ?? "—";
+            ScrubBar.IsEnabled = false;
+            if (!_syncingBar)
+            {
+                _syncingBar = true;
+                try { ScrubBar.Maximum = 1; ScrubBar.Value = 0; }
+                finally { _syncingBar = false; }
+            }
+            return;
+        }
+        ScrubBar.IsEnabled = true;
         ElapsedText.Text = Stamp(TimeSpan.FromSeconds(_session.Position));
         var duration = _session.Duration;
         DurationText.Text = duration > 0 ? Stamp(TimeSpan.FromSeconds(duration)) : "—";
@@ -802,6 +901,120 @@ public partial class MediaDock : UserControl
     }
 
     void PlayPause_Click(object sender, RoutedEventArgs e) => _session?.TogglePlayPause();
+
+    void Volume_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_syncing || _session?.Selected is not { } selected) return;
+        _session.SetClipVolume(selected, e.NewValue / 100);
+        VolumeText.Text = $"{(int)Math.Round(e.NewValue)}%";
+    }
+
+    void AudioDevice_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || _session?.Selected is not { } selected) return;
+        var device = (AudioDeviceBox.SelectedItem as AudioRouter.OutputDevice)?.Id;
+        _session.SetClipAudioDevice(selected, string.IsNullOrWhiteSpace(device) ? null : device);
+    }
+
+    /// <summary>Switches which capture device is on air; the scorebug follows the new tag match.</summary>
+    void Camera_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || _session is null || CameraBox.SelectedItem is not CameraChoice choice) return;
+        if (_session.Current?.IsCamera == true) _session.Play(choice.Entry);
+        else
+        {
+            _session.Select(choice.Entry);
+            _session.Report($"{choice.Entry.Label} ready · press ▶ or double-click the tile to go live");
+        }
+    }
+
+    void ReplayLength_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || _session is null) return;
+        var index = ReplayLengthBox.SelectedIndex;
+        if (index >= 0 && index < ReplayLengths.Length) _session.SetReplaySeconds(ReplayLengths[index]);
+    }
+
+    /// <summary>
+    /// The panic button: stop everything, release the camera (so its last frame cannot stay on the
+    /// scorebug) and blank every video box. Clearing the library is the operator's choice.
+    /// </summary>
+    void Clear_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null) return;
+        if (_session.Library.Count > 0 && !ConfirmClear()) return;
+        _session.ClearAll();
+        Refresh();
+    }
+
+    /// <summary>A themed confirmation, because a system message box breaks the operator's dark UI.</summary>
+    bool ConfirmClear()
+    {
+        var owner = Window.GetWindow(this);
+        var window = new Window
+        {
+            Title = "Clear media",
+            Width = 430,
+            SizeToContent = SizeToContent.Height,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+            FontFamily = new FontFamily("Segoe UI")
+        };
+        if (owner is not null) window.Owner = owner;
+        var root = new StackPanel { Margin = new Thickness(20, 18, 20, 16) };
+        root.Children.Add(new TextBlock
+        {
+            Text = "Clear all media?\n\nEvery clip, folder and playlist is removed from the library, the camera is released and the scorebug video boxes go blank.",
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+        var cancel = new Button { Content = "Cancel", IsCancel = true, MinHeight = 34, Padding = new Thickness(13, 6, 13, 6), Margin = new Thickness(4, 0, 0, 0) };
+        var clear = new Button
+        {
+            Content = "Clear media",
+            IsDefault = true,
+            MinHeight = 34,
+            Padding = new Thickness(13, 6, 13, 6),
+            Margin = new Thickness(4, 0, 0, 0),
+            Background = Frozen("#5A2222"),
+            BorderBrush = Frozen("#A33B3B"),
+            Foreground = Brushes.White
+        };
+        ThemeManager.SetSkipTheme(clear, true);
+        clear.Click += (_, _) => window.DialogResult = true;
+        cancel.Click += (_, _) => window.DialogResult = false;
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(clear);
+        root.Children.Add(buttons);
+        window.Content = root;
+        ThemeManager.Apply(window, _theme);
+        return window.ShowDialog() == true;
+    }
+
+    void Camera_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null) return;
+        // Add the next capture device that is not already in the library.
+        var index = 0;
+        while (_session.Library.Any(m => m.IsCamera && m.CameraIndex == index)) index++;
+        _session.AddCamera(index, MediaLibrary.NormalizeTag(TagBox.Text));
+        Refresh();
+    }
+
+    void Replay_Click(object sender, RoutedEventArgs e)
+    {
+        _session?.StartReplay();
+        Refresh();
+    }
+
+    void Live_Click(object sender, RoutedEventArgs e)
+    {
+        _session?.ReturnToLive();
+        Refresh();
+    }
 
     void Stop_Click(object sender, RoutedEventArgs e) => _session?.Stop();
 

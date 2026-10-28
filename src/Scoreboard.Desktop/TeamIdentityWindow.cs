@@ -125,7 +125,12 @@ public sealed class TeamIdentityWindow : Window
         Content = root;
         ShowLogo();
         PaintSwatches();
+        // These two show the colours that are already set. The theme pass repaints every Border
+        // it finds, which is why the swatches used to look empty until a colour was picked.
+        ThemeManager.SetSkipTheme(_primarySwatch, true);
+        ThemeManager.SetSkipTheme(_secondarySwatch, true);
         ThemeManager.Apply(this, theme);
+        PaintSwatches();
         Loaded += (_, _) => { _name.Focus(); _name.SelectAll(); };
     }
 
