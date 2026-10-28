@@ -30,9 +30,11 @@ public sealed class MediaSession
     // MediaElement (which can only ever use the Windows default output).
     readonly AudioRouter _audio = new();
     CameraFeed? _camera;
-    // Instant replay cuts back to live on its own after this many seconds.
-    readonly DispatcherTimer _replayTimer = new();
-    int _replaySeconds = 10;
+    // The recorded clips a replay is travelling through, newest last, and the point inside them.
+    readonly List<CameraSegment> _replayBuffer = [];
+    int _replayIndex = -1;
+    // False while the replay is only in the preview; true once Start replay put it on air.
+    bool _replayOnAir;
     readonly Dictionary<string, ImageSource> _thumbs = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _pendingThumbs = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, int> _thumbAttempts = new(StringComparer.OrdinalIgnoreCase);
@@ -63,9 +65,6 @@ public sealed class MediaSession
             if (normalized.Length > 0 && !_folders.Contains(normalized, StringComparer.OrdinalIgnoreCase)) _folders.Add(normalized);
         }
 
-        _replaySeconds = Math.Clamp(preferences.ReplaySeconds <= 0 ? 10 : preferences.ReplaySeconds, 1, 120);
-        _replayTimer.Interval = TimeSpan.FromSeconds(_replaySeconds);
-        _replayTimer.Tick += (_, _) => { _replayTimer.Stop(); ReturnToLive(); };
 
         _player.MediaOpened += (_, _) =>
         {
@@ -90,6 +89,7 @@ public sealed class MediaSession
             // where it is instead of restarting it from the first frame.
             if (Current is { IsCamera: false } && _player.Source is not null)
                 Playback.ReportPosition(_audio.IsPlaying ? _audio.Position : Position);
+            if (IsReplaying) TrackReplay();
             if (_scrubbing) return;
             TransportChanged?.Invoke();
         };
@@ -113,8 +113,11 @@ public sealed class MediaSession
     /// <summary>The camera entry behind the live feed, so Replay can go back to it.</summary>
     public MediaEntry? CameraEntry { get; private set; }
 
-    /// <summary>True while an instant replay of a camera clip is on air.</summary>
+    /// <summary>True while an instant replay of a camera clip is open.</summary>
     public bool IsReplaying { get; private set; }
+
+    /// <summary>True once Start replay put that replay on air; false while it is preview only.</summary>
+    public bool ReplayOnAir => IsReplaying && _replayOnAir;
 
     /// <summary>True while a live camera is cued.</summary>
     public bool IsCameraLive => Current?.IsCamera == true && _camera is not null;
@@ -122,21 +125,11 @@ public sealed class MediaSession
     /// <summary>The capture device's last error, for the dock's status line.</summary>
     public string? Error => _camera?.Error;
 
-    /// <summary>How long an instant replay runs before cutting back to the live camera.</summary>
-    public int ReplaySeconds => _replaySeconds;
+    /// <summary>How far behind live the replay playhead is, in seconds. 0 is the live edge.</summary>
+    public double ReplayBack { get; private set; }
 
-    /// <summary>Chooses the instant-replay length, in seconds, and remembers it.</summary>
-    public void SetReplaySeconds(int seconds)
-    {
-        var value = Math.Clamp(seconds, 1, 120);
-        if (_replaySeconds == value) return;
-        _replaySeconds = value;
-        _replayTimer.Interval = TimeSpan.FromSeconds(value);
-        _preferences.ReplaySeconds = value;
-        try { PreferencesStore.Save(_preferences); } catch { }
-        StateChanged?.Invoke();
-        Status?.Invoke($"REPLAY LENGTH · {value}s");
-    }
+    /// <summary>How much recorded material the scrubber covers, in seconds (up to two minutes).</summary>
+    public double ReplayDepth { get; private set; }
 
     /// <summary>The playlist currently running, or null when a clip was cued on its own.</summary>
     public MediaPlaylist? ActivePlaylist => _playlist;
@@ -315,7 +308,6 @@ public sealed class MediaSession
     public void ClearAll()
     {
         Stop(keepStatus: true);
-        _replayTimer.Stop();
         Playlists.Clear();
         _folders.Clear();
         Library.Clear();
@@ -324,6 +316,7 @@ public sealed class MediaSession
         Current = null;
         CameraEntry = null;
         IsReplaying = false;
+        _replayOnAir = false;
         Save();
         StateChanged?.Invoke();
         Status?.Invoke("MEDIA CLEARED · library, folders, playlists and the screen are empty");
@@ -471,9 +464,61 @@ public sealed class MediaSession
         return entry;
     }
 
+    /// <summary>The capture devices a camera item can be routed to, with the names Windows gives
+    /// them, for the routing menu.</summary>
+    public IReadOnlyList<CameraDevice> CameraDevices()
+    {
+        var found = CameraFeed.NamedDevices().ToList();
+        // A camera that is already open cannot be probed, so the live one is always offered.
+        if (_camera is not null && !found.Any(device => device.Index == _camera.CameraIndex))
+            found.Add(new CameraDevice(_camera.CameraIndex, $"Camera {_camera.CameraIndex + 1}"));
+        foreach (var entry in Library.Where(entry => entry.IsCamera))
+            if (!found.Any(device => device.Index == entry.CameraIndex))
+                found.Add(new CameraDevice(entry.CameraIndex, $"Camera {entry.CameraIndex + 1}"));
+        return found.DistinctBy(device => device.Index).OrderBy(device => device.Index).ToArray();
+    }
+
+    /// <summary>Renames a camera item; routing is by tag, so the name is purely for the operator.</summary>
+    public void RenameCamera(MediaEntry entry, string? name)
+    {
+        entry = Resolve(entry);
+        var updated = MediaLibrary.SetName(Library, entry, name);
+        if (updated is null) return;
+        if (string.Equals(Current?.Path, updated.Path, StringComparison.OrdinalIgnoreCase)) Current = updated;
+        if (string.Equals(CameraEntry?.Path, updated.Path, StringComparison.OrdinalIgnoreCase)) CameraEntry = updated;
+        Selected = updated;
+        Save();
+        StateChanged?.Invoke();
+        Status?.Invoke($"CAMERA · {updated.Label}");
+    }
+
+    /// <summary>
+    /// Sends a camera item to a different capture device. If that item is the one on air, the old
+    /// device is released and the new one goes live immediately, so the scorebug keeps showing.
+    /// </summary>
+    public void RouteCamera(MediaEntry entry, int device)
+    {
+        entry = Resolve(entry);
+        var wasLive = Current?.IsCamera == true && string.Equals(Current.Path, entry.Path, StringComparison.OrdinalIgnoreCase);
+        var updated = MediaLibrary.SetCameraDevice(Library, entry, device);
+        if (updated is null) return;
+        Selected = updated;
+        Save();
+        if (wasLive)
+        {
+            StopCamera();
+            PlayCamera(updated, null, -1);
+        }
+        else
+        {
+            StateChanged?.Invoke();
+            Status?.Invoke($"CAMERA · {updated.Label} → device {device + 1}");
+        }
+    }
+
     /// <summary>
     /// Cues a live camera. There is no file and no duration: the feed paints every scorebug video
-    /// element watching this tag, and keeps recording short clips for instant replay.
+    /// element watching this tag, and keeps recording the clips Replay scrubs through.
     /// </summary>
     void PlayCamera(MediaEntry entry, MediaPlaylist? playlist, int index)
     {
@@ -482,11 +527,16 @@ public sealed class MediaSession
         _seekTarget = 0;
         _playlist = playlist;
         _playlistIndex = index;
-        Selected = entry;
+        // The library selection is the operator's, not the cue's: taking it over made the tag,
+        // loop and speaker in the dock jump back to defaults every time the camera went live.
         Current = entry;
         CameraEntry = entry;
         IsReplaying = false;
-        _replayTimer.Stop();
+        _replayOnAir = false;
+        _replayBuffer.Clear();
+        _replayIndex = -1;
+        ReplayBack = 0;
+        ReplayDepth = 0;
         _duration = 0;
         _pendingSeek = null;
         _audio.Stop();
@@ -501,57 +551,177 @@ public sealed class MediaSession
         Status?.Invoke($"LIVE · {entry.Label} · tag {entry.Tag}");
     }
 
-    /// <summary>Cuts to the clip the camera has been recording. Live goes back to the feed.</summary>
-    public bool StartReplay()
+    /// <summary>
+    /// Cuts to the camera's recording and opens a scrubber over the last two minutes. It starts a
+    /// few seconds back, runs like any other clip (play, pause, scrub) and stays until Live is
+    /// pressed or it catches up with the live edge.
+    /// </summary>
+    public bool BeginReplay()
     {
-        var camera = _camera;
-        if (camera is null || CameraEntry is null)
+        if (_camera is null || CameraEntry is null)
         {
             Status?.Invoke("REPLAY · go live on a camera first");
             return false;
         }
-        var path = camera.TakeReplay();
-        if (path is null || !File.Exists(path))
+        var segments = _camera.Snapshot();
+        if (segments.Count == 0)
         {
-            Status?.Invoke("REPLAY · nothing recorded yet");
+            Status?.Invoke("REPLAY · nothing recorded yet — give the camera a few seconds");
             return false;
         }
-        var replay = new MediaEntry(path, CameraEntry.Tag);
+        _replayBuffer.Clear();
+        _replayBuffer.AddRange(segments);
         IsReplaying = true;
-        Current = replay;
-        Selected = replay;
+        _replayIndex = -1;
         _playlist = null;
         _playlistIndex = -1;
-        _duration = 0;
-        _pendingSeek = null;
-        _audio.Stop();
-        try
-        {
-            _player.Close();
-            _player.Volume = 0;
-            _player.Open(new Uri(path));
-            _player.Play();
-        }
-        catch { }
-        SetTransportPlaying(true);
-        Playback.Start(replay);
-        // An instant replay is a fixed-length cut: it returns to live on its own.
-        _replayTimer.Stop();
-        _replayTimer.Interval = TimeSpan.FromSeconds(_replaySeconds);
-        _replayTimer.Start();
+        ReplayDepth = Math.Min(CameraFeed.MaxReplaySeconds, (_replayBuffer[^1].EndsAt - _replayBuffer[0].StartedAt).TotalSeconds);
+        // Replay opens frozen on the newest frame and stays paused: the operator drags back to the
+        // start of the play, then presses Start replay to run it. Nothing runs on its own, and the
+        // audience keeps watching the live camera until it is started.
+        _playing = false;
+        _replayOnAir = false;
+        SeekReplay(0);
         StateChanged?.Invoke();
-        Status?.Invoke($"REPLAY · {_replaySeconds}s · {CameraEntry.Label}");
+        Status?.Invoke($"REPLAY READY · in the preview only · drag the bar, then Start replay to go to air");
         return true;
     }
 
-    /// <summary>Cuts back to the live camera after an instant replay.</summary>
-    public bool ReturnToLive()
+    /// <summary>Runs the replay from wherever the operator has scrubbed to.</summary>
+    public bool PlayReplay()
     {
-        _replayTimer.Stop();
-        if (CameraEntry is null) return false;
-        PlayCamera(CameraEntry, null, -1);
+        if (!IsReplaying)
+        {
+            Status?.Invoke("START REPLAY · press Replay first");
+            return false;
+        }
+        if (!_playing)
+        {
+            try { _player.Play(); } catch { SetTransportPlaying(false); return false; }
+            SetTransportPlaying(true);
+        }
+        // Only now does the replay reach the audience; it is already rolling when it arrives.
+        if (!_replayOnAir)
+        {
+            _replayOnAir = true;
+            Playback.PromoteStage();
+        }
+        StateChanged?.Invoke();
+        Status?.Invoke($"REPLAY ON AIR · playing · {Math.Round(ReplayBack)}s behind live");
         return true;
     }
+
+    /// <summary>Moves the replay playhead to a point measured back from the live edge.</summary>
+    public void SeekReplay(double secondsBack)
+    {
+        if (!IsReplaying || _replayBuffer.Count == 0) return;
+        var back = Math.Clamp(double.IsFinite(secondsBack) ? secondsBack : 0, 0, ReplayDepth);
+        var target = _replayBuffer[^1].EndsAt.AddSeconds(-back);
+        var index = _replayBuffer.FindIndex(segment => target < segment.EndsAt);
+        if (index < 0) index = _replayBuffer.Count - 1;
+        var segment = _replayBuffer[index];
+        var offset = Math.Clamp((target - segment.StartedAt).TotalSeconds, 0, Math.Max(0, segment.Seconds - 0.05));
+        ReplayBack = back;
+        OpenReplaySegment(index, offset, _playing);
+        TransportChanged?.Invoke();
+    }
+
+    /// <summary>Opens one recorded clip at a point inside it and points the scorebug at it.</summary>
+    void OpenReplaySegment(int index, double offset, bool play)
+    {
+        var segment = _replayBuffer[Math.Clamp(index, 0, _replayBuffer.Count - 1)];
+        _replayIndex = index;
+        var entry = new MediaEntry(segment.Path, CameraEntry?.Tag ?? MediaLibrary.DefaultTag);
+        Current = entry;
+        // The library selection stays where the operator left it: the replay is a synthetic cue,
+        // and taking the selection over reset the tag, loop and speaker shown in the dock.
+        _duration = segment.Seconds;
+        _seekApply.Stop();
+        _audio.Stop();
+        _pendingSeek = offset;
+        try
+        {
+            _player.Close();
+            // A camera clip is recorded without sound, so the transport stays muted.
+            _player.Volume = 0;
+            _player.Open(new Uri(segment.Path));
+            if (play) _player.Play();
+        }
+        catch { }
+        // Before Start replay the cue is staged: only the previews pick it up.
+        if (_replayOnAir) Playback.Start(entry);
+        else Playback.Stage(entry);
+        Playback.Seek(offset);
+        // After the cue, so a paused scrub stays paused on the scorebug: Start() marks a new cue
+        // as playing, which would otherwise restart the picture the operator just paused.
+        SetTransportPlaying(play);
+    }
+
+    /// <summary>Moves to the next recorded clip as a replay runs out, or back to live at the end.</summary>
+    void AdvanceReplay()
+    {
+        if (_replayIndex + 1 < _replayBuffer.Count)
+        {
+            OpenReplaySegment(_replayIndex + 1, 0, _playing);
+            ReplayBack = Math.Max(0, (_replayBuffer[^1].EndsAt - _replayBuffer[_replayIndex].StartedAt).TotalSeconds);
+        }
+        else
+        {
+            ReturnToLive();
+        }
+    }
+
+    /// <summary>Keeps the replay playhead honest as the clip plays, so the bar follows it.</summary>
+    void TrackReplay()
+    {
+        if (!IsReplaying || _replayIndex < 0 || _replayIndex >= _replayBuffer.Count) return;
+        var segment = _replayBuffer[_replayIndex];
+        var at = segment.StartedAt.AddSeconds(Math.Clamp(Position, 0, segment.Seconds));
+        ReplayBack = Math.Clamp((_replayBuffer[^1].EndsAt - at).TotalSeconds, 0, Math.Max(0, ReplayDepth));
+    }
+
+    /// <summary>
+    /// Saves the replay from where the operator has scrubbed to, through to the live edge at the
+    /// moment the button was pressed. The frames are re-encoded on a background thread.
+    /// </summary>
+    public bool SaveReplayClip(string path)
+    {
+        if (!IsReplaying || _replayBuffer.Count == 0)
+        {
+            Status?.Invoke("SAVE REPLAY · open Replay first");
+            return false;
+        }
+        var live = _replayBuffer[^1].EndsAt;
+        var from = live.AddSeconds(-ReplayBack);
+        var segments = _replayBuffer.ToArray();
+        var name = System.IO.Path.GetFileName(path);
+        Status?.Invoke($"SAVING REPLAY · last {Stamp(ReplayBack)} → {name}");
+        Task.Run(() =>
+        {
+            var ok = CameraFeed.Export(segments, from, live, path, out var error);
+            _ui.BeginInvoke(() => Status?.Invoke(ok ? $"REPLAY SAVED · {name}" : $"REPLAY NOT SAVED · {error}"));
+        });
+        return true;
+    }
+
+    /// <summary>Cuts back to the live camera, at the live edge.</summary>
+    public bool ReturnToLive()
+    {
+        if (CameraEntry is null) return false;
+        var camera = CameraEntry;
+        IsReplaying = false;
+        _replayOnAir = false;
+        _replayBuffer.Clear();
+        _replayIndex = -1;
+        ReplayBack = 0;
+        ReplayDepth = 0;
+        PlayCamera(camera, null, -1);
+        StateChanged?.Invoke();
+        Status?.Invoke($"LIVE · {camera.Label}");
+        return true;
+    }
+
+    static string Stamp(double seconds) => $"{(int)(seconds / 60)}:{Math.Abs((int)seconds % 60):00}";
 
     void StopCamera()
     {
@@ -588,8 +758,11 @@ public sealed class MediaSession
     {
         if (entry.IsCamera) { PlayCamera(entry, playlist, index); return; }
         entry = Resolve(entry);
-        _replayTimer.Stop();
         IsReplaying = false;
+        _replayBuffer.Clear();
+        _replayIndex = -1;
+        ReplayBack = 0;
+        ReplayDepth = 0;
         if (!File.Exists(entry.Path))
         {
             Status?.Invoke("MEDIA FILE IS MISSING");
@@ -597,6 +770,7 @@ public sealed class MediaSession
         }
         StopCamera();
         IsReplaying = false;
+        _replayOnAir = false;
         // A clip sent to a speaker must not keep playing after the next clip is cued.
         _audio.Stop();
         _playlist = playlist;
@@ -631,6 +805,19 @@ public sealed class MediaSession
 
     public void TogglePlayPause()
     {
+        // A replay is paused and resumed like any clip, but never cued again from the top.
+        if (IsReplaying)
+        {
+            if (_playing)
+            {
+                try { _player.Pause(); } catch { }
+                SetTransportPlaying(false);
+                Status?.Invoke($"REPLAY PAUSED · {Math.Round(ReplayBack)}s behind live");
+            }
+            // Play on the transport means the same thing as Start replay: it goes to air.
+            else PlayReplay();
+            return;
+        }
         if (_playing)
         {
             try { _player.Pause(); } catch { }
@@ -666,10 +853,11 @@ public sealed class MediaSession
             SetTransportPlaying(false);
             return;
         }
-        // The replay clip ending is another way back to live, whether or not its timer fired first.
-        if (IsReplaying && CameraEntry is not null)
+        // A replay walks forward through the recorded clips and only cuts back to live at the end,
+        // so a paused replay is never yanked away from the operator.
+        if (IsReplaying)
         {
-            ReturnToLive();
+            AdvanceReplay();
             return;
         }
         // A playlist owns the order: clips run one after another whether or not they loop alone.
@@ -823,11 +1011,15 @@ public sealed class MediaSession
 
     public    void Stop(bool keepStatus = false)
     {
-        _replayTimer.Stop();
         try { _player.Stop(); _player.Close(); } catch { }
         StopCamera();
         _audio.Stop();
         IsReplaying = false;
+        _replayOnAir = false;
+        _replayBuffer.Clear();
+        _replayIndex = -1;
+        ReplayBack = 0;
+        ReplayDepth = 0;
         _seekApply.Stop();
         _seekTarget = 0;
         Current = null;

@@ -21,11 +21,16 @@ public partial class LauncherWindow : Window
 
     public string? GamePath { get; private set; }
 
+    // Deleting needs a second click, so a stray one never wipes the recovery points.
+    readonly System.Windows.Threading.DispatcherTimer _deleteReset = new() { Interval = TimeSpan.FromSeconds(5) };
+    bool _deleteArmed;
+
     public LauncherWindow()
     {
         InitializeComponent();
         VersionText.Text = Version;
         ThemeManager.SetSkipTheme(this, true);
+        _deleteReset.Tick += (_, _) => ResetDeleteButton();
         RefreshAutosaves();
         Loaded += (_, _) => NewGameButton.Focus();
     }
@@ -43,7 +48,38 @@ public partial class LauncherWindow : Window
         AutosaveEmpty.Visibility = Autosaves.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         AutosaveList.Visibility = Autosaves.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         LoadAutosaveButton.IsEnabled = false;
+        ClearAutosavesButton.IsEnabled = Autosaves.Count > 0;
+        ResetDeleteButton();
         if (Autosaves.Count > 0) AutosaveList.SelectedIndex = 0;
+    }
+
+    /// <summary>Deletes every autosave, after a second click confirms it.</summary>
+    void ClearAutosaves_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_deleteArmed)
+        {
+            _deleteArmed = true;
+            ClearAutosavesButton.Content = $"Delete {Autosaves.Count}?";
+            AutosaveStatus.Text = "Click again to remove every autosave.";
+            AutosaveStatus.Visibility = Visibility.Visible;
+            _deleteReset.Stop();
+            _deleteReset.Start();
+            return;
+        }
+        var deleted = AutosaveStore.DeleteAll();
+        RefreshAutosaves();
+        AutosaveStatus.Text = deleted == 0
+            ? "No autosaves were left to delete."
+            : $"Deleted {deleted} autosave{(deleted == 1 ? "" : "s")}.";
+        AutosaveStatus.Visibility = Visibility.Visible;
+    }
+
+    void ResetDeleteButton()
+    {
+        _deleteReset.Stop();
+        _deleteArmed = false;
+        if (ClearAutosavesButton is null) return;
+        ClearAutosavesButton.Content = "Delete all";
     }
 
     void NewGame_Click(object sender, RoutedEventArgs e)

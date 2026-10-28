@@ -33,6 +33,14 @@ public sealed class VideoSurface : Grid
     // A seek while playing pauses the picture and resumes it on the next dispatcher turn; the
     // queued resume owns Play() so this method does not start it inside the same tick.
     bool _resumeQueued;
+    // Identifies the cue a queued freeze belongs to, so a timer left over from the previous clip
+    // can never pause the new one.
+    int _freezeToken;
+    // Per-element audio. When this element names a speaker, its clip plays through that output
+    // here, so two video boxes can carry two clips to two different speakers.
+    AudioRouter? _router;
+    string? _routedPath;
+    string? _routedDevice;
 
     /// <param name="showPlaceholder">True only in the studio. The audience output and the preview
     /// stay blank while nothing is cued, so an off-air "VIDEO · GENERAL" label can never go out.</param>
@@ -50,7 +58,7 @@ public sealed class VideoSurface : Grid
         {
             LoadedBehavior = MediaState.Manual,
             UnloadedBehavior = MediaState.Manual,
-            Stretch = Stretch.UniformToFill,
+            Stretch = item.PreserveVideoAspect ? Stretch.Uniform : Stretch.UniformToFill,
             IsMuted = mute,
             Volume = mute ? 0 : 1,
             // Needed so a seek while paused still draws the new frame on the scorebug.
@@ -77,16 +85,39 @@ public sealed class VideoSurface : Grid
             // Open where the clip actually is: a rebuilt scorebug resumes the picture instead of
             // restarting it, and a fresh cue still starts from the operator's last seek.
             var resume = _playback?.LivePosition ?? 0;
-            if (resume <= 0.05) resume = _playback?.Position ?? 0;
+            if (!double.IsFinite(resume) || resume <= 0.05) resume = _playback?.Position ?? 0;
+            // Never ask for a point past the end of the clip: seeking beyond a short replay clip
+            // left the box black until the transport moved the playhead again.
+            if (_element.NaturalDuration.HasTimeSpan && _element.NaturalDuration.TimeSpan.TotalSeconds > 0)
+                resume = Math.Min(resume, Math.Max(0, _element.NaturalDuration.TimeSpan.TotalSeconds - 0.1));
             try { _element.Position = TimeSpan.FromSeconds(Math.Max(0, resume)); } catch { }
             _appliedSeek = _playback?.SeekVersion ?? 0;
             if (_playback is { IsPlaying: false } && !_playing)
             {
-                // Start decoding, then freeze on the opening frame so a paused cue still shows art.
+                // Start decoding so a paused cue still shows its frame. Pausing on the very next
+                // dispatcher turn froze some decoders before they had composited anything, which
+                // is what left a black box in the preview until the clip was started. The freeze
+                // now waits for the first frames to land.
+                var token = ++_freezeToken;
                 try { _element.Play(); } catch { }
-                Dispatcher.BeginInvoke(() => { try { _element.Pause(); } catch { } _playing = false; });
+                var freeze = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(240) };
+                freeze.Tick += (_, _) =>
+                {
+                    freeze.Stop();
+                    if (token != _freezeToken) return;
+                    if (_live.Source is not null) _live.Visibility = Visibility.Collapsed;
+                    // Start replay may have been pressed while the decoder was opening; in that
+                    // case keep rolling instead of freezing on the first frame.
+                    if (_playback is { IsPlaying: true }) { try { _element.Play(); } catch { } _playing = true; return; }
+                    try { _element.Pause(); } catch { }
+                    _playing = false;
+                };
+                freeze.Start();
                 return;
             }
+            // The live frame only covered the decoder while it opened the file; the clip is
+            // drawing now, so put it away so nothing stale shows through.
+            if (_live.Source is not null) _live.Visibility = Visibility.Collapsed;
             Apply();
         };
         _element.MediaEnded += (_, _) => Loop();
@@ -124,6 +155,10 @@ public sealed class VideoSurface : Grid
     public void SetElement(ScorebugElement item)
     {
         _item = item;
+        // Preserving the aspect ratio letterboxes the picture inside its box instead of cropping it.
+        var stretch = item.PreserveVideoAspect ? Stretch.Uniform : Stretch.UniformToFill;
+        _element.Stretch = stretch;
+        _live.Stretch = stretch;
         if (_placeholder is not null)
             _placeholder.Text = string.IsNullOrWhiteSpace(item.MediaTag) ? "VIDEO" : $"VIDEO · {item.MediaTag.ToUpperInvariant()}";
         Apply();
@@ -132,13 +167,21 @@ public sealed class VideoSurface : Grid
     void SyncClip() => _clip.Rect = new Rect(0, 0, Math.Max(0, ActualWidth), Math.Max(0, ActualHeight));
 
     /// <summary>
+    /// The clip this surface should be showing. A muted surface is a preview (studio, program
+    /// thumbnail), and only previews see a replay that has been opened but not started.
+    /// </summary>
+    MediaEntry? Cue() => _mute
+        ? _playback?.PreviewFor(_item.MediaTag)
+        : _playback?.ActiveFor(_item.MediaTag);
+
+    /// <summary>
     /// A clip that loops behaves like a stadium screen: rewind and keep rolling. A clip with its
     /// loop switched off holds its last frame and lets the session move to the next playlist item.
     /// </summary>
     void Loop()
     {
         if (_loadedPath is null) { _playing = false; return; }
-        var entry = _playback?.ActiveFor(_item.MediaTag);
+        var entry = Cue();
         if (entry is null || !entry.Loop || _playback is { IsPlaying: false }) { _playing = false; return; }
         try
         {
@@ -153,12 +196,14 @@ public sealed class VideoSurface : Grid
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Apply); return; }
         SyncClip();
-        var entry = _playback?.ActiveFor(_item.MediaTag);
+        var entry = Cue();
 
         // A live camera has no file to open: its frames replace the MediaElement until the
         // operator cuts to an instant replay or another clip.
         if (entry is { IsCamera: true })
         {
+            // A live feed has no file for the router to open.
+            StopRouting();
             ShowLiveCamera(entry.CameraIndex);
             if (_placeholder is not null) _placeholder.Visibility = Visibility.Collapsed;
             return;
@@ -169,6 +214,8 @@ public sealed class VideoSurface : Grid
 
         if (!matches)
         {
+            StopRouting();
+            _live.Visibility = Visibility.Collapsed;
             if (_loadedPath is not null)
             {
                 try { _element.Stop(); _element.Source = null; } catch { }
@@ -182,17 +229,23 @@ public sealed class VideoSurface : Grid
 
         if (_placeholder is not null) _placeholder.Visibility = Visibility.Collapsed;
 
-        // Each clip carries its own level, and a clip routed to a chosen speaker is muted here so
-        // its sound never comes out of two places at once.
+        // Each clip carries its own level, and a clip routed to a chosen speaker (on the clip or on
+        // this element) is muted here so its sound never comes out of two places at once.
         try
         {
-            _element.IsMuted = _mute || (_playback?.RoutedToDevice ?? false);
+            _element.IsMuted = _mute || !string.IsNullOrWhiteSpace(_item.AudioDevice) || (_playback?.RoutedToDevice ?? false);
             _element.Volume = (float)Math.Clamp(_playback?.Volume ?? 1, 0, 1);
         }
         catch { }
+        SyncRouting(entry!);
 
         if (_loadedPath != entry!.Path)
         {
+            // A queued freeze from the previous cue must not touch this one.
+            _freezeToken++;
+            // Opening a file takes a few frames, during which the MediaElement is black. Hold the
+            // last live picture over it so the scorebug never blinks out between live and replay.
+            if (_live.Source is not null) _live.Visibility = Visibility.Visible;
             try
             {
                 _element.Source = new Uri(entry.Path);
@@ -216,6 +269,7 @@ public sealed class VideoSurface : Grid
         if (_playback is not null && _playback.SeekVersion != _appliedSeek)
         {
             _appliedSeek = _playback.SeekVersion;
+            _router?.Seek(_playback.Position);
             var resume = _playing && _playback.IsPlaying;
             try
             {
@@ -242,17 +296,69 @@ public sealed class VideoSurface : Grid
         if (desired == _playing || _resumeQueued) return;
         try
         {
-            if (desired) { _element.Play(); _playing = true; }
-            else { _element.Pause(); _playing = false; }
+            if (desired)
+            {
+                _element.Play();
+                _playing = true;
+                // The clip is drawing again; the last live frame was only a cover while it opened.
+                if (_live.Source is not null) _live.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                _element.Pause();
+                _playing = false;
+            }
         }
         catch { }
+        if (desired) _router?.Resume(); else _router?.Pause();
+    }
+
+    /// <summary>
+    /// Plays (or pauses, seeks) this element's clip on its own speaker. Doing nothing when the
+    /// element has no speaker is deliberate: that case keeps the MediaElement's sound.
+    /// </summary>
+    void SyncRouting(MediaEntry entry)
+    {
+        // Only a surface that is actually on an audience output plays sound. Otherwise the studio
+        // and every preview would open their own copy of the same speaker and triple the audio.
+        if (_mute)
+        {
+            StopRouting();
+            return;
+        }
+        var device = _item.AudioDevice;
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            StopRouting();
+            return;
+        }
+        _router ??= new AudioRouter();
+        if (!string.Equals(_routedPath, entry.Path, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(_routedDevice, device, StringComparison.OrdinalIgnoreCase))
+        {
+            // Start at the transport's point so joining a running clip stays in sync.
+            var start = _playback?.Position ?? 0;
+            _router.Play(entry.Path, device, Math.Clamp(_playback?.Volume ?? entry.Volume, 0, 1), start);
+            _routedPath = entry.Path;
+            _routedDevice = device;
+        }
+        if (_playback is { IsPlaying: false }) _router.Pause(); else _router.Resume();
+        if (_playback is not null) _router.SetVolume(Math.Clamp(_playback.Volume, 0, 1));
+    }
+
+    void StopRouting()
+    {
+        if (_router is null) return;
+        _router.Stop();
+        _routedPath = null;
+        _routedDevice = null;
     }
 
     void ShowLiveCamera(int index)
     {
         if (_cameraIndex != index)
         {
-            HideLiveCamera();
+            UnsubscribeLive();
             _cameraIndex = index;
             if (_loadedPath is not null)
             {
@@ -265,8 +371,20 @@ public sealed class VideoSurface : Grid
             _feed.FrameReady += OnCameraFrame;
             _feed.Start();
         }
+        // The last frame stays in the image: cutting back from a replay shows the camera instantly
+        // instead of a blank box until the next frame arrives a fraction of a second later.
         _live.Visibility = Visibility.Visible;
         _element.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Stops listening to the feed but keeps its last frame on screen.</summary>
+    void UnsubscribeLive()
+    {
+        if (_feed is not null) _feed.FrameReady -= OnCameraFrame;
+        _feed = null;
+        _cameraIndex = -1;
+        _live.Visibility = Visibility.Collapsed;
+        _element.Visibility = Visibility.Visible;
     }
 
     void OnCameraFrame(ImageSource frame) => _live.Source = frame;
@@ -274,12 +392,7 @@ public sealed class VideoSurface : Grid
     void HideLiveCamera()
     {
         if (_cameraIndex < 0) return;
-        if (_feed is not null) _feed.FrameReady -= OnCameraFrame;
-        _feed = null;
-        _cameraIndex = -1;
-        _live.Source = null;
-        _live.Visibility = Visibility.Collapsed;
-        _element.Visibility = Visibility.Visible;
+        UnsubscribeLive();
     }
 
     /// <summary>Blanks the element after a decode failure instead of letting it crash the app.</summary>
@@ -290,12 +403,16 @@ public sealed class VideoSurface : Grid
         _opened = false;
         _loadedPath = null;
         try { _element.Stop(); _element.Source = null; } catch { }
+        _live.Visibility = Visibility.Collapsed;
         if (_placeholder is not null) _placeholder.Visibility = Visibility.Visible;
     }
 
     public void Dispose()
     {
         if (_playback is not null) _playback.Changed -= Apply;
+        StopRouting();
+        _router?.Dispose();
+        _router = null;
         HideLiveCamera();
         _playing = false;
         _opened = false;

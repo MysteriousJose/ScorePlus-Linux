@@ -7,6 +7,16 @@ AppDomain.CurrentDomain.ProcessExit+=(_,_)=>{try{Directory.Delete(appDataPath,tr
 static void Check(bool condition,string message){if(!condition)throw new Exception("FAIL: "+message);Console.WriteLine("PASS: "+message);}
 var engine=new GameEngine();
 Check(SportDefinition.BuiltIns.Select(x=>x.Id).Distinct().Count()>=9,"all built-in sports have unique identifiers");
+// Every sport the operator expects by name is present, plus a blank "Custom" starting point.
+foreach(var sport in new[]{"football","baseball","basketball","cricket","hockey","lacrosse","rugby","soccer","tennis","volleyball","wrestling","australian-football","generic"})
+    Check(SportDefinition.BuiltIns.Any(s=>s.Id==sport),$"the {sport} sport profile is built in");
+Check(SportDefinition.BuiltIns.Last().Name=="Custom"&&SportDefinition.BuiltIns.Last().Id=="generic","the last built-in profile is the editable Custom preset");
+// The American preset keeps its own scoring buttons: touchdown, extra point and two-point.
+var americanPreset=SportDefinition.BuiltIns.Single(s=>s.Id=="football");
+var australianPreset=SportDefinition.BuiltIns.Single(s=>s.Id=="australian-football");
+Check(americanPreset.ScoringOptions.SequenceEqual([1,2,3,6,7,8]),"American football offers its own scoring buttons (1, 2, 3, 6, 7, 8)");
+Check(australianPreset.ScoringOptions.SequenceEqual([1,2,3,6])&&australianPreset.Timeouts==0&&australianPreset.PeriodSeconds==1200,"Australian football keeps goal and behind scoring, no timeouts and 20-minute quarters");
+Check(SportDefinition.BuiltIns.All(s=>s.Periods>=1&&s.ScoringOptions.Length>0&&s.Timeouts>=0),"every built-in sport has playable period and scoring settings");
 engine.NewGame("basketball"); engine.SetTeams("Eagles","Tigers");
 engine.Score(true,3); engine.Score(false,2);
 Check(engine.State.HomeScore==3&&engine.State.AwayScore==2,"home and away scoring operations");
@@ -70,7 +80,18 @@ var typedNames=new GameEngine();typedNames.NewGame("football");var typedTarget=n
 engine.NewGame("football");engine.SetFootballDistance(3,74);Check(engine.State.YardsToGoal==50,"the ball spot stops at the 50-yard line");engine.SetPossession(false);Check(engine.State.YardsToGoal==50&&ScoreboardTemplates.Bind("{{BALL_ON}}",engine.State)=="50","the ball spot is not tied to possession");engine.SetFootballDistance(3,-6);Check(engine.State.YardsToGoal==0,"the ball spot stops at the goal line");
 engine.NewGame("football");engine.SetTeams("Home Team","Away Team");engine.SetFootballDistance(2,37);Check(engine.State.BallOnHomeSide&&ScoreboardTemplates.Bind("{{BALL_SIDE}}",engine.State)=="HT","the ball spot starts on the home half of the field");engine.SetPossession(false);Check(ScoreboardTemplates.Bind("{{BALL_SIDE}}",engine.State)=="HT"&&engine.State.YardsToGoal==37,"possession does not decide which half the ball is on");var beforeSide=GameEngine.StagedSignature(engine.State);engine.SetBallSide(false);Check(ScoreboardTemplates.Bind("{{BALL_SIDE}}",engine.State)=="AT"&&ScoreboardTemplates.Bind("{{BALL_SIDE_SPOT}}",engine.State)=="AT 37","the ball spot can sit on the visitors' half");Check(GameEngine.StagedSignature(engine.State)!=beforeSide,"a ball-side change waits for Update Output");Check(engine.Undo()&&engine.State.BallOnHomeSide,"moving the ball to the other half can be undone");
 var sameCatalogPath=Path.Combine(Path.GetTempPath(),$"same-{Guid.NewGuid():N}.json");try{var liveCatalog=new SportCatalog(sameCatalogPath);var liveEngine=new GameEngine(liveCatalog);liveEngine.NewGame("football");liveCatalog.SaveProfile(liveCatalog.Find("football")! with { Timeouts=4, ScoringOptions=[1,2,3,6] });liveEngine.NewGame("football");Check(liveEngine.State.HomeTimeouts==4&&liveEngine.State.ScoringOptions.Contains(6),"a sport profile edited while the app runs reaches the next new game without a relaunch");}finally{if(File.Exists(sameCatalogPath))File.Delete(sameCatalogPath);}
-var autosaveFolder=Path.Combine(Path.GetTempPath(),$"autosaves-{Guid.NewGuid():N}");AutosaveStore.UseFolder(autosaveFolder);try{var auto=new GameEngine();auto.NewGame("football");auto.SetTeams("Home Squad","Away Squad");auto.Score(true,7);AutosaveStore.Save(auto);AutosaveStore.Save(auto);var points=AutosaveStore.List();Check(points.Count==1&&points[0].HomeScore==7&&points[0].HomeTeam=="Home Squad","autosaves keep one recoverable point inside the same minute");Check(points[0].Path.EndsWith(".spg",StringComparison.OrdinalIgnoreCase),"autosaves are stored as .spg game files");auto.NewGame("football");var afterNewGame=AutosaveStore.Save(auto,startNewPoint:true);Check(afterNewGame.Count==2&&afterNewGame[0].HomeScore==0&&afterNewGame[1].HomeScore==7,"a new game starts its own recoverable point and leaves the previous game recoverable");for(var i=0;i<AutosaveStore.Keep+3;i++)AutosaveStore.Save(auto,startNewPoint:true);Check(AutosaveStore.List().Count==AutosaveStore.Keep,$"autosaves are pruned to the newest {AutosaveStore.Keep} points");}finally{AutosaveStore.UseFolder(null);try{Directory.Delete(autosaveFolder,true);}catch{}}
+var autosaveFolder=Path.Combine(Path.GetTempPath(),$"autosaves-{Guid.NewGuid():N}");AutosaveStore.UseFolder(autosaveFolder);try{var auto=new GameEngine();auto.NewGame("football");auto.SetTeams("Home Squad","Away Squad");auto.Score(true,7);AutosaveStore.Save(auto);AutosaveStore.Save(auto);var points=AutosaveStore.List();Check(points.Count==1&&points[0].HomeScore==7&&points[0].HomeTeam=="Home Squad","autosaves keep one recoverable point inside the same minute");Check(points[0].Path.EndsWith(".spg",StringComparison.OrdinalIgnoreCase),"autosaves are stored as .spg game files");auto.NewGame("football");var afterNewGame=AutosaveStore.Save(auto,startNewPoint:true);Check(afterNewGame.Count==2&&afterNewGame[0].HomeScore==0&&afterNewGame[1].HomeScore==7,"a new game starts its own recoverable point and leaves the previous game recoverable");for(var i=0;i<AutosaveStore.Keep+3;i++)AutosaveStore.Save(auto,startNewPoint:true);Check(AutosaveStore.List().Count==AutosaveStore.Keep,$"autosaves are pruned to the newest {AutosaveStore.Keep} points");
+// Delete all clears the folder, including a file that is too damaged to read as a game.
+File.WriteAllText(Path.Combine(autosaveFolder,"autosave-broken.spg"),"not a game");
+var deleted=AutosaveStore.DeleteAll();
+Check(deleted>=AutosaveStore.Keep+1&&AutosaveStore.List().Count==0&&Directory.GetFiles(autosaveFolder).All(path=>!path.EndsWith(".spg",StringComparison.OrdinalIgnoreCase)),$"deleting all autosaves empties the folder ({deleted} removed)");
+Check(AutosaveStore.DeleteAll()==0,"deleting all autosaves twice is harmless");
+var savedGame=Path.Combine(Path.GetTempPath(),$"kept-game-{Guid.NewGuid():N}.spg");
+auto.Save(savedGame);
+AutosaveStore.Save(auto,startNewPoint:true);
+AutosaveStore.DeleteAll();
+Check(File.Exists(savedGame)&&AutosaveStore.List().Count==0,"deleting autosaves leaves a saved .spg game alone");
+try{File.Delete(savedGame);}catch{}}finally{AutosaveStore.UseFolder(null);try{Directory.Delete(autosaveFolder,true);}catch{}}
 var liveTick=new GameEngine();liveTick.NewGame("basketball");var tickNotified=0;liveTick.Changed+=()=>tickNotified++;Thread.Sleep(1100);liveTick.Tick();Check(tickNotified==0,"idle ticks do not notify the UI when no clock is running");
 
 // ---------- team identity: name, abbreviation, logo and palette ----------
@@ -114,6 +135,55 @@ try
     Check(migrated.Layouts.Count==1&&migrated.Layouts[0].Elements.Count>=8,"an older single-layout file becomes the first layout");
 }
 finally{if(File.Exists(legacyLayoutPath))File.Delete(legacyLayoutPath);}
+
+// ---------- displays: independent screens, each with its own layouts and a link between them ----------
+var displaysPath=Path.Combine(Path.GetTempPath(),$"displays-{Guid.NewGuid():N}.json");
+try
+{
+    var displays=new ScorebugCatalog(displaysPath);
+    var program=displays.Displays[0];
+    Check(displays.Displays.Count==1&&displays.Displays[0].Layouts.Count==1,"a fresh game starts with one display and one layout");
+    var lowerIndex=displays.AddDisplay("Lower thirds");
+    var lower=displays.Displays[lowerIndex];
+    Check(displays.ActiveDisplayIndex==lowerIndex&&lower.Layouts.Count==1&&lower.Layouts[0].Elements.Count==0,"a new display starts blank and becomes the one being designed");
+    displays.AddLayout("Interview");
+    var interview=displays.Layout;
+    displays.SelectDisplay(0);
+    displays.PublishLayout(program.Id,0);
+    displays.PublishLayout(lower.Id,1);
+    Check(displays.IsPublished(lower.Id,1)&&displays.IsPublished(program.Id,0),"each display publishes its own layout");
+    Check(displays.PublishedLayoutOf(lower.Id).Name=="Interview"&&displays.PublishedLayoutOf(program.Id).Name=="Broadcast Classic","two displays can be on air with different layouts");
+    displays.SetLink(program.Id,0,lower.Id,interview.Id);
+    Check(displays.LinkTarget(program.Id,0) is { } link&&link.DisplayId==lower.Id&&link.LayoutIndex==1,"a layout can link to a layout on another display");
+    displays.SetLink(program.Id,0,program.Id,interview.Id);
+    Check(displays.LinkTarget(program.Id,0) is null,"a layout cannot link to its own display");
+    displays.SetLink(program.Id,0,lower.Id,interview.Id);
+    var reopened=new ScorebugCatalog(displaysPath);
+    Check(reopened.Displays.Count==2&&reopened.LinkTarget(reopened.Displays[0].Id,0) is not null,"displays and layout links persist in scorebug.json");
+    reopened.SelectDisplay(0);
+    Check(reopened.RemoveLayout(0)==false&&reopened.Layouts.Count==1,"the last layout on a display cannot be deleted");
+    reopened.RemoveDisplay(1);
+    Check(reopened.Displays.Count==1&&reopened.Displays[0].Layouts[0].LinkDisplayId is null,"removing a display clears the links that pointed at it");
+    reopened.ResetToDefault();
+    Check(reopened.Displays.Count==1&&reopened.Displays[0].Layouts.Count==1,"a new game resets back to one display");
+}
+finally{if(File.Exists(displaysPath))File.Delete(displaysPath);}
+
+// ---------- video elements: preserved aspect, own audio output ----------
+var videoPath=Path.Combine(Path.GetTempPath(),$"video-element-{Guid.NewGuid():N}.json");
+try
+{
+    var video=new ScorebugCatalog(videoPath);
+    video.Update(layout=>layout.Elements.Add(new ScorebugElement
+    {
+        Name="Ad",Kind=ScorebugElementKind.Video,MediaTag="Ads",PreserveVideoAspect=true,
+        VideoAspect=4.0/3.0,Width=800,Height=600,AudioDevice="speaker-two"
+    }));
+    var reopenedVideo=new ScorebugCatalog(videoPath);
+    var ad=reopenedVideo.Layout.Elements.First(x=>x.Kind==ScorebugElementKind.Video);
+    Check(ad.PreserveVideoAspect&&Math.Abs(ad.VideoAspect-4.0/3.0)<0.001&&ad.AudioDevice=="speaker-two","a video element keeps its preserved aspect ratio and its own audio output");
+}
+finally{if(File.Exists(videoPath))File.Delete(videoPath);}
 
 // ---------- typography, text transitions and team colour slots ----------
 var styledPath=Path.Combine(Path.GetTempPath(),$"styled-{Guid.NewGuid():N}.json");

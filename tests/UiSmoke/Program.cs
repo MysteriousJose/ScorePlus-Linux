@@ -36,11 +36,14 @@ internal static class Program
             MainWindow.PromptOnExit = false;
 
             // The exit prompt is the app's own chrome, not a system message box.
-            var unsavedPrompt = new UnsavedChangesWindow("Dark", "AWY 0   ·   0 HOM", "detail");
+            var unsavedPrompt = new UnsavedChangesWindow("Dark", "detail");
             unsavedPrompt.Show();
             unsavedPrompt.UpdateLayout();
             if (FindAll<Button>(unsavedPrompt).Count(b => (b.Content as string) is "Keep editing" or "Exit without saving" or "Save & exit") != 3)
                 throw new Exception("FAIL: the unsaved-game prompt does not offer keep, discard and save");
+            // No score card: the prompt explains the risk, it does not repeat the game summary.
+            if (FindAll<TextBlock>(unsavedPrompt).Any(t => t.FontFamily.Source == "Consolas"))
+                throw new Exception("FAIL: the unsaved-game prompt still shows the game score card");
             unsavedPrompt.Close();
             Console.WriteLine("PASS: exiting a changed game asks with a themed save/discard/keep prompt");
 
@@ -58,6 +61,9 @@ internal static class Program
             var shell = new MainWindow { Width = 1280, Height = 800 };
             shell.Show();
             shell.UpdateLayout();
+            // The dock lives on the MEDIA tab now, so it is only laid out once that tab is open.
+            shell.ShowMediaTab(true);
+            shell.UpdateLayout();
             var shellContent = (FrameworkElement)shell.Content;
             var dock = FindAll<MediaDock>(shell).FirstOrDefault() ?? throw new Exception("FAIL: the main window hosts no media dock");
             var transport = (Button)dock.FindName("PlayPauseButton")!;
@@ -68,8 +74,8 @@ internal static class Program
                 throw new Exception("FAIL: the unified media dock is missing its tiles or tag editor");
             if (transport.ActualWidth < 36 || transport.ActualHeight < 28)
                 throw new Exception($"FAIL: the transport controls are still tiny ({transport.ActualWidth:0}x{transport.ActualHeight:0})");
-            if (FindAll<GridSplitter>(shell).Count() < 2)
-                throw new Exception("FAIL: the preview, dock and console cannot be resized");
+            if (FindAll<GridSplitter>(shell).Count() < 1)
+                throw new Exception("FAIL: the preview column cannot be resized");
             var tagCombo = (ComboBox)dock.FindName("TagBox")!;
             if (tagCombo.Template?.FindName("PART_EditableTextBox", tagCombo) is not TextBox)
                 throw new Exception("FAIL: the tag box has no editable text box, so the tag is invisible and cannot be typed");
@@ -160,6 +166,43 @@ internal static class Program
 
             editor.Close();
             Console.WriteLine("PASS: scorebug studio loads");
+
+            // ---------- studio multi-select: Ctrl/Shift rows and Delete ----------
+            {
+                var multiPath = Path.Combine(Path.GetTempPath(), $"smoke-multi-{Guid.NewGuid():N}.json");
+                try
+                {
+                    var multiCatalog = new ScorebugCatalog(multiPath);
+                    var multiEditor = new ScorebugEditorWindow(multiCatalog, engine);
+                    multiEditor.Show();
+                    multiEditor.UpdateLayout();
+                    var multiLayers = (ListBox)multiEditor.FindName("Layers")!;
+                    if (multiLayers.SelectionMode != SelectionMode.Extended)
+                        throw new Exception("FAIL: the layer list cannot hold more than one selection");
+                    if (multiCatalog.Layout.Elements.Count < 2)
+                        throw new Exception("FAIL: the factory layout has too few elements to select two");
+                    var multiBefore = multiCatalog.Layout.Elements.Count;
+                    multiLayers.SelectedItems.Add(multiLayers.Items[0]);
+                    multiLayers.SelectedItems.Add(multiLayers.Items[1]);
+                    multiEditor.UpdateLayout();
+                    if (multiLayers.SelectedItems.Count != 2)
+                        throw new Exception("FAIL: the layer list dropped part of the selection");
+                    // The canvas highlights every selected object, not just the primary one.
+                    var selectedIds = multiCatalog.Layout.Elements.TakeLast(2).Select(element => element.Id).ToArray();
+                    var highlighted = FindAll<Border>((Canvas)multiEditor.FindName("DesignCanvas")!)
+                        .Count(border => border.Tag is ScorebugElement element && selectedIds.Contains(element.Id)
+                            && Equals(border.BorderBrush, System.Windows.Media.Brushes.DeepSkyBlue));
+                    if (highlighted != 2)
+                        throw new Exception($"FAIL: {highlighted} of 2 selected objects were highlighted in the studio");
+                    RaiseKey(multiEditor, PresentationSource.FromVisual(multiEditor), Key.Delete);
+                    multiEditor.UpdateLayout();
+                    if (multiCatalog.Layout.Elements.Count != multiBefore - 2)
+                        throw new Exception($"FAIL: Delete removed {multiBefore - multiCatalog.Layout.Elements.Count} objects instead of 2");
+                    multiEditor.Close();
+                }
+                finally { if (File.Exists(multiPath)) File.Delete(multiPath); }
+                Console.WriteLine("PASS: the studio keeps a multi-selection and Delete removes every selected object");
+            }
 
             var keybinds = new KeybindsWindow(new KeybindSettings());
             keybinds.Show();
@@ -723,6 +766,47 @@ internal static class Program
                 playback.Start(ad);
                 Console.WriteLine("PASS: ANY plays whatever is cued, and a live camera routes like a clip");
 
+                // Replay opens in the preview only: the audience keeps the live camera until Start replay.
+                var staging = new MediaPlayback();
+                var liveCamera = new MediaEntry(MediaLibrary.CameraPath(0), "Camera");
+                var replayClip = new MediaEntry(@"C:\media\replay-0001.avi", "Camera");
+                staging.Start(liveCamera);
+                staging.Stage(replayClip);
+                if (staging.ActiveFor("Camera")?.Path != liveCamera.Path)
+                    throw new Exception("FAIL: a staged replay reached the audience cue");
+                if (staging.PreviewFor("Camera")?.Path != replayClip.Path)
+                    throw new Exception("FAIL: the preview did not show the staged replay");
+                staging.PromoteStage();
+                if (staging.ActiveFor("Camera")?.Path != replayClip.Path || staging.HasStaged)
+                    throw new Exception("FAIL: Start replay did not put the staged replay on air");
+                staging.Start(liveCamera);
+                if (staging.HasStaged)
+                    throw new Exception("FAIL: going live left the replay waiting in the preview");
+                // A cue change resets the playhead a surface resumes at, so a short replay clip is
+                // never opened past its end (which showed as a black box in the preview).
+                var cueReset = new MediaPlayback();
+                cueReset.Start(ad);
+                cueReset.Seek(9);
+                cueReset.ReportPosition(12.5);
+                cueReset.Stage(replayClip);
+                if (cueReset.LivePosition > 0.001 || cueReset.Position > 0.001)
+                    throw new Exception($"FAIL: a new cue resumed at the previous playhead ({cueReset.LivePosition:0.0}s)");
+                Console.WriteLine("PASS: a replay stays in the preview until Start replay puts it on air");
+
+                // Cameras are offered by the name Windows knows them by, in device-index order, so
+                // the routing menu never says "Camera 1" for a camera called something else.
+                var devices = CameraFeed.NamedDevices();
+                if (devices.Count > 0)
+                {
+                    if (devices.Any(device => string.IsNullOrWhiteSpace(device.Name) || device.Name.StartsWith("Camera ")))
+                        throw new Exception($"FAIL: a camera has no Windows name ({string.Join(", ", devices.Select(d => d.Name))})");
+                    if (!devices.Select(device => device.Index).SequenceEqual(Enumerable.Range(0, devices.Count)))
+                        throw new Exception("FAIL: the camera list is not in device-index order");
+                    if (devices.Select(device => device.Name).Distinct().Count() != devices.Count)
+                        throw new Exception("FAIL: two cameras share one name");
+                }
+                Console.WriteLine($"PASS: cameras are listed by their Windows names ({string.Join(", ", devices.Select(device => device.Name))})");
+
                 // Each clip carries its own level and speaker.
                 var quietAd = ad with { Volume = 0.35, AudioDevice = "Speaker B" };
                 if (quietAd.VolumePercent != 35 || quietAd.AudioLabel != "Speaker B")
@@ -890,12 +974,12 @@ internal static class Program
                 clearSession.ClearAll();
                 if (clearSession.Library.Count != 0 || clearSession.Playlists.Count != 0 || clearSession.Playback.NowPlaying is not null)
                     throw new Exception("FAIL: Clear left media or a cued clip behind");
-                clearSession.SetReplaySeconds(25);
-                if (clearSession.ReplaySeconds != 25 || PreferencesStore.Load().ReplaySeconds != 25)
-                    throw new Exception($"FAIL: the replay length did not stick ({clearSession.ReplaySeconds})");
+                // Replay opens frozen at the live edge and waits for Start replay.
+                if (clearSession.IsReplaying || clearSession.PlayReplay())
+                    throw new Exception("FAIL: Start replay ran without an open replay");
             }
             finally { clearSession.Dispose(); }
-            Console.WriteLine("PASS: Clear blanks the media side and the replay length is remembered");
+            Console.WriteLine("PASS: Clear blanks the media side, and Start replay refuses with nothing open");
 
             // F11 on an audience window is Broadcast Fullscreen; Escape gives it back.
             var fsEngine = new GameEngine();
@@ -969,13 +1053,19 @@ internal static class Program
                 var mediaPanel = new GameControlWindow(engine, () => { }, _ => { }, () => true, sharedMedia);
                 mediaPanel.Show();
                 mediaPanel.UpdateLayout();
+                // Media is a tab of its own in a panel too, and it fills the panel when opened.
+                mediaPanel.ShowMediaTab(true);
+                mediaPanel.UpdateLayout();
                 var panelDock = FindAll<MediaDock>(mediaPanel).FirstOrDefault() ?? throw new Exception("FAIL: a detached control panel has no media dock");
                 var panelTiles = (WrapPanel)panelDock.FindName("Tiles")!;
                 panelTiles.UpdateLayout();
                 if (panelTiles.Children.Count != sharedMedia.Library.Count || panelTiles.Children.Count == 0)
                     throw new Exception($"FAIL: the detached panel shows {panelTiles.Children.Count} media tiles for a library of {sharedMedia.Library.Count}");
-                if (!FindAll<GridSplitter>(mediaPanel).Any())
-                    throw new Exception("FAIL: the detached panel's media dock cannot be resized");
+                if (panelDock.ActualWidth < mediaPanel.ActualWidth - 120)
+                    throw new Exception($"FAIL: the media tab does not fill the panel ({panelDock.ActualWidth:0} of {mediaPanel.ActualWidth:0})");
+                var panelTransport = (Button)panelDock.FindName("PlayPauseButton")!;
+                if (panelTransport.ActualHeight < 40)
+                    throw new Exception($"FAIL: the media tab still uses rail-sized buttons ({panelTransport.ActualHeight:0})");
                 mediaPanel.Close();
             }
             finally { sharedMedia.Dispose(); }
@@ -1001,8 +1091,29 @@ internal static class Program
             var autosaveList = (ListBox)launcherWindow.FindName("AutosaveList")!;
             if (autosaveList.Items.Count == 0)
                 throw new Exception("FAIL: the launcher lists no autosaves to load");
+            // Delete all is on the launcher, needs a second click, and really empties the folder.
+            var clearButton = FindAll<Button>(launcherWindow).FirstOrDefault(b => (b.Content as string) == "Delete all")
+                ?? throw new Exception("FAIL: the launcher has no Delete all button for autosaves");
+            clearButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if ((clearButton.Content as string) == "Delete all")
+                throw new Exception("FAIL: Delete all wiped the autosaves without asking for confirmation");
+            if (AutosaveStore.List().Count == 0)
+                throw new Exception("FAIL: the first Delete all click already removed the autosaves");
+            clearButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (AutosaveStore.List().Count != 0)
+                throw new Exception($"FAIL: Delete all left {AutosaveStore.List().Count} autosave(s) behind");
+            // A relaunch must not resurrect an autosave from the one-time legacy import.
+            var legacyRecovery = AppPaths.Combine("recovery.scoreboard");
+            File.WriteAllText(legacyRecovery, demoAutosave.ExportJson());
+            AutosaveStore.ImportLegacy();
+            if (AutosaveStore.List().Count != 0)
+                throw new Exception("FAIL: the legacy recovery file came back after deleting every autosave");
+            try { File.Delete(legacyRecovery); } catch { }
+            Console.WriteLine("PASS: the launcher deletes every autosave after a confirming second click, and they stay deleted");
             launcherWindow.Close();
             Console.WriteLine($"PASS: launch chooser offers New Game / Open Game, {LauncherWindow.Version} and {autosaveList.Items.Count} autosave(s)");
+            // Leave one behind again, so the rest of the run sees the usual state.
+            AutosaveStore.Save(demoAutosave, startNewPoint: true);
 
             // Studio dialogs are plain Windows: the theme has to reach them too.
             var dialogProbe = new Window { Width = 300, Height = 200 };
@@ -1374,10 +1485,156 @@ internal static class Program
                     throw new Exception("FAIL: the studio did not draw the chosen layout");
                 layoutStudio.Close();
                 layoutMain.Scorebug.SelectLayout(0);
+
+                // The display picker above the preview repoints the preview, and each display keeps
+                // its own layouts: a brand-new lower-third display starts blank.
+                layoutMain.Scorebug.AddDisplay("Lower thirds");
+                layoutMain.UpdateLayout();
+                var displayPicker = (ComboBox)layoutMain.FindName("DisplaySelector")!
+                    ?? throw new Exception("FAIL: no display picker above the program preview");
+                if (displayPicker.Items.Count != 2)
+                    throw new Exception($"FAIL: the display picker lists {displayPicker.Items.Count} displays for 2");
+                displayPicker.SelectedIndex = 1;
+                layoutMain.UpdateLayout();
+                if (FindAll<TextBlock>(preview).Any())
+                    throw new Exception("FAIL: the preview still shows the other display's artwork");
+                displayPicker.SelectedIndex = 0;
+                layoutMain.UpdateLayout();
+                if (!FindAll<TextBlock>(preview).Any())
+                    throw new Exception("FAIL: switching back to the first display did not restore its artwork");
+                // The media desk is a tab of its own, and the console comes back with one click.
+                var mediaTab = (Button)layoutMain.FindName("MediaTab")!;
+                var controlTab = (Button)layoutMain.FindName("ControlTab")!;
+                var dockControl = FindAll<MediaDock>(layoutMain).First();
+                mediaTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                layoutMain.UpdateLayout();
+                if (dockControl.Visibility != Visibility.Visible)
+                    throw new Exception("FAIL: the MEDIA tab did not reveal the media desk");
+                controlTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                layoutMain.UpdateLayout();
+                if (dockControl.Visibility != Visibility.Collapsed)
+                    throw new Exception("FAIL: the CONTROL PANEL tab did not put the media desk away");
                 audienceBefore.Dispose();
                 audienceAfter.Dispose();
                 layoutMain.Close();
                 Console.WriteLine("PASS: layout arrows switch the preview and Update Output sends the chosen scorebug on air");
+            }
+
+            // ---------- displays: one screen each, independent previews, linked layouts ----------
+            {
+                var displayPath = Path.Combine(Path.GetTempPath(), $"scoreplus-displays-{Guid.NewGuid():N}.json");
+                var displayEngine = new GameEngine();
+                displayEngine.NewGame("football");
+                var displayCatalog = new ScorebugCatalog(displayPath);
+                try
+                {
+                    var program = displayCatalog.Displays[0];
+                    var secondIndex = displayCatalog.AddDisplay("Lower thirds");
+                    var lowerThirds = displayCatalog.Displays[secondIndex];
+                    // A new display starts blank: one empty layout of its own.
+                    if (displayCatalog.Displays.Count != 2 || lowerThirds.Layouts.Count != 1 || lowerThirds.Layouts[0].Elements.Count != 0)
+                        throw new Exception("FAIL: a new display did not start with a single blank layout");
+                    displayCatalog.Update(layout => layout.Elements.Add(new ScorebugElement
+                    {
+                        Name = "Strap", Content = "NAME STRAP", X = 100, Y = 500, Width = 800, Height = 120, FontSize = 52
+                    }));
+                    displayCatalog.AddLayout("Interview");
+                    displayCatalog.Update(layout => layout.Elements.Add(new ScorebugElement
+                    {
+                        Name = "Interview", Content = "INTERVIEW", X = 60, Y = 60, Width = 700, Height = 110, FontSize = 44
+                    }));
+                    var interview = displayCatalog.Layout;
+                    var interviewIndex = lowerThirds.Layouts.FindIndex(layout => layout.Id == interview.Id);
+                    displayCatalog.SelectDisplay(0);
+
+                    // Two windows, one display each: a layout switch in one never moves the other.
+                    var windowA = new ProgramSelection(displayCatalog, program.Id);
+                    var windowB = new ProgramSelection(displayCatalog, lowerThirds.Id);
+                    windowA.SelectLayout(0);
+                    if (windowB.IndexFor(program.Id) != 0 || windowA.LayoutIndex != 0)
+                        throw new Exception("FAIL: a layout choice leaked between windows");
+                    if (windowB.DisplayId != lowerThirds.Id)
+                        throw new Exception("FAIL: a window could not keep its own display");
+
+                    // Linking the first program layout to the interview makes one Update Output change both.
+                    displayCatalog.SetLink(program.Id, 0, lowerThirds.Id, interview.Id);
+                    if (displayCatalog.LinkTarget(program.Id, 0) is not { } target || target.DisplayId != lowerThirds.Id || target.LayoutIndex != interviewIndex)
+                        throw new Exception("FAIL: the layout link did not resolve to the other display");
+                    windowA.SelectLayout(1);
+                    windowA.SelectLayout(0);
+                    if (windowA.IndexFor(lowerThirds.Id) != interviewIndex)
+                        throw new Exception("FAIL: choosing a linked layout did not switch the other display's selection");
+                    windowA.PublishStaged();
+                    if (!displayCatalog.IsPublished(lowerThirds.Id, interviewIndex))
+                        throw new Exception("FAIL: Update Output did not send the linked layout to the second display");
+                    if (windowA.IndexFor(lowerThirds.Id) != interviewIndex || windowB.IndexFor(lowerThirds.Id) != interviewIndex)
+                        throw new Exception("FAIL: the linked display lost its staged layout after publishing");
+
+                    // An audience window belongs to one display and only ever shows its published layout.
+                    var outputB = new OutputWindow(displayEngine, displayCatalog, "Dark", null, lowerThirds.Id);
+                    outputB.Show();
+                    outputB.UpdateLayout();
+                    if (outputB.DisplayId != lowerThirds.Id)
+                        throw new Exception("FAIL: the audience window opened on the wrong display");
+                    if (!FindAll<TextBlock>(outputB).Any(text => text.Text == "INTERVIEW"))
+                        throw new Exception("FAIL: the display's audience window did not draw its published layout");
+                    if (FindAll<TextBlock>(outputB).Any(text => text.Text == "{{HOME_SCORE}}"))
+                        throw new Exception("FAIL: the audience window drew the wrong display's artwork");
+                    outputB.Close();
+
+                    // The link editor can pair both ways: "Both ways" writes the link coming back,
+                    // and unticking it removes just that half.
+                    var linkStudio = new ScorebugEditorWindow(displayCatalog, displayEngine);
+                    linkStudio.Show();
+                    linkStudio.UpdateLayout();
+                    displayCatalog.SelectDisplay(0);
+                    displayCatalog.SelectLayout(0);
+                    linkStudio.UpdateLayout();
+                    var bothWays = (CheckBox)linkStudio.FindName("LinkBothWaysInput")!;
+                    if (bothWays.IsChecked == true)
+                        throw new Exception("FAIL: Both ways was already ticked for a one-way link");
+                    bothWays.IsChecked = true;
+                    if (displayCatalog.LinkTarget(lowerThirds.Id, interviewIndex) is not { } back || back.DisplayId != program.Id || back.LayoutIndex != 0)
+                        throw new Exception("FAIL: Both ways did not make the other display link back");
+                    bothWays.IsChecked = false;
+                    if (displayCatalog.LinkTarget(lowerThirds.Id, interviewIndex) is not null)
+                        throw new Exception("FAIL: unticking Both ways left the coming-back link behind");
+                    linkStudio.Close();
+
+                    // A link and a second display survive a reload.
+                    var reloaded = new ScorebugCatalog(displayPath);
+                    if (reloaded.Displays.Count != 2 || reloaded.LinkTarget(reloaded.Displays[0].Id, 0) is null)
+                        throw new Exception("FAIL: displays or layout links did not persist");
+                    reloaded.ResetToDefault();
+                    if (reloaded.Displays.Count != 1 || reloaded.Displays[0].Layouts.Count != 1)
+                        throw new Exception("FAIL: a new game did not reset back to one display and one layout");
+                    windowA.Dispose();
+                    windowB.Dispose();
+                }
+                finally { if (File.Exists(displayPath)) File.Delete(displayPath); }
+                Console.WriteLine("PASS: displays keep their own layouts and windows, links switch both screens, and an audience window is bound to one display");
+            }
+
+            // ---------- video elements: preserved aspect ratio and per-element audio output ----------
+            {
+                var video = new ScorebugElement
+                {
+                    Name = "Ad", Kind = ScorebugElementKind.Video, MediaTag = "Ads",
+                    PreserveVideoAspect = true, VideoAspect = 16.0 / 9.0, Width = 1600, Height = 900
+                };
+                var surface = new VideoSurface(video, null, true);
+                var picture = FindAll<MediaElement>(surface).FirstOrDefault()
+                    ?? throw new Exception("FAIL: a video element has no picture");
+                if (picture.Stretch != Stretch.Uniform)
+                    throw new Exception($"FAIL: a preserved-aspect video letterboxes with {picture.Stretch}");
+                video.PreserveVideoAspect = false;
+                surface.SetElement(video);
+                if (picture.Stretch != Stretch.UniformToFill)
+                    throw new Exception($"FAIL: a free video box should fill its frame, not {picture.Stretch}");
+                if (Math.Abs(video.Width / video.Height - video.VideoAspect) > 0.001)
+                    throw new Exception("FAIL: the preserved-aspect box does not match its picture");
+                surface.Dispose();
+                Console.WriteLine("PASS: video boxes honour the preserved aspect ratio, and each element carries its own audio output");
             }
 
             // ---------- team pop-up: name, abbreviation, logo and colours from the console ----------
@@ -1734,6 +1991,49 @@ internal static class Program
                 throw new Exception("FAIL: a detached control panel cannot switch layouts");
             clockPanel.Close();
             Console.WriteLine("PASS: clock buttons are full-size and every panel can switch layouts");
+
+            // Each sport brings its own rules and its own console controls; a new sport must not
+            // inherit the American football console.
+            {
+                var american = new MainWindow();
+                american.Show();
+                american.UpdateLayout();
+                american.StartNewGame("football", announce: false);
+                american.UpdateLayout();
+                var americanDetail = (FrameworkElement)american.Panel.FindName("FootballDetail")!;
+                var americanPlayClock = (FrameworkElement)american.Panel.FindName("PlayClockRow")!;
+                if (american.Engine.State.SportId != "football" || americanDetail.Visibility != Visibility.Visible || americanPlayClock.Visibility != Visibility.Visible)
+                    throw new Exception("FAIL: an American football game is missing its down & distance or play clock");
+                if (!FindAll<Button>(american.Panel).Any(b => (b.Tag as string) == "home.score.plus6"))
+                    throw new Exception("FAIL: American football has no touchdown button");
+                american.Close();
+
+                var australian = new MainWindow();
+                australian.Show();
+                australian.UpdateLayout();
+                australian.StartNewGame("australian-football", announce: false);
+                // Picking a sport from the picker must start that sport, not leave the last one.
+                var switchWindow = new MainWindow();
+                switchWindow.Show();
+                switchWindow.UpdateLayout();
+                switchWindow.StartNewGame("football", announce: false);
+                switchWindow.UpdateLayout();
+                var sportPicker = (ComboBox)switchWindow.FindName("SportSelector")!;
+                sportPicker.SelectedValue = "australian-football";
+                switchWindow.UpdateLayout();
+                if (sportPicker.SelectedValue as string != "australian-football" || switchWindow.Engine.State.SportId != "australian-football")
+                    throw new Exception($"FAIL: the sport picker left the game on {switchWindow.Engine.State.SportId}");
+                switchWindow.Close();
+                australian.UpdateLayout();
+                var australianDetail = (FrameworkElement)australian.Panel.FindName("FootballDetail")!;
+                var australianPlayClock = (FrameworkElement)australian.Panel.FindName("PlayClockRow")!;
+                if (australian.Engine.State.SportId != "australian-football" || australian.Engine.State.PeriodSeconds != 20 * 60)
+                    throw new Exception("FAIL: an Australian football game did not take its own quarter length");
+                if (australianDetail.Visibility != Visibility.Collapsed || australianPlayClock.Visibility != Visibility.Collapsed)
+                    throw new Exception("FAIL: Australian football shows the American down & distance card");
+                australian.Close();
+                Console.WriteLine("PASS: each sport brings its own rules and controls — American has down & distance and a touchdown button, Australian does not");
+            }
 
             Console.WriteLine("ALL UI SMOKE CHECKS PASSED");
 

@@ -30,6 +30,12 @@
       <Setter Property="Foreground" Value="#D6DCE5"/>
       <Setter Property="Cursor" Value="Hand"/>
     </Style>
+    <!-- The autosave card shares its row with two lines of text, so its buttons stay compact. -->
+    <Style x:Key="AutosaveButton" TargetType="Button" BasedOn="{StaticResource LoadButton}">
+      <Setter Property="Padding" Value="11,5"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="MinHeight" Value="28"/>
+    </Style>
   </Window.Resources>
 
   <Grid>
@@ -56,13 +62,19 @@
       <Border DockPanel.Dock="Bottom" Background="#0B0F14" BorderBrush="#151B23" BorderThickness="1"
               CornerRadius="9" Padding="12,10" Margin="0,18,0,0">
         <DockPanel>
-          <Button x:Name="LoadAutosaveButton" DockPanel.Dock="Right" Style="{StaticResource LoadButton}"
-                  Content="Load selected" Click="LoadAutosave_Click" VerticalAlignment="Bottom"
-                  ToolTip="Open the highlighted autosave"/>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
+            <Button x:Name="ClearAutosavesButton" Style="{StaticResource AutosaveButton}" Content="Delete all"
+                    Click="ClearAutosaves_Click" Margin="0,0,6,0"
+                    ToolTip="Remove every recoverable point from this computer. Saved .spg games are not touched."/>
+            <Button x:Name="LoadAutosaveButton" Style="{StaticResource AutosaveButton}"
+                    Content="Load" Click="LoadAutosave_Click"
+                    ToolTip="Open the highlighted autosave"/>
+          </StackPanel>
           <StackPanel>
             <TextBlock Text="AUTOSAVES" FontSize="11" FontWeight="Bold" Foreground="#93A0B2"/>
             <TextBlock Text="One recoverable point per minute of play. Double-click one to open it."
-                       FontSize="10" Foreground="#5C6B7E" Margin="0,2,0,6"/>
+                       FontSize="10" Foreground="#5C6B7E" Margin="0,2,0,6" TextWrapping="Wrap"/>
+            <TextBlock x:Name="AutosaveStatus" FontSize="10" Foreground="#38D7A3" Margin="0,0,0,4" Visibility="Collapsed"/>
           </StackPanel>
         </DockPanel>
       </Border>

@@ -8,15 +8,20 @@ public sealed record SportDefinition(string Id, string Name, string Unit, int Pe
 {
     public static IReadOnlyList<SportDefinition> BuiltIns { get; } = new[]
     {
-        new SportDefinition("basketball", "Basketball", "Quarter", 4, 12 * 60, [1, 2, 3], true, false, 5),
         new SportDefinition("football", "American Football", "Quarter", 4, 15 * 60, [1, 2, 3, 6, 7, 8], true, false, 3),
+        new SportDefinition("australian-football", "Australian Football", "Quarter", 4, 20 * 60, [1, 2, 3, 6], false, false, 0),
         new SportDefinition("baseball", "Baseball", "Inning", 9, 0, [1], false, true, 3),
-        new SportDefinition("soccer", "Soccer", "Half", 2, 45 * 60, [1], false, false, 5),
+        new SportDefinition("basketball", "Basketball", "Quarter", 4, 12 * 60, [1, 2, 3], true, false, 5),
+        new SportDefinition("cricket", "Cricket", "Innings", 2, 0, [1, 2, 3, 4, 6], false, true, 0),
         new SportDefinition("hockey", "Hockey", "Period", 3, 20 * 60, [1], true, false, 1),
         new SportDefinition("lacrosse", "Lacrosse", "Quarter", 4, 12 * 60, [1], true, false, 3),
-        new SportDefinition("volleyball", "Volleyball", "Set", 5, 0, [1], false, true, 2),
+        new SportDefinition("rugby", "Rugby", "Half", 2, 40 * 60, [2, 3, 5, 7], false, false, 3),
+        new SportDefinition("soccer", "Soccer", "Half", 2, 45 * 60, [1], false, false, 5),
         new SportDefinition("tennis", "Tennis", "Set", 3, 0, [1], false, true, 3),
-        new SportDefinition("generic", "Generic", "Period", 2, 10 * 60, [1, 2, 3], false, false, 3)
+        new SportDefinition("volleyball", "Volleyball", "Set", 5, 0, [1], false, true, 2),
+        new SportDefinition("wrestling", "Wrestling", "Period", 3, 3 * 60, [1, 2, 3], false, false, 0),
+        // The blank starting point: everything editable in Sport Profiles.
+        new SportDefinition("generic", "Custom", "Period", 2, 10 * 60, [1, 2, 3], false, false, 3)
     };
 }
 

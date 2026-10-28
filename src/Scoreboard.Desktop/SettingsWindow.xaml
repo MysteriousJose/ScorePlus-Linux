@@ -17,6 +17,13 @@
         <TextBlock Text="OPERATOR WORKFLOW" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
         <CheckBox x:Name="ShowHints" Content="Show tips next to headings (for example 'scoring, timing, actions')" Checked="Controls_Changed" Unchecked="Controls_Changed"/>
         <TextBlock Text="Off by default. Turning it on adds the small explanatory labels in the header, the media dock and the console cards." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,8"/>
+        <Separator/>
+        <TextBlock Text="GAME SAFETY" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
+        <Button x:Name="DeleteAutosavesButton" Content="Delete all autosaves" HorizontalAlignment="Left" MinHeight="32"
+                Padding="14,6" Click="DeleteAutosaves_Click" Margin="4,4,4,2"
+                ToolTip="Remove every recoverable point from this computer. Saved .spg games are not touched."/>
+        <TextBlock x:Name="AutosaveStatus" Text="Autosave keeps a recovery point every few seconds while you work."
+                   TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,2,6,4"/>
       </StackPanel>
     </ScrollViewer>
   </DockPanel>

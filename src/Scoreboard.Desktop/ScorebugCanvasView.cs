@@ -12,7 +12,9 @@ public sealed class ScorebugCanvasView : Grid
     readonly GameEngine _engine;
     readonly Func<GameState> _stateProvider;
     readonly bool _live;
-    readonly bool _publishedLayout;
+    // Which artwork this view draws. The audience output resolves it from its own display; the
+    // window preview resolves it from that window's staged selection.
+    readonly Func<ScorebugLayout> _layoutProvider;
     readonly Canvas _canvas = new() { Background=new SolidColorBrush(Color.FromRgb(9,16,24)), ClipToBounds=true };
     readonly MediaPlayback? _playback;
     readonly bool _muteVideo;
@@ -29,9 +31,14 @@ public sealed class ScorebugCanvasView : Grid
 
     /// <param name="publishedLayout">True for the audience output: it follows the layout that was
     /// actually published, not the one being designed in the preview.</param>
-    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true, bool publishedLayout=false)
+    /// <param name="publishedLayout">True for the audience output: it follows the layout that was
+    /// actually published, not the one being designed in the preview.</param>
+    /// <param name="layoutProvider">Draws exactly the layout this view belongs to (a specific
+    /// display's on-air layout, or a window's staged one). Overrides <paramref name="publishedLayout"/>.</param>
+    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true, bool publishedLayout=false, Func<ScorebugLayout>? layoutProvider=null)
     {
-        _catalog=catalog;_engine=engine;_live=stateProvider is null;_publishedLayout=publishedLayout;
+        _catalog=catalog;_engine=engine;_live=stateProvider is null;
+        _layoutProvider = layoutProvider ?? (publishedLayout ? () => _catalog.PublishedLayout : () => _catalog.Layout);
         _stateProvider=stateProvider??(()=>_engine.State);
         _playback=playback;_muteVideo=muteVideo;
         Children.Add(new Viewbox { Stretch=Stretch.Uniform, Child=_canvas });
@@ -43,7 +50,7 @@ public sealed class ScorebugCanvasView : Grid
     }
 
     /// <summary>The artwork this view is drawing: the design being previewed, or the published one.</summary>
-    public ScorebugLayout Layout => _publishedLayout ? _catalog.PublishedLayout : _catalog.Layout;
+    public ScorebugLayout Layout => _layoutProvider();
 
     public void Rebuild()
     {

@@ -5,9 +5,22 @@
         Title="ScorePlus — Control Panel" Width="1360" Height="930" MinWidth="1280" MinHeight="860"
         Background="#0B0F14" Foreground="#F4F7FB" FontFamily="Segoe UI">
   <Window.Resources>
-    <Style x:Key="SplitterStyle" TargetType="GridSplitter">
-      <Setter Property="Background" Value="#1E2630"/>
-      <Setter Property="ShowsPreview" Value="True"/>
+    <Style x:Key="TabButton" TargetType="Button">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Padding" Value="18,9"/>
+      <Setter Property="MinHeight" Value="38"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+      <Setter Property="Background" Value="#141A23"/>
+      <Setter Property="BorderBrush" Value="#28323F"/>
+      <Setter Property="Foreground" Value="#93A0B2"/>
+    </Style>
+    <Style x:Key="SmallButton" TargetType="Button">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="MinHeight" Value="32"/>
+      <Setter Property="MinWidth" Value="32"/>
+      <Setter Property="Padding" Value="8,4"/>
+      <Setter Property="Margin" Value="2"/>
     </Style>
   </Window.Resources>
   <DockPanel>
@@ -20,7 +33,7 @@
         </StackPanel>
         <StackPanel VerticalAlignment="Center">
           <TextBlock Text="SCOREPLUS · CONTROL PANEL" FontSize="14" FontWeight="Bold"/>
-          <TextBlock Text="Everything here drives the same game and the same media library as the main window." Foreground="#93A0B2" FontSize="11" Margin="0,3,0,0"/>
+          <TextBlock Text="This window has its own display and layout choice. The game, the media library and the audience follow whatever you publish." Foreground="#93A0B2" FontSize="11" Margin="0,3,0,0"/>
         </StackPanel>
       </DockPanel>
     </Border>
@@ -28,14 +41,51 @@
       <TextBlock x:Name="MediaStatus" Text="MEDIA READY" Foreground="#93A0B2" FontSize="11" TextTrimming="CharacterEllipsis"/>
     </Border>
     <Grid Margin="12,10,12,10">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*" MinWidth="430"/>
-        <ColumnDefinition Width="7"/>
-        <ColumnDefinition Width="300" MinWidth="240"/>
-      </Grid.ColumnDefinitions>
-      <ContentControl x:Name="PanelHost" Grid.Column="0"/>
-      <GridSplitter Grid.Column="1" Style="{StaticResource SplitterStyle}" Width="7" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"/>
-      <local:MediaDock x:Name="MediaControl" Grid.Column="2"/>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+
+      <!-- Program preview: which display this window is driving, and its layout. -->
+      <Border x:Name="ProgramStrip" Grid.Row="0" Background="#10161F" CornerRadius="9" Padding="10,8" Margin="0,0,0,9">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="248"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <Border Background="#091018" CornerRadius="7" ClipToBounds="True" Height="140">
+            <ContentControl x:Name="PreviewHost"/>
+          </Border>
+          <StackPanel Grid.Column="1" Margin="12,2,0,0">
+            <StackPanel Orientation="Horizontal">
+              <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,6,0"/>
+              <TextBlock Text="PROGRAM PREVIEW" FontSize="11" FontWeight="Bold" Foreground="#93A0B2" VerticalAlignment="Center"/>
+            </StackPanel>
+            <TextBlock Text="DISPLAY" FontSize="10" FontWeight="Bold" Foreground="#5C6B7E" Margin="0,8,0,3"/>
+            <ComboBox x:Name="DisplaySelector" FontSize="12" MinHeight="30" SelectionChanged="Display_Changed"
+                      ToolTip="Choose the display this panel previews and publishes"/>
+            <DockPanel Margin="0,8,0,0">
+              <Button x:Name="LayoutPrevButton" DockPanel.Dock="Left" Style="{StaticResource SmallButton}" Content="◀" Click="LayoutPrev_Click" ToolTip="Previous layout on this display"/>
+              <Button x:Name="LayoutNextButton" DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Content="▶" Click="LayoutNext_Click" ToolTip="Next layout on this display"/>
+              <TextBlock x:Name="PreviewLayoutLabel" Text="1 · Broadcast Classic" FontSize="12" FontWeight="SemiBold"
+                         TextAlignment="Center" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="4,0"/>
+            </DockPanel>
+            <TextBlock x:Name="ProgramHint" Text="Switching layouts only changes this preview — Update Output puts it on air."
+                       FontSize="10" Foreground="#5C6B7E" TextWrapping="Wrap" Margin="0,6,0,0"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <StackPanel Grid.Row="1" Orientation="Horizontal">
+        <Button x:Name="ControlTab" Style="{StaticResource TabButton}" Content="CONTROL PANEL" Click="ControlTab_Click"/>
+        <Button x:Name="MediaTab" Style="{StaticResource TabButton}" Content="MEDIA" Click="MediaTab_Click" ToolTip="Clips, camera, replay and playlists"/>
+      </StackPanel>
+
+      <Grid Grid.Row="2" Margin="0,9,0,0">
+        <ContentControl x:Name="PanelHost"/>
+        <local:MediaDock x:Name="MediaControl" Visibility="Collapsed"/>
+      </Grid>
     </Grid>
   </DockPanel>
 </Window>

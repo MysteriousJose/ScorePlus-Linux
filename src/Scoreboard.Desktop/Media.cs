@@ -17,11 +17,18 @@ public sealed record MediaEntry(
     string Folder = "",
     bool Loop = false,
     double Volume = 1,
-    string? AudioDevice = null)
+    string? AudioDevice = null,
+    string? Name = null,
+    int? CameraDevice = null)
 {
-    public string Label => IsCamera ? $"Live camera {CameraIndex + 1}" : System.IO.Path.GetFileName(Path);
+    /// <summary>A camera with no name of its own is labelled with the camera it uses, so the dock
+    /// says "icspring camera" rather than "Live camera 1".</summary>
+    public string Label => !string.IsNullOrWhiteSpace(Name)
+        ? Name.Trim()
+        : IsCamera ? CameraFeed.CameraName(CameraIndex) : System.IO.Path.GetFileName(Path);
     public bool IsCamera => MediaLibrary.CameraIndex(Path) is not null;
-    public int CameraIndex => MediaLibrary.CameraIndex(Path) ?? 0;
+    /// <summary>Which capture device this camera item routes to; an override beats the path's index.</summary>
+    public int CameraIndex => CameraDevice ?? MediaLibrary.CameraIndex(Path) ?? 0;
     public bool IsVideo => IsCamera || MediaLibrary.IsVideoFile(Path);
     public string KindLabel => IsCamera ? "LIVE" : IsVideo ? "VIDEO" : "AUDIO";
     public string FolderLabel => string.IsNullOrWhiteSpace(Folder) ? MediaLibrary.RootFolderLabel : Folder;
@@ -105,6 +112,27 @@ public static class MediaLibrary
         return updated;
     }
 
+    /// <summary>Renames a camera item, so a show can call it "Tight" or "Wide" rather than Camera 2.</summary>
+    public static MediaEntry? SetName(IList<MediaEntry> library, MediaEntry selected, string? name)
+    {
+        var index = library.IndexOf(selected);
+        if (index < 0) return null;
+        var trimmed = (name ?? "").Trim();
+        var updated = selected with { Name = trimmed.Length == 0 ? null : trimmed };
+        library[index] = updated;
+        return updated;
+    }
+
+    /// <summary>Points a camera item at a different capture device.</summary>
+    public static MediaEntry? SetCameraDevice(IList<MediaEntry> library, MediaEntry selected, int device)
+    {
+        var index = library.IndexOf(selected);
+        if (index < 0) return null;
+        var updated = selected with { CameraDevice = Math.Max(0, device) };
+        library[index] = updated;
+        return updated;
+    }
+
     /// <summary>Flips the clip's own loop flag, in place.</summary>
     public static MediaEntry? SetLoop(IList<MediaEntry> library, MediaEntry selected, bool loop)
     {
@@ -152,6 +180,13 @@ public sealed class MediaPlayback
 {
     public MediaEntry? NowPlaying { get; private set; }
 
+    // A replay the operator has opened but not started. Only previews see it; the audience keeps
+    // the live cue until Start replay promotes it.
+    MediaEntry? _staged;
+
+    /// <summary>True while a replay is waiting in the preview, not yet on air.</summary>
+    public bool HasStaged => _staged is not null;
+
     /// <summary>False while the operator has the clip paused, so scorebug video elements freeze with it.</summary>
     public bool IsPlaying { get; private set; }
 
@@ -188,12 +223,38 @@ public sealed class MediaPlayback
 
     public void Start(MediaEntry? entry)
     {
+        // Any new cue replaces whatever replay was waiting in the preview.
+        _staged = null;
         NowPlaying = entry;
         IsPlaying = entry is not null;
         Position = 0;
+        // A surface that opens this cue must not resume at the last clip's position.
+        LivePosition = 0;
         RoutingFailed = false;
         SeekVersion++;
         Changed?.Invoke();
+    }
+
+    /// <summary>Cues a replay for the preview only, leaving the audience on the live cue.</summary>
+    public void Stage(MediaEntry? entry)
+    {
+        _staged = entry;
+        // The staged clip starts from the top until the operator seeks it; keeping the last clip's
+        // playhead here would open the new file past its end.
+        Position = 0;
+        LivePosition = 0;
+        Changed?.Invoke();
+    }
+
+    /// <summary>Puts the waiting replay on air, keeping the position the operator scrubbed to.</summary>
+    public bool PromoteStage()
+    {
+        if (_staged is null) return false;
+        NowPlaying = _staged;
+        _staged = null;
+        RoutingFailed = false;
+        Changed?.Invoke();
+        return true;
     }
 
     /// <summary>Moves every scorebug video element showing this clip to the same point.</summary>
@@ -242,9 +303,16 @@ public sealed class MediaPlayback
     public bool Matches(MediaEntry entry, string? elementTag) => MediaLibrary.TagMatches(elementTag, entry.Tag);
 
     /// <summary>The video this element should be showing right now, or null. Audio cues never fill a video box.</summary>
-    public MediaEntry? ActiveFor(string? elementTag)
+    public MediaEntry? ActiveFor(string? elementTag) => Resolve(NowPlaying, elementTag);
+
+    /// <summary>
+    /// What a preview should show: a replay waiting to go on air takes precedence, so the operator
+    /// can scrub it while the audience keeps watching the live camera.
+    /// </summary>
+    public MediaEntry? PreviewFor(string? elementTag) => Resolve(_staged ?? NowPlaying, elementTag);
+
+    MediaEntry? Resolve(MediaEntry? entry, string? elementTag)
     {
-        var entry = NowPlaying;
         if (entry is null || !entry.IsVideo) return null;
         return Matches(entry, elementTag) ? entry : null;
     }

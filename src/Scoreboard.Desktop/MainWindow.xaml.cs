@@ -20,7 +20,11 @@ public partial class MainWindow : Window, IControlPanelHost
     readonly DispatcherTimer _autosave = new() { Interval = TimeSpan.FromSeconds(5) };
     readonly List<GameControlWindow> _controlPanels = [];
     readonly ControlPanelView _panel;
+    // This window's own display choice and staged layouts. Another panel can stage a different
+    // display at the same time; only Update Output sends anything to an audience.
+    readonly ProgramSelection _program;
     readonly MediaSession _session;
+    bool _displaySync;
     readonly MediaPlayback _playback;
     // Every audience window ever opened this session. Opening the output again adds another one
     // instead of focusing the old window, so a show can spread the graphic over several displays.
@@ -68,9 +72,13 @@ public partial class MainWindow : Window, IControlPanelHost
         _autosave.Tick += (_, _) => AutoSave();
         _autosave.Start();
 
-        _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback);
+        _program = new ProgramSelection(_scorebug);
+        _program.Changed += ProgramChanged;
+        _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback, layoutProvider: () => _program.Layout);
         PreviewHost.Content = _preview;
+        SyncDisplayPicker();
         RefreshLayoutIndicators();
+        ShowTab(media: false);
 
         _panel = new ControlPanelView(_engine, this);
         ControlHost.Content = _panel;
@@ -78,6 +86,9 @@ public partial class MainWindow : Window, IControlPanelHost
 
         MediaControl.Attach(_session);
         MediaControl.ApplyTheme(_preferences.Theme);
+        // The dock now lives in a full-width tab instead of a narrow rail, so its controls are the
+        // same size as the console's.
+        MediaControl.SetLargeMode(true);
         _session.Status += message => StatusText.Text = message;
         ApplyHintVisibility();
 
@@ -129,23 +140,32 @@ public partial class MainWindow : Window, IControlPanelHost
 
     public bool HasStagedChanges =>
         GameEngine.StagedSignature(_engine.State) != GameEngine.StagedSignature(_publishedEngine.State) ||
-        _scorebug.ActiveIndex != _scorebug.PublishedIndex;
+        _program.HasStagedChanges;
 
     /// <summary>The layout the preview is showing: the one that Update Output will publish.</summary>
-    public string LayoutLabel => $"{_scorebug.ActiveIndex + 1} · {_scorebug.Layout.Name}";
+    public string LayoutLabel => _program.Label;
 
     public void OpenNewPanel() => OpenControlPanel();
 
-    public void PublishOutput()
+    /// <summary>
+    /// Sends the game data (score, clocks, down, stats) to the audience copies. It deliberately
+    /// touches no layout, so a detached panel can publish its own display right after it.
+    /// </summary>
+    public void PublishGameState()
     {
-        // The chosen layout goes on air with the game data: the preview and output still read
-        // different copies, so the switch only happens here.
-        _scorebug.PublishLayout();
         _publishedEngine.LoadFromState(_engine.CloneState());
         _preview?.Refresh();
         foreach (var output in _outputs) output.Publish();
-        StatusText.Text = $"OUTPUT UPDATED · {_scorebug.Layout.Name.ToUpperInvariant()} · {DateTime.Now:HH:mm:ss}";
+    }
+
+    public void PublishOutput()
+    {
+        // The chosen layouts go on air with the game data: the preview and output still read
+        // different copies, so the switch only happens here.
+        PublishGameState();
+        _program.PublishStaged();
         RefreshLayoutIndicators();
+        StatusText.Text = $"OUTPUT UPDATED · {LayoutLabel.ToUpperInvariant()} · {DateTime.Now:HH:mm:ss}";
         _panel.Refresh();
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
     }
@@ -153,22 +173,80 @@ public partial class MainWindow : Window, IControlPanelHost
     /// <summary>Moves the previewed layout; nothing goes on air until Update Output is pressed.</summary>
     public void ShiftLayout(int delta)
     {
-        if (_scorebug.Layouts.Count == 0) return;
-        var next = (_scorebug.ActiveIndex + delta + _scorebug.Layouts.Count) % _scorebug.Layouts.Count;
-        _scorebug.SelectLayout(next);
+        _program.Shift(delta);
         _preview?.Rebuild();
         RefreshLayoutIndicators();
-        StatusText.Text = _scorebug.PublishedIndex == _scorebug.ActiveIndex
-            ? $"LAYOUT · {LayoutLabel} · ON AIR"
-            : $"LAYOUT · {LayoutLabel} · preview only — press Update Output";
+        StatusText.Text = _program.HasStagedChanges
+            ? $"LAYOUT · {LayoutLabel} · preview only — press Update Output"
+            : $"LAYOUT · {LayoutLabel} · ON AIR";
         _panel.Refresh();
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
+    }
+
+    void ProgramChanged()
+    {
+        SyncDisplayPicker();
+        RefreshLayoutIndicators();
+        _preview?.Rebuild();
+    }
+
+    /// <summary>Fills the display picker without treating the sync as the operator's choice.</summary>
+    void SyncDisplayPicker()
+    {
+        _displaySync = true;
+        try
+        {
+            var names = _scorebug.Displays.Select(display => display.Name).ToArray();
+            if (DisplaySelector.ItemsSource is not IEnumerable<string> existing || !existing.SequenceEqual(names))
+                DisplaySelector.ItemsSource = names;
+            var index = _scorebug.Displays.FindIndex(display => string.Equals(display.Id, _program.DisplayId, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0 && DisplaySelector.SelectedIndex != index) DisplaySelector.SelectedIndex = index;
+        }
+        finally { _displaySync = false; }
+    }
+
+    void Display_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_displaySync || DisplaySelector.SelectedIndex < 0 || DisplaySelector.SelectedIndex >= _scorebug.Displays.Count) return;
+        _program.SelectDisplay(_scorebug.Displays[DisplaySelector.SelectedIndex].Id);
+        _preview?.Rebuild();
+        RefreshLayoutIndicators();
+        StatusText.Text = $"PREVIEW · {_program.Display.Name} · {LayoutLabel}";
     }
 
     void RefreshLayoutIndicators()
     {
         PreviewLayoutLabel.Text = LayoutLabel;
-        LayoutPrevButton.IsEnabled = LayoutNextButton.IsEnabled = _scorebug.Layouts.Count > 1;
+        var count = _program.Display.Layouts.Count;
+        LayoutPrevButton.IsEnabled = LayoutNextButton.IsEnabled = count > 1;
+    }
+
+    // ---------- tabs ----------
+
+    /// <summary>Switches the operator surface between the console and the media desk.</summary>
+    public void ShowMediaTab(bool media) => ShowTab(media);
+
+    void ControlTab_Click(object sender, RoutedEventArgs e) => ShowTab(media: false);
+
+    void MediaTab_Click(object sender, RoutedEventArgs e) => ShowTab(media: true);
+
+    /// <summary>Switches the operator surface between the console and the media desk.</summary>
+    void ShowTab(bool media)
+    {
+        ControlHost.Visibility = media ? Visibility.Collapsed : Visibility.Visible;
+        MediaControl.Visibility = media ? Visibility.Visible : Visibility.Collapsed;
+        var on = (Brush)new BrushConverter().ConvertFromString("#123C33")!;
+        var off = (Brush)new BrushConverter().ConvertFromString("#141A23")!;
+        var onBorder = (Brush)new BrushConverter().ConvertFromString("#38D7A3")!;
+        var offBorder = (Brush)new BrushConverter().ConvertFromString("#28323F")!;
+        var muted = (Brush)new BrushConverter().ConvertFromString("#93A0B2")!;
+        ControlTab.Background = media ? off : on;
+        ControlTab.BorderBrush = media ? offBorder : onBorder;
+        ControlTab.Foreground = media ? muted : Brushes.White;
+        MediaTab.Background = media ? on : off;
+        MediaTab.BorderBrush = media ? onBorder : offBorder;
+        MediaTab.Foreground = media ? Brushes.White : muted;
+        if (media) MediaControl.RefreshView();
     }
 
     void LayoutPrev_Click(object sender, RoutedEventArgs e) => ShiftLayout(-1);
@@ -209,6 +287,10 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void ScorebugStudio_Click(object sender, RoutedEventArgs e)
     {
+        // The studio edits exactly the display and layout this window is previewing.
+        var displayIndex = _scorebug.Displays.FindIndex(display => string.Equals(display.Id, _program.DisplayId, StringComparison.OrdinalIgnoreCase));
+        if (displayIndex >= 0) _scorebug.SelectDisplay(displayIndex);
+        _scorebug.SelectLayout(_program.LayoutIndex);
         var studio = new ScorebugEditorWindow(_scorebug, _engine, _playback, _preferences.Theme) { Owner = this };
         studio.ShowDialog();
         // The studio can add, delete or switch layouts; the preview and every panel follow.
@@ -237,7 +319,8 @@ public partial class MainWindow : Window, IControlPanelHost
 
     public void OpenControlPanel()
     {
-        var panel = new GameControlWindow(_engine, this, _session);
+        var panel = new GameControlWindow(_engine, _publishedEngine, _scorebug, PublishGameState, HasStagedGameState,
+            SetLiveScoreClock, () => _liveScoreClock, _session, _preferences.Theme);
         panel.NewPanelRequested += OpenControlPanel;
         panel.Closed += (_, _) => _controlPanels.Remove(panel);
         panel.ApplyTheme(_preferences.Theme);
@@ -245,6 +328,10 @@ public partial class MainWindow : Window, IControlPanelHost
         _controlPanels.Add(panel);
         panel.Show();
     }
+
+    /// <summary>True when the game data differs from what is on air, ignoring any layout choice.</summary>
+    public bool HasStagedGameState() =>
+        GameEngine.StagedSignature(_engine.State) != GameEngine.StagedSignature(_publishedEngine.State);
 
     void SportProfiles_Click(object sender, RoutedEventArgs e)
     {
@@ -296,6 +383,8 @@ public partial class MainWindow : Window, IControlPanelHost
         // A new game really starts over: one factory layout and no folder/playlist organisation.
         // Imported media files stay in the library; the game's design and shelves begin blank.
         _scorebug.ResetToDefault();
+        _program.Sync();
+        SyncDisplayPicker();
         _session.ResetOrganization();
         MediaControl.ResetView();
         foreach (var panel in _controlPanels.Where(panel => panel.IsVisible)) panel.Media.ResetView();
@@ -337,6 +426,8 @@ public partial class MainWindow : Window, IControlPanelHost
             }
             finally { _sportSync = false; }
             _publishedEngine.LoadFromState(_engine.CloneState());
+            _program.Sync();
+            SyncDisplayPicker();
             // Rebuild, not refresh: visuals made before this game was read (for example a logo
             // element built while the teams had no crests) must take the loaded values.
             _preview?.Rebuild();
@@ -355,12 +446,24 @@ public partial class MainWindow : Window, IControlPanelHost
     // ---------- output ----------
     void Output_Click(object sender, RoutedEventArgs e) => OpenOutputWindow();
 
-    /// <summary>Opens a brand-new audience window; existing ones keep running alongside it.</summary>
-    OutputWindow OpenOutputWindow()
+    /// <summary>
+    /// Asks which display this audience window is for, then opens a brand-new window for it. With
+    /// only one display there is nothing to ask, so the question is skipped.
+    /// </summary>
+    public OutputWindow? OpenOutputWindow(string? displayId = null)
     {
-        var output = new OutputWindow(_publishedEngine, _scorebug, _preferences.Theme, _playback)
+        if (displayId is null)
         {
-            Title = $"ScorePlus — Audience Output {_outputs.Count + 1}"
+            if (_scorebug.Displays.Count == 1) displayId = _scorebug.Displays[0].Id;
+            else
+            {
+                displayId = DisplayPickerWindow.Ask(this, _scorebug, _preferences.Theme, _program.DisplayId);
+                if (displayId is null) return null;
+            }
+        }
+        var output = new OutputWindow(_publishedEngine, _scorebug, _preferences.Theme, _playback, displayId)
+        {
+            Title = $"ScorePlus — {_scorebug.FindDisplay(displayId)?.Name ?? "Program"} Audience Output"
         };
         _outputs.Add(output);
         output.Closed += (_, _) => _outputs.Remove(output);
@@ -396,8 +499,6 @@ public partial class MainWindow : Window, IControlPanelHost
         _preview?.Refresh();
         foreach (var output in _outputs.Where(o => o.IsVisible)) output.UpdateLiveScoreClock(_engine.State);
     }
-
-    void Fullscreen_Click(object sender, RoutedEventArgs e) => OpenOutputWindow().ToggleFullscreen();
 
     void GameReport_Click(object sender, RoutedEventArgs e)
     {
@@ -448,21 +549,13 @@ public partial class MainWindow : Window, IControlPanelHost
         return dialog.ShowDialog() == true && SaveGameTo(dialog.FileName);
     }
 
-    string GameLabelForPrompt()
-    {
-        var s = _engine.State;
-        var away = string.IsNullOrWhiteSpace(s.AwayAbbreviation) ? s.AwayTeam : s.AwayAbbreviation;
-        var home = string.IsNullOrWhiteSpace(s.HomeAbbreviation) ? s.HomeTeam : s.HomeAbbreviation;
-        return $"{away} {s.AwayScore}   ·   {s.HomeScore} {home}";
-    }
-
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         if (PromptOnExit && !_closingAfterPrompt && HasUnsavedChanges())
         {
             e.Cancel = true;
             var detail = "You have changes that are not in a saved game file. Autosave keeps a recovery point every few seconds, but the .spg on disk is out of date. Save it before closing?";
-            var choice = UnsavedChangesWindow.Ask(this, _preferences.Theme, GameLabelForPrompt(), detail);
+            var choice = UnsavedChangesWindow.Ask(this, _preferences.Theme, detail);
             if (choice == UnsavedChoice.Cancel) return;
             if (choice == UnsavedChoice.Save && !SaveBeforeClosing()) return;
             _closingAfterPrompt = true;
@@ -504,6 +597,7 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         _engine.Changed -= Refresh;
         _engine.Changed -= EngineChanged;
+        _program.Dispose();
         _preview?.Dispose();
         _session.Dispose();
         foreach (var panel in _controlPanels.ToArray()) panel.Close();

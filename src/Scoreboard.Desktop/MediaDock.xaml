@@ -42,6 +42,7 @@
       <Setter Property="Foreground" Value="#FFD166"/>
       <Setter Property="BorderBrush" Value="#6B5A2A"/>
     </Style>
+
     <Style x:Key="DockLabel" TargetType="TextBlock">
       <Setter Property="FontSize" Value="9"/>
       <Setter Property="FontWeight" Value="Bold"/>
@@ -75,6 +76,29 @@
       <Setter Property="Background" Value="{DynamicResource DockInput}"/>
       <Setter Property="Foreground" Value="{DynamicResource DockText}"/>
       <Setter Property="BorderBrush" Value="{DynamicResource DockBorder}"/>
+    </Style>
+    <!-- The dock is also used as a full-width tab. These are the same controls at console size,
+         defined after their small twins so the BasedOn lookups resolve while parsing. -->
+    <Style x:Key="DockActionLarge" TargetType="Button" BasedOn="{StaticResource DockAction}">
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Padding" Value="14,10"/>
+      <Setter Property="MinHeight" Value="44"/>
+      <Setter Property="Margin" Value="4,0,0,0"/>
+    </Style>
+    <Style x:Key="TransportButtonLarge" TargetType="Button" BasedOn="{StaticResource TransportButton}">
+      <Setter Property="Width" Value="58"/>
+      <Setter Property="Height" Value="44"/>
+      <Setter Property="FontSize" Value="18"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+    <Style x:Key="DockComboLarge" TargetType="ComboBox" BasedOn="{StaticResource DockCombo}">
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="MinHeight" Value="38"/>
+    </Style>
+    <Style x:Key="DockSearchLarge" TargetType="TextBox" BasedOn="{StaticResource DockSearch}">
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="MinHeight" Value="40"/>
+      <Setter Property="Padding" Value="10,8"/>
     </Style>
     <Style x:Key="DockCheck" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
       <Setter Property="FontSize" Value="10"/>
@@ -216,6 +240,8 @@
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
             <Button x:Name="RemoveButton" Content="Remove" Style="{StaticResource DockAction}" Click="Remove_Click" ToolTip="Remove the selected clip from the library"/>
             <Button Content="Import" Style="{StaticResource DockAction}" Click="Import_Click" ToolTip="Import audio or video clips"/>
+            <Button Content="Clear" Style="{StaticResource ClearAction}" Click="Clear_Click"
+                    ToolTip="Stop playback, close the camera and blank every scorebug video box"/>
           </StackPanel>
           <StackPanel Orientation="Horizontal">
             <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,6,0"/>
@@ -223,30 +249,33 @@
             <TextBlock x:Name="HintText" Text="  tags route to the scorebug · folders organise" FontSize="10" Foreground="{DynamicResource DockMuted}" Opacity="0.7" VerticalAlignment="Center" Visibility="Collapsed"/>
           </StackPanel>
         </DockPanel>
-        <DockPanel Margin="0,4,0,0">
+        <!-- Camera items: add one, rename/re-route one, and scrub the last two minutes. -->
+        <WrapPanel Margin="0,4,0,0">
           <TextBlock Text="CAMERA" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
-          <StackPanel Orientation="Horizontal">
-            <Button Content="Camera" Style="{StaticResource DockAction}" Click="Camera_Click" ToolTip="Add the next capture device to the library — it routes by tag like any other clip"/>
-            <Button x:Name="ReplayButton" Content="Replay" Style="{StaticResource DockAction}" Click="Replay_Click" ToolTip="Cut to the clip the live camera has just recorded"/>
-            <Button x:Name="LiveButton" Content="Live" Style="{StaticResource DockAction}" Click="Live_Click" ToolTip="Back to the live camera"/>
-          </StackPanel>
-        </DockPanel>
-        <!-- Which camera is live: pick another capture device here and it takes over on air. -->
+          <Button Content="Add camera" Style="{StaticResource DockAction}" Click="Camera_Click" ToolTip="Add the next capture device to the library — it routes by tag like any other clip"/>
+          <Button x:Name="RouteButton" Content="Route…" Style="{StaticResource DockAction}" Click="Route_Click"
+                  ToolTip="Rename the selected camera item and choose which camera it uses"/>
+          <Button x:Name="ReplayButton" Content="Replay" Style="{StaticResource DockAction}" Click="Replay_Click"
+                  ToolTip="Freeze the last two minutes of the live camera on the scorebug so you can drag back to the start of the play"/>
+          <Button x:Name="LiveButton" Content="Live" Style="{StaticResource DockAction}" Click="Live_Click"
+                  ToolTip="Jump back to the live camera"/>
+        </WrapPanel>
+        <!-- Which camera item is live: pick another and it takes over on air. -->
         <DockPanel Margin="0,3,0,0">
           <TextBlock Text="LIVE" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
           <ComboBox x:Name="CameraBox" Style="{StaticResource DockCombo}" SelectionChanged="Camera_Changed"
-                    ToolTip="Choose which capture device is on air"/>
+                    ToolTip="Choose which camera item is on air"/>
         </DockPanel>
-        <!-- Instant replay length and the panic button that blanks every scorebug video box. -->
         <DockPanel Margin="0,3,0,0">
-          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-            <ComboBox x:Name="ReplayLengthBox" Style="{StaticResource DockCombo}" Width="74"
-                      SelectionChanged="ReplayLength_Changed"
-                      ToolTip="How long an instant replay runs before it cuts back to the live camera"/>
-            <Button Content="Clear" Style="{StaticResource ClearAction}" Click="Clear_Click"
-                    ToolTip="Stop playback, close the camera and blank every scorebug video box"/>
-          </StackPanel>
           <TextBlock Text="REPLAY" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+          <Button x:Name="StartReplayButton" Style="{StaticResource DockAction}" Content="Start replay" Click="StartReplay_Click"
+                  IsEnabled="False"
+                  ToolTip="Play the replay from where you have scrubbed to, on air"/>
+          <Button x:Name="SaveReplayButton" Style="{StaticResource DockAction}" Content="Save replay…" Click="SaveReplay_Click"
+                  IsEnabled="False"
+                  ToolTip="Save everything from where the replay is paused through to now as a clip on your computer"/>
+          <TextBlock x:Name="ReplayHint" Text="  scrub back, start it, then save from there to now" FontSize="10"
+                     Foreground="{DynamicResource DockMuted}" Opacity="0.7" VerticalAlignment="Center"/>
         </DockPanel>
       </StackPanel>
 
@@ -307,10 +336,10 @@
                      TextTrimming="CharacterEllipsis"/>
         </DockPanel>
         <StackPanel x:Name="PlaylistActions" Grid.Column="2" Orientation="Horizontal" Visibility="Collapsed">
-          <Button x:Name="PlaylistAddButton" Content="+" Width="32" Padding="0" Style="{StaticResource DockAction}" Click="PlaylistAdd_Click" ToolTip="Add the selected library clip to this playlist"/>
-          <Button x:Name="PlaylistRunButton" Content="▶" Width="32" Padding="0" Style="{StaticResource DockAction}" Click="PlaylistRun_Click" ToolTip="Play this playlist from the first clip"/>
-          <Button x:Name="PlaylistStopButton" Content="■" Width="32" Padding="0" Style="{StaticResource DockAction}" Click="PlaylistStop_Click" ToolTip="Stop playback"/>
-          <Button x:Name="PlaylistDeleteButton" Content="✕" Width="32" Padding="0" Style="{StaticResource DockAction}" Click="PlaylistDelete_Click" ToolTip="Delete this playlist (the clips stay in the library)"/>
+          <Button x:Name="PlaylistAddButton" Content="Add clip" Style="{StaticResource DockAction}" Click="PlaylistAdd_Click" ToolTip="Add the selected library clip to this playlist"/>
+          <Button x:Name="PlaylistRunButton" Content="Play" Style="{StaticResource DockAction}" Click="PlaylistRun_Click" ToolTip="Play this playlist from the first clip"/>
+          <Button x:Name="PlaylistStopButton" Content="Stop" Style="{StaticResource DockAction}" Click="PlaylistStop_Click" ToolTip="Stop playback"/>
+          <Button x:Name="PlaylistDeleteButton" Content="Delete" Style="{StaticResource DockAction}" Click="PlaylistDelete_Click" ToolTip="Delete this playlist (the clips stay in the library)"/>
         </StackPanel>
       </Grid>
 

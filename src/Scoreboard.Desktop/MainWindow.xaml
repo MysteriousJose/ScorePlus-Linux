@@ -29,6 +29,17 @@
       <Setter Property="Background" Value="#1E2630"/>
       <Setter Property="ShowsPreview" Value="True"/>
     </Style>
+    <!-- The two halves of the operator surface: the console, and the media desk. -->
+    <Style x:Key="TabButton" TargetType="Button">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Padding" Value="18,9"/>
+      <Setter Property="MinHeight" Value="38"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+      <Setter Property="Background" Value="#141A23"/>
+      <Setter Property="BorderBrush" Value="#28323F"/>
+      <Setter Property="Foreground" Value="#93A0B2"/>
+    </Style>
   </Window.Resources>
 
   <DockPanel>
@@ -38,8 +49,7 @@
           <Button Style="{StaticResource HeaderButton}" Content="New Panel" Click="NewPanel_Click" ToolTip="Open a detached control panel that stays in sync"/>
           <Button Style="{StaticResource HeaderButton}" Content="Keybinds…" Click="Keybinds_Click" ToolTip="Assign a key combination to any control"/>
           <Button Style="{StaticResource HeaderButton}" Content="Preferences" Click="Preferences_Click"/>
-          <Button Style="{StaticResource HeaderButton}" Content="Audience Output" Click="Output_Click"/>
-          <Button Style="{StaticResource HeaderButton}" Content="Broadcast Fullscreen" Click="Fullscreen_Click"/>
+          <Button Style="{StaticResource HeaderButton}" Content="Audience Output" Click="Output_Click" ToolTip="Choose a display and open its audience window (F11 fills the screen)"/>
           <Button Style="{StaticResource HeaderButton}" Content="Event Log" Click="EventLog_Click" ToolTip="Open the event log in its own window"/>
           <Button Style="{StaticResource HeaderButton}" Content="Game Report" Click="GameReport_Click"/>
           <Button Style="{StaticResource HeaderButton}" Content="Save Game" Click="Save_Click"/>
@@ -74,55 +84,68 @@
 
     <Grid Margin="12">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="352" MinWidth="300"/>
+        <ColumnDefinition Width="336" MinWidth="290"/>
         <ColumnDefinition Width="7"/>
-        <ColumnDefinition Width="*" MinWidth="640"/>
+        <ColumnDefinition Width="*" MinWidth="700"/>
       </Grid.ColumnDefinitions>
 
-      <!-- Left rail: preview on top, one unified media dock below. Both rows and the rail width drag. -->
-      <Grid Grid.Column="0" Margin="0,0,6,0">
-        <Grid.RowDefinitions>
-          <RowDefinition Height="172" MinHeight="130"/>
-          <RowDefinition Height="7"/>
-          <RowDefinition Height="*" MinHeight="180"/>
-        </Grid.RowDefinitions>
+      <!-- Left rail: the program preview, with the display it belongs to above the thumbnail. -->
+      <Border Grid.Column="0" Style="{StaticResource RailCard}" Margin="0,0,6,0">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
 
-        <Border Style="{StaticResource RailCard}" Grid.Row="0" Margin="0,0,0,0">
-          <Grid>
-            <Grid.RowDefinitions>
-              <RowDefinition Height="Auto"/>
-              <RowDefinition Height="Auto"/>
-              <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-            <DockPanel Margin="0,0,0,4">
-              <TextBlock x:Name="PreviewAudienceHint" DockPanel.Dock="Right" Text="AUDIENCE" Foreground="#38D7A3" FontSize="9" FontWeight="Bold" VerticalAlignment="Center" Visibility="Collapsed"/>
-              <StackPanel Orientation="Horizontal">
-                <Border Style="{StaticResource RailAccent}"/>
-                <TextBlock Text="PROGRAM PREVIEW" Style="{StaticResource RailTitle}"/>
-              </StackPanel>
-            </DockPanel>
-            <!-- Several layouts can live in one game; the arrows choose what Update Output sends out. -->
-            <DockPanel Grid.Row="1" Margin="0,0,0,5">
-              <Button x:Name="LayoutPrevButton" DockPanel.Dock="Left" Content="◀" Padding="0" Width="34" MinHeight="30"
-                      FontSize="12" Click="LayoutPrev_Click" ToolTip="Previous scorebug layout"/>
-              <Button x:Name="LayoutNextButton" DockPanel.Dock="Right" Content="▶" Padding="0" Width="34" MinHeight="30"
-                      FontSize="12" Click="LayoutNext_Click" ToolTip="Next scorebug layout"/>
-              <TextBlock x:Name="PreviewLayoutLabel" Text="1 · Broadcast Classic" FontSize="11" FontWeight="SemiBold"
-                         TextAlignment="Center" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-            </DockPanel>
-            <ContentControl x:Name="PreviewHost" Grid.Row="2"/>
-          </Grid>
-        </Border>
+          <DockPanel Margin="0,0,0,6">
+            <TextBlock x:Name="PreviewAudienceHint" DockPanel.Dock="Right" Text="AUDIENCE" Foreground="#38D7A3" FontSize="9" FontWeight="Bold" VerticalAlignment="Center" Visibility="Collapsed"/>
+            <StackPanel Orientation="Horizontal">
+              <Border Style="{StaticResource RailAccent}"/>
+              <TextBlock Text="PROGRAM PREVIEW" Style="{StaticResource RailTitle}"/>
+            </StackPanel>
+          </DockPanel>
 
-        <GridSplitter Grid.Row="1" Style="{StaticResource SplitterStyle}" Height="7" HorizontalAlignment="Stretch" VerticalAlignment="Center" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"/>
+          <!-- Which display this preview is looking at. Each window keeps its own choice. -->
+          <DockPanel Grid.Row="1" Margin="0,0,0,5">
+            <TextBlock Text="DISPLAY" DockPanel.Dock="Left" Foreground="#5C6B7E" FontSize="10" FontWeight="Bold"
+                       VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ComboBox x:Name="DisplaySelector" FontSize="11" MinHeight="28" SelectionChanged="Display_Changed"
+                      ToolTip="Choose the display this preview shows. Each window picks its own."/>
+          </DockPanel>
 
-        <local:MediaDock x:Name="MediaControl" Grid.Row="2"/>
-      </Grid>
+          <!-- Several layouts can live on one display; the arrows choose what Update Output sends out. -->
+          <DockPanel Grid.Row="2" Margin="0,0,0,5">
+            <Button x:Name="LayoutPrevButton" DockPanel.Dock="Left" Content="◀" Padding="0" Width="34" MinHeight="30"
+                    FontSize="12" Click="LayoutPrev_Click" ToolTip="Previous layout on this display"/>
+            <Button x:Name="LayoutNextButton" DockPanel.Dock="Right" Content="▶" Padding="0" Width="34" MinHeight="30"
+                    FontSize="12" Click="LayoutNext_Click" ToolTip="Next layout on this display"/>
+            <TextBlock x:Name="PreviewLayoutLabel" Text="1 · Broadcast Classic" FontSize="11" FontWeight="SemiBold"
+                       TextAlignment="Center" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="4,0"/>
+          </DockPanel>
+
+          <ContentControl x:Name="PreviewHost" Grid.Row="3" VerticalAlignment="Top"/>
+        </Grid>
+      </Border>
 
       <GridSplitter Grid.Column="1" Style="{StaticResource SplitterStyle}" Width="7" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"/>
 
-      <!-- Operator surface -->
-      <ContentControl x:Name="ControlHost" Grid.Column="2"/>
+      <!-- Operator surface: the console on one tab, the whole media desk on the other. -->
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal">
+          <Button x:Name="ControlTab" Style="{StaticResource TabButton}" Content="CONTROL PANEL" Click="ControlTab_Click"/>
+          <Button x:Name="MediaTab" Style="{StaticResource TabButton}" Content="MEDIA" Click="MediaTab_Click" ToolTip="Clips, camera, replay and playlists"/>
+        </StackPanel>
+        <Grid Grid.Row="1">
+          <ContentControl x:Name="ControlHost"/>
+          <local:MediaDock x:Name="MediaControl" Visibility="Collapsed"/>
+        </Grid>
+      </Grid>
     </Grid>
   </DockPanel>
 </Window>

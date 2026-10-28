@@ -66,7 +66,38 @@
         </StackPanel>
       </DockPanel>
 
-      <!-- Layouts: several scorebugs can live in one game and go to air on Update Output. -->
+      <!-- Displays: one screen each, with its own layouts and its own audience window. -->
+      <Border Background="#171C25" CornerRadius="9" Padding="10,7" Margin="0,0,0,6">
+        <StackPanel>
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button Content="New display…" Style="{StaticResource LayoutButton}" Click="DisplayNew_Click" ToolTip="Add another screen, for example a lower-thirds display"/>
+              <Button Content="Rename…" Style="{StaticResource LayoutButton}" Click="DisplayRename_Click"/>
+              <Button Content="Delete" Style="{StaticResource LayoutButton}" Click="DisplayDelete_Click" ToolTip="Remove this display and its layouts (the last one cannot be deleted)"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,7,0"/>
+              <TextBlock Text="DISPLAY" FontSize="11" FontWeight="Bold" Foreground="#93A0B2" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <ComboBox x:Name="DisplayBox" Width="220" SelectionChanged="DisplayBox_Changed" ToolTip="Which screen these layouts belong to"/>
+              <TextBlock Text="  Each display gets its own audience window." Foreground="#5C6B7E" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            </StackPanel>
+          </DockPanel>
+          <DockPanel Margin="0,7,0,0">
+            <Button DockPanel.Dock="Right" Content="Clear link" Style="{StaticResource LayoutButton}" Click="LinkClear_Click" ToolTip="Stop this layout, and the layout it links to, from switching the other display"/>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="LINK THIS LAYOUT TO" FontSize="10" FontWeight="Bold" Foreground="#5C6B7E" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <ComboBox x:Name="LinkDisplayBox" Width="140" FontSize="11" SelectionChanged="LinkDisplay_Changed" ToolTip="Another display that should change whenever this layout does"/>
+              <ComboBox x:Name="LinkLayoutBox" Width="165" FontSize="11" Margin="6,0,0,0" SelectionChanged="LinkLayout_Changed" ToolTip="The layout that display switches to"/>
+              <CheckBox x:Name="LinkBothWaysInput" Content="Both ways" FontSize="11" VerticalAlignment="Center" Margin="10,0,0,0"
+                        Checked="LinkBothWays_Changed" Unchecked="LinkBothWays_Changed"
+                        ToolTip="Also switch this layout whenever the other one changes"/>
+              <TextBlock Text="  One Update Output can change both screens." Foreground="#5C6B7E" FontSize="10" VerticalAlignment="Center" Margin="6,0,0,0"/>
+            </StackPanel>
+          </DockPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- Layouts: several scorebugs can live on one display and go to air on Update Output. -->
       <Border Background="#171C25" CornerRadius="9" Padding="10,7">
         <DockPanel>
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -97,7 +128,7 @@
               <TextBlock Text="LAYERS" FontSize="11" FontWeight="Bold" Foreground="#93A0B2" VerticalAlignment="Center"/>
             </StackPanel>
           </DockPanel>
-          <TextBlock Text="Front of the picture at the top. Drag a row, or use the buttons."
+          <TextBlock Text="Front of the picture at the top. Ctrl-click to add rows, Shift-click for a range, Delete to remove them."
                      FontSize="10" Foreground="#5C6B7E" TextWrapping="Wrap" Margin="2,0,2,6"/>
           <UniformGrid Columns="2" Margin="0,0,0,6">
             <Button x:Name="LayerFrontButton" Content="▲ Bring forward" FontSize="11" Padding="6,7" Margin="0,0,3,0"
@@ -108,6 +139,7 @@
         </StackPanel>
         <ListBox x:Name="Layers" Background="#10151D" Foreground="White" BorderBrush="#364151"
                  ItemContainerStyle="{StaticResource LayerRow}"
+                 SelectionMode="Extended"
                  SelectionChanged="Layers_SelectionChanged"
                  PreviewMouseLeftButtonDown="Layers_MouseDown"
                  PreviewMouseMove="Layers_MouseMove"
@@ -266,6 +298,17 @@
           <TextBox x:Name="MediaTagInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
                    ToolTip="Leave empty to show any playing clip, or name a tag so only that tag's clips appear"/>
           <TextBlock Text="Only media with this tag plays inside this element. The tag label is drawn in the studio only; the audience screen stays blank until a clip is cued."
+                     Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+          <CheckBox x:Name="PreserveAspectInput" Content="Preserve the video's aspect ratio" Margin="10,2,10,2"
+                    Checked="Property_Changed" Unchecked="Property_Changed"
+                    ToolTip="On: the box is locked to the picture's shape, so nothing is stretched or cropped. Off: the box is free and the clip fills it."/>
+          <TextBlock Text="Aspect (width ÷ height)" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="AspectInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                   ToolTip="16:9 is 1.7778 · 4:3 is 1.3333 · vertical 9:16 is 0.5625"/>
+          <TextBlock Text="Audio output for this element" Style="{StaticResource FieldLabel}"/>
+          <ComboBox x:Name="AudioDeviceInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
+                    ToolTip="Each video element can play through its own speaker, so two clips never share one output"/>
+          <TextBlock Text="This element's own clip plays its sound on this output. Default uses the Windows output."
                      Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
         </StackPanel>
 

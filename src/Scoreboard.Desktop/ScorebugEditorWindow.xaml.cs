@@ -23,16 +23,25 @@ public partial class ScorebugEditorWindow : Window
     readonly System.Windows.Threading.DispatcherTimer _wallClock = new() { Interval=TimeSpan.FromSeconds(1) };
     bool _canvasLoading;
     bool _layoutLoading;
+    bool _displayLoading;
+    bool _linkLoading;
+    // Speakers are listed once per studio window; asking WASAPI per keystroke would be wasteful.
+    readonly IReadOnlyList<AudioOption> _audioOptions;
     readonly System.Windows.Threading.DispatcherTimer _propertySave = new() { Interval=TimeSpan.FromMilliseconds(350) };
     readonly Dictionary<string,(Border Host, FrameworkElement Content, Border Handle, ScorebugElementKind Kind)> _visuals = [];
     readonly Dictionary<string,(ScorebugElementKind Kind, ScorebugShape Shape, string? Image, ScorebugAnimation Animation, double Opacity)> _applied = [];
     bool _loading;
     bool _syncingLayers;
+    // Everything selected, in the order it was picked; the primary is the one the property panel
+    // edits and the one whose resize handle is shown.
+    readonly List<string> _selectedIds = [];
     string? _selectedId;
     ScorebugElement? _dragElement;
+    // Where each selected element started, so dragging one object carries the whole selection.
+    readonly Dictionary<string,(double X, double Y)> _dragOrigins = [];
+    Point _dragStartPoint;
     bool _resizing;
     double _resizeStartX, _resizeStartY, _resizeStartWidth, _resizeStartHeight;
-    Point _dragOffset;
     Point _listStart;
 
     sealed record PeriodOption(string? Key, string Label)
@@ -46,6 +55,27 @@ public partial class ScorebugEditorWindow : Window
     }
 
     sealed record LogoOption(ScorebugLogoSide Side, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    /// <summary>A speaker offered in the element's audio picker.</summary>
+    sealed record AudioOption(string? Id, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    sealed record DisplayOption(string Id, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    sealed record LinkDisplayOption(string? Id, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    sealed record LinkLayoutOption(string? Id, string Label)
     {
         public override string ToString() => Label;
     }
@@ -89,6 +119,9 @@ public partial class ScorebugEditorWindow : Window
         BorderSourceInput.ItemsSource=ColorSources;
         LogoInput.ItemsSource=Logos;
         FontInput.ItemsSource=FontCatalog.All;
+        _audioOptions=new[]{new AudioOption(null,"Default output")}
+            .Concat(AudioRouter.Devices().Select(device=>new AudioOption(device.Id,device.Name))).ToArray();
+        AudioDeviceInput.ItemsSource=_audioOptions;
         CanvasPreset.ItemsSource=ScorebugLayout.SizePresets.Select(p=>p.Name).ToArray();
         _canvasLoading=true;
         CanvasPreset.SelectedIndex=PresetIndex(catalog.Layout.Width,catalog.Layout.Height);
@@ -113,21 +146,49 @@ public partial class ScorebugEditorWindow : Window
 
     ScorebugElement? Selected => _selectedId is null ? null : _catalog.Layout.Elements.FirstOrDefault(x=>x.Id==_selectedId);
 
+    bool IsSelected(string id) => _selectedIds.Contains(id);
+
+    /// <summary>Drops the selection entirely, for when the layout underneath it goes away.</summary>
+    void ClearSelection()
+    {
+        _selectedIds.Clear();
+        _selectedId=null;
+    }
+
+    /// <summary>
+    /// Mirrors the canvas selection onto the layer list without treating it as the operator's click.
+    /// The list runs in Extended mode, so Ctrl and Shift give range and toggle selection for free.
+    /// </summary>
+    void SyncLayersFromSelection()
+    {
+        _syncingLayers=true;
+        try
+        {
+            Layers.SelectedItems.Clear();
+            foreach(var item in Layers.Items.OfType<LayerItem>().Where(x=>_selectedIds.Contains(x.Element.Id)))
+                Layers.SelectedItems.Add(item);
+        }
+        finally { _syncingLayers=false; }
+    }
+
     void Render()
     {
         if(!Dispatcher.CheckAccess()){Dispatcher.BeginInvoke(Render);return;}
         if(_skipRebuild)return;
         if(_dragElement is not null)return; // never rebuild under an active gesture
-        if(_selectedId is not null && _catalog.Layout.Elements.All(x=>x.Id!=_selectedId))_selectedId=null;
+        _selectedIds.RemoveAll(id=>_catalog.Layout.Elements.All(x=>x.Id!=id));
+        if(_selectedId is not null && !_selectedIds.Contains(_selectedId))_selectedId=_selectedIds.LastOrDefault();
         _loading=true;
         _syncingLayers=true;
         // Top of the list is the front of the picture, the opposite of the canvas' back-to-front order.
         var ordered=_catalog.Layout.Elements.AsEnumerable().Reverse().Select(e=>new LayerItem(e)).ToArray();
         Layers.ItemsSource=ordered;
-        Layers.SelectedItem=ordered.FirstOrDefault(x=>x.Element.Id==_selectedId);
+        foreach(var item in ordered.Where(x=>_selectedIds.Contains(x.Element.Id)))Layers.SelectedItems.Add(item);
         LayerCount.Text=ordered.Length==0?"no elements":$"{ordered.Length} element{(ordered.Length==1?"":"s")}";
         _syncingLayers=false;
         SyncLayoutPicker();
+        SyncDisplayPicker();
+        SyncLinkPicker();
         var previousVideos=new Dictionary<string,VideoSurface>(_videoSurfaces);
         var previousVisuals=new Dictionary<string,(Border Host, FrameworkElement Content, Border Handle, ScorebugElementKind Kind)>(_visuals);
         _videoSurfaces.Clear();
@@ -192,6 +253,91 @@ public partial class ScorebugEditorWindow : Window
         finally { _layoutLoading=false; }
     }
 
+    /// <summary>Fills the display picker from the catalog without treating the sync as a choice.</summary>
+    void SyncDisplayPicker()
+    {
+        _displayLoading=true;
+        try
+        {
+            var options=_catalog.Displays.Select((display,index)=>new DisplayOption(display.Id,$"{index+1}. {display.Name}")).ToArray();
+            if(DisplayBox.ItemsSource is not IEnumerable<DisplayOption> existing||!existing.Select(x=>x.Label).SequenceEqual(options.Select(x=>x.Label)))
+                DisplayBox.ItemsSource=options;
+            DisplayBox.SelectedIndex=_catalog.ActiveDisplayIndex;
+        }
+        finally { _displayLoading=false; }
+    }
+
+    /// <summary>Shows this layout's link to another display, if it has one that still resolves.</summary>
+    void SyncLinkPicker()
+    {
+        _linkLoading=true;
+        try
+        {
+            var layout=_catalog.Layout;
+            var targets=new List<LinkDisplayOption>{new(null,"No link")};
+            foreach(var display in _catalog.Displays)
+            {
+                if(string.Equals(display.Id,_catalog.ActiveDisplay.Id,StringComparison.OrdinalIgnoreCase))continue;
+                targets.Add(new LinkDisplayOption(display.Id,display.Name));
+            }
+            LinkDisplayBox.ItemsSource=targets;
+            var selected=targets.FirstOrDefault(option=>string.Equals(option.Id,layout.LinkDisplayId,StringComparison.OrdinalIgnoreCase))??targets[0];
+            LinkDisplayBox.SelectedItem=selected;
+            FillLinkLayouts(selected.Id,layout.LinkLayoutId);
+            // Ticked exactly when the layout on the other side already points back at this one.
+            LinkBothWaysInput.IsChecked=HasReciprocal(layout);
+        }
+        finally { _linkLoading=false; }
+    }
+
+    /// <summary>True when the layout this one links to links straight back to it.</summary>
+    bool HasReciprocal(ScorebugLayout layout)
+    {
+        if(string.IsNullOrWhiteSpace(layout.LinkDisplayId)||string.IsNullOrWhiteSpace(layout.LinkLayoutId))return false;
+        var target=_catalog.FindDisplay(layout.LinkDisplayId);
+        var counterpart=target?.Layouts.FirstOrDefault(x=>string.Equals(x.Id,layout.LinkLayoutId,StringComparison.OrdinalIgnoreCase));
+        return counterpart is not null
+            &&string.Equals(counterpart.LinkDisplayId,_catalog.ActiveDisplay.Id,StringComparison.OrdinalIgnoreCase)
+            &&string.Equals(counterpart.LinkLayoutId,layout.Id,StringComparison.OrdinalIgnoreCase);
+    }
+
+    void LinkBothWays_Changed(object sender,RoutedEventArgs e)
+    {
+        if(_linkLoading)return;
+        ApplyReciprocal(LinkBothWaysInput.IsChecked==true);
+    }
+
+    /// <summary>
+    /// Writes (or removes) the link coming back from the other display's layout, so a link can work
+    /// in both directions. Only ever touches the exact layout this one points at.
+    /// </summary>
+    void ApplyReciprocal(bool enabled)
+    {
+        var layout=_catalog.Layout;
+        var display=_catalog.ActiveDisplay;
+        if(string.IsNullOrWhiteSpace(layout.LinkDisplayId)||string.IsNullOrWhiteSpace(layout.LinkLayoutId))return;
+        var target=_catalog.FindDisplay(layout.LinkDisplayId);
+        if(target is null)return;
+        var index=target.Layouts.FindIndex(x=>string.Equals(x.Id,layout.LinkLayoutId,StringComparison.OrdinalIgnoreCase));
+        if(index<0)return;
+        var back=target.Layouts[index];
+        var pointsBack=string.Equals(back.LinkDisplayId,display.Id,StringComparison.OrdinalIgnoreCase)
+            &&string.Equals(back.LinkLayoutId,layout.Id,StringComparison.OrdinalIgnoreCase);
+        if(enabled&&!pointsBack)_catalog.SetLink(target.Id,index,display.Id,layout.Id);
+        else if(!enabled&&pointsBack)_catalog.SetLink(target.Id,index,null,null);
+    }
+
+    void FillLinkLayouts(string? displayId,string? selectedLayoutId)
+    {
+        var target=_catalog.FindDisplay(displayId);
+        var options=new List<LinkLayoutOption>{new(null,target is null?"—":"Choose a layout")};
+        if(target is not null)
+            options.AddRange(target.Layouts.Select((layout,index)=>new LinkLayoutOption(layout.Id,$"{index+1}. {layout.Name}")));
+        LinkLayoutBox.ItemsSource=options;
+        LinkLayoutBox.IsEnabled=target is not null;
+        LinkLayoutBox.SelectedItem=options.FirstOrDefault(option=>string.Equals(option.Id,selectedLayoutId,StringComparison.OrdinalIgnoreCase))??options[0];
+    }
+
     Border CreateVisual(ScorebugElement item,Dictionary<string,VideoSurface>? previous=null)
     {
         FrameworkElement content;
@@ -210,7 +356,7 @@ public partial class ScorebugEditorWindow : Window
             BorderThickness=new Thickness(1), Cursor=Cursors.SizeNWSE, Tag=item,
             HorizontalAlignment=HorizontalAlignment.Right, VerticalAlignment=VerticalAlignment.Bottom,
             Margin=new Thickness(0,0,1,1),
-            Visibility=item.Id==_selectedId?Visibility.Visible:Visibility.Collapsed,
+            Visibility=IsSelected(item.Id)&&item.Id==_selectedId?Visibility.Visible:Visibility.Collapsed,
             ToolTip="Drag to resize"
         };
         handle.PreviewMouseLeftButtonDown+=Resize_MouseDown;
@@ -226,8 +372,8 @@ public partial class ScorebugEditorWindow : Window
             Width=item.Width, Height=item.Height, Background=ScorebugRender.HostBackground(item,_engine.State),
             ClipToBounds=true,
             Opacity=item.Opacity, Cursor=Cursors.SizeAll, Tag=item, Child=stack,
-            BorderBrush=item.Id==_selectedId?Brushes.DeepSkyBlue:ScorebugRender.HostBorder(item,_engine.State),
-            BorderThickness=new Thickness(item.Id==_selectedId?2:Math.Max(1,item.BorderThickness))
+            BorderBrush=IsSelected(item.Id)?Brushes.DeepSkyBlue:ScorebugRender.HostBorder(item,_engine.State),
+            BorderThickness=new Thickness(IsSelected(item.Id)?2:Math.Max(1,item.BorderThickness))
         };
         Canvas.SetLeft(host,item.X); Canvas.SetTop(host,item.Y); Panel.SetZIndex(host,_catalog.Layout.Elements.IndexOf(item));
         host.MouseLeftButtonDown+=Element_MouseDown; host.MouseMove+=Element_MouseMove; host.MouseLeftButtonUp+=Element_MouseUp;
@@ -274,9 +420,9 @@ public partial class ScorebugEditorWindow : Window
             visual.Host.Background=ScorebugRender.HostBackground(item,_engine.State);
             if(item.Animation!=ScorebugAnimation.Pulse)visual.Host.Opacity=item.Opacity;
             Canvas.SetLeft(visual.Host,item.X); Canvas.SetTop(visual.Host,item.Y);
-            visual.Handle.Visibility=item.Id==_selectedId?Visibility.Visible:Visibility.Collapsed;
-            visual.Host.BorderBrush=item.Id==_selectedId?Brushes.DeepSkyBlue:ScorebugRender.HostBorder(item,_engine.State);
-            visual.Host.BorderThickness=new Thickness(item.Id==_selectedId?2:Math.Max(1,item.BorderThickness));
+            visual.Handle.Visibility=item.Id==_selectedId&&IsSelected(item.Id)?Visibility.Visible:Visibility.Collapsed;
+            visual.Host.BorderBrush=IsSelected(item.Id)?Brushes.DeepSkyBlue:ScorebugRender.HostBorder(item,_engine.State);
+            visual.Host.BorderThickness=new Thickness(IsSelected(item.Id)?2:Math.Max(1,item.BorderThickness));
             ApplyAnimation(item,visual.Host);
         }
         // The property panel's colour previews follow the typed colours in place, since an edit no
@@ -306,9 +452,14 @@ public partial class ScorebugEditorWindow : Window
     void Layers_SelectionChanged(object sender,SelectionChangedEventArgs e)
     {
         if(_loading||_syncingLayers)return;
-        var id=(Layers.SelectedItem as LayerItem)?.Element.Id;
-        if(id==_selectedId)return;
-        _selectedId=id;
+        // Extended mode hands over the whole range: Ctrl adds rows one at a time, Shift takes every
+        // row between the anchor and the click.
+        var ids=Layers.SelectedItems.OfType<LayerItem>().Select(x=>x.Element.Id).ToArray();
+        _selectedIds.Clear();
+        _selectedIds.AddRange(ids);
+        // Keep editing the element the panel already held while it is still selected, so adding a
+        // row to the selection does not shuffle the property fields.
+        _selectedId=_selectedId is not null&&_selectedIds.Contains(_selectedId) ? _selectedId : ids.LastOrDefault();
         RefreshAllVisuals();
         LoadProperties();
     }
@@ -317,7 +468,7 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput})
             control.IsEnabled=has;
         if(has)
         {
@@ -339,6 +490,9 @@ public partial class ScorebugEditorWindow : Window
             AnimationInput.SelectedItem=e.Animation; TransitionInput.SelectedItem=e.Transition; ShapeInput.SelectedItem=e.Shape;
             VisibleInput.IsChecked=e.Visible; TransparentBackgroundInput.IsChecked=e.TransparentBackground;
             MediaTagInput.Text=e.MediaTag;
+            PreserveAspectInput.IsChecked=e.PreserveVideoAspect;
+            AspectInput.Text=e.VideoAspect.ToString("0.###");
+            AudioDeviceInput.SelectedItem=_audioOptions.FirstOrDefault(option=>string.Equals(option.Id??"",e.AudioDevice??"",StringComparison.OrdinalIgnoreCase))??_audioOptions[0];
             LogoInput.SelectedItem=Logos.FirstOrDefault(l=>l.Side==e.LogoSide)??Logos[0];
             PeriodFormatInput.SelectedItem=PeriodOptions.FirstOrDefault(o=>o.Key==e.PeriodFormat)??PeriodOptions[0];
             IconInput.SelectedItem=e.Icon; IconVisitorsInput.IsChecked=e.IconVisitors; IconFlipInput.IsChecked=e.IconFlipped;
@@ -428,6 +582,16 @@ public partial class ScorebugEditorWindow : Window
         var shape=ShapeInput.SelectedItem is ScorebugShape s?s:item.Shape;
         var visible=VisibleInput.IsChecked==true; var transparent=TransparentBackgroundInput.IsChecked==true;
         var mediaTag=MediaTagInput.Text.Trim();
+        var preserveAspect=PreserveAspectInput.IsChecked==true;
+        var aspectOk=double.TryParse(AspectInput.Text,out var aspect)&&aspect>0.05;
+        var audioDevice=(AudioDeviceInput.SelectedItem as AudioOption)?.Id;
+        // A preserved video box follows the picture's shape: moving one side moves the other.
+        if(preserveAspect&&aspectOk&&wOk&&hOk)
+        {
+            var widthChanged=Math.Abs(w-item.Width)>0.5;
+            var heightChanged=Math.Abs(h-item.Height)>0.5;
+            if(heightChanged&&!widthChanged) w=h*aspect; else h=w/aspect;
+        }
         var periodFormat=PeriodFormatInput.SelectedItem is PeriodOption period?period.Key:item.PeriodFormat;
         var icon=IconInput.SelectedItem is ScorebugIcon chosenIcon?chosenIcon:item.Icon;
         var iconVisitors=IconVisitorsInput.IsChecked==true; var iconFlipped=IconFlipInput.IsChecked==true;
@@ -437,7 +601,9 @@ public partial class ScorebugEditorWindow : Window
         var foregroundSource=(ForegroundSourceInput.SelectedItem as ColorSourceOption)?.Source??item.ForegroundSource;
         var backgroundSource=(BackgroundSourceInput.SelectedItem as ColorSourceOption)?.Source??item.BackgroundSource;
         var logoSide=(LogoInput.SelectedItem as LogoOption)?.Side??item.LogoSide;
-        if(item.Name==name&&item.Content==content&&(!xOk||item.X==x)&&(!yOk||item.Y==y)&&(!wOk||item.Width==w)&&(!hOk||item.Height==h)
+        if(item.Name==name&&item.Content==content&&(!xOk||item.X==x)&&(!yOk||item.Y==y)            &&(!wOk||item.Width==w)&&(!hOk||item.Height==h)
+            &&item.PreserveVideoAspect==preserveAspect&&(!aspectOk||Math.Abs(item.VideoAspect-aspect)<0.001)
+            &&string.Equals(item.AudioDevice,audioDevice,StringComparison.Ordinal)
             &&(!fOk||item.FontSize==f)&&(!foregroundOk||item.Foreground==ColorInput.Text)&&(!backgroundOk||item.Background==BackgroundInput.Text)
             &&item.Animation==animation&&item.Transition==transition&&item.Shape==shape&&item.Visible==visible&&item.TransparentBackground==transparent
             &&item.MediaTag==mediaTag&&item.PeriodFormat==periodFormat
@@ -463,6 +629,9 @@ public partial class ScorebugEditorWindow : Window
             target.Animation=animation; target.Transition=transition; target.Shape=shape;
             target.Visible=visible; target.TransparentBackground=transparent;
             target.MediaTag=mediaTag; target.PeriodFormat=periodFormat;
+            target.PreserveVideoAspect=preserveAspect;
+            if(aspectOk)target.VideoAspect=Math.Clamp(aspect,0.1,10);
+            target.AudioDevice=string.IsNullOrWhiteSpace(audioDevice)?null:audioDevice;
             target.Icon=icon; target.IconVisitors=iconVisitors; target.IconFlipped=iconFlipped;
             target.FontFamily=font; target.Bold=bold; target.Italic=italic;
             target.Underline=underline; target.StrikeThrough=strike;
@@ -502,27 +671,125 @@ public partial class ScorebugEditorWindow : Window
         }
     }
 
+    // ---------- displays ----------
+
+    void DisplayBox_Changed(object sender,SelectionChangedEventArgs e)
+    {
+        if(_displayLoading||DisplayBox.SelectedItem is not DisplayOption option)return;
+        var index=_catalog.Displays.FindIndex(display=>string.Equals(display.Id,option.Id,StringComparison.OrdinalIgnoreCase));
+        if(index<0||index==_catalog.ActiveDisplayIndex)return;
+        ClearSelection();
+        _catalog.SelectDisplay(index);
+        Fit_Click(this,new RoutedEventArgs());
+    }
+
+    void DisplayNew_Click(object sender,RoutedEventArgs e)
+    {
+        var name=PromptText("New display","Name this display. It starts with one blank layout and gets its own audience window.",$"Display {_catalog.Displays.Count+1}");
+        if(string.IsNullOrWhiteSpace(name))return;
+        ClearSelection();
+        _catalog.AddDisplay(name);
+        Render();
+        Fit_Click(this,new RoutedEventArgs());
+    }
+
+    void DisplayRename_Click(object sender,RoutedEventArgs e)
+    {
+        var name=PromptText("Rename display","Display name",_catalog.ActiveDisplay.Name);
+        if(string.IsNullOrWhiteSpace(name))return;
+        _catalog.RenameDisplay(_catalog.ActiveDisplayIndex,name);
+        Render();
+    }
+
+    void DisplayDelete_Click(object sender,RoutedEventArgs e)
+    {
+        if(_catalog.Displays.Count<=1)
+        {
+            MessageBox.Show(this,"A game needs at least one display.","Scorebug Studio",MessageBoxButton.OK,MessageBoxImage.Information);
+            return;
+        }
+        if(MessageBox.Show(this,$"Delete the display \"{_catalog.ActiveDisplay.Name}\" and its {_catalog.Layouts.Count} layout(s)?","Scorebug Studio",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;
+        ClearSelection();
+        _catalog.RemoveDisplay(_catalog.ActiveDisplayIndex);
+        Render();
+    }
+
+    /// <summary>Choosing another display only re-aims the link editor; it never writes a link yet.</summary>
+    void LinkDisplay_Changed(object sender,SelectionChangedEventArgs e)
+    {
+        if(_linkLoading)return;
+        var option=LinkDisplayBox.SelectedItem as LinkDisplayOption;
+        _linkLoading=true;
+        try { FillLinkLayouts(option?.Id,null); }
+        finally { _linkLoading=false; }
+        // Clearing the target clears the link, including the coming-back half; picking a layout
+        // below sets it again.
+        if(option?.Id is null)
+        {
+            ApplyReciprocal(false);
+            _catalog.SetLink(_catalog.ActiveDisplay.Id,_catalog.ActiveIndex,null,null);
+        }
+    }
+
+    void LinkLayout_Changed(object sender,SelectionChangedEventArgs e)
+    {
+        if(_linkLoading)return;
+        if(LinkLayoutBox.SelectedItem is not LinkLayoutOption layout||layout.Id is null)return;
+        if(LinkDisplayBox.SelectedItem is not LinkDisplayOption display||display.Id is null)return;
+        // Read the tick first: clearing the old pair reloads the panel, which would reset it.
+        var bothWays=LinkBothWaysInput.IsChecked==true;
+        // A fresh target means any previous coming-back link belongs to the old pair.
+        ApplyReciprocal(false);
+        _catalog.SetLink(_catalog.ActiveDisplay.Id,_catalog.ActiveIndex,display.Id,layout.Id);
+        if(bothWays)ApplyReciprocal(true);
+    }
+
+    void LinkClear_Click(object sender,RoutedEventArgs e)
+    {
+        ApplyReciprocal(false);
+        _catalog.SetLink(_catalog.ActiveDisplay.Id,_catalog.ActiveIndex,null,null);
+        Render();
+    }
+
+    /// <summary>A small themed name prompt, used by the display buttons.</summary>
+    string? PromptText(string title,string hint,string initial)
+    {
+        var dialog=new Window{Title=title,Width=400,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner,ShowInTaskbar=false};
+        var panel=new StackPanel{Margin=new Thickness(16)};
+        panel.Children.Add(new TextBlock{Text=hint,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(2,0,2,8),Opacity=0.8});
+        var input=new TextBox{Text=initial,Margin=new Thickness(2),FontSize=13};
+        panel.Children.Add(input);
+        var ok=new Button{Content="Save",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(2,10,2,0),MinHeight=34,Padding=new Thickness(14,6,14,6)};
+        string? result=null;
+        ok.Click+=(_,_)=>{result=input.Text.Trim();dialog.DialogResult=true;dialog.Close();};
+        panel.Children.Add(ok);
+        dialog.Content=panel;
+        dialog.Loaded+=(_,_)=>{input.Focus();input.SelectAll();};
+        ThemeManager.Apply(dialog,_theme);
+        return dialog.ShowDialog()==true&&!string.IsNullOrWhiteSpace(result)?result:null;
+    }
+
     // ---------- layouts ----------
 
     void LayoutBox_Changed(object sender,SelectionChangedEventArgs e)
     {
         if(_layoutLoading||LayoutBox.SelectedIndex<0)return;
         if(LayoutBox.SelectedIndex==_catalog.ActiveIndex)return;
-        _selectedId=null;
+        ClearSelection();
         _catalog.SelectLayout(LayoutBox.SelectedIndex);
     }
 
     void LayoutNew_Click(object sender,RoutedEventArgs e)
     {
         _catalog.AddLayout($"Layout {_catalog.Layouts.Count+1}");
-        _selectedId=null;
+        ClearSelection();
         Render();
     }
 
     void LayoutDuplicate_Click(object sender,RoutedEventArgs e)
     {
         _catalog.AddLayout($"{_catalog.Layout.Name} copy",copyActive:true);
-        _selectedId=null;
+        ClearSelection();
         Render();
     }
 
@@ -534,7 +801,7 @@ public partial class ScorebugEditorWindow : Window
             return;
         }
         if(MessageBox.Show(this,$"Delete the layout \"{_catalog.Layout.Name}\"?","Scorebug Studio",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;
-        _selectedId=null;
+        ClearSelection();
         _catalog.RemoveLayout(_catalog.ActiveIndex);
         Render();
     }
@@ -655,31 +922,61 @@ public partial class ScorebugEditorWindow : Window
     void Add(ScorebugElement item)
     {
         _catalog.Update(layout=>layout.Elements.Add(item));
+        ClearSelection();
+        _selectedIds.Add(item.Id);
         _selectedId=item.Id;
         Render();
     }
 
-    void Remove_Click(object sender,RoutedEventArgs e)
+    /// <summary>Deletes every selected object at once — the Remove button and the Delete key.</summary>
+    void RemoveSelected()
     {
-        if(Selected is not { } item)return;
-        var id=item.Id;
-        _catalog.Update(layout=>layout.Elements.RemoveAll(x=>x.Id==id));
-        _selectedId=null;
+        if(_selectedIds.Count==0)return;
+        var ids=_selectedIds.ToArray();
+        ClearSelection();
+        _catalog.Update(layout=>layout.Elements.RemoveAll(x=>ids.Contains(x.Id)));
         Render();
     }
+
+    void Remove_Click(object sender,RoutedEventArgs e) => RemoveSelected();
 
     void Element_MouseDown(object sender,MouseButtonEventArgs e)
     {
         if(_resizing||sender is not Border host||host.Tag is not ScorebugElement item)return;
-        _dragElement=item;
-        _selectedId=item.Id;
-        var p=e.GetPosition(DesignCanvas);
-        _dragOffset=new Point(p.X-item.X,p.Y-item.Y);
-        _syncingLayers=true;
-        Layers.SelectedItem=Layers.Items.Cast<LayerItem>().FirstOrDefault(x=>x.Element.Id==item.Id);
-        _syncingLayers=false;
+        var id=item.Id;
+        if((Keyboard.Modifiers&ModifierKeys.Control)!=0)
+        {
+            // Ctrl-click adds this object to the selection, or takes it back out again.
+            if(_selectedIds.Contains(id))
+            {
+                _selectedIds.Remove(id);
+                if(_selectedId==id)_selectedId=_selectedIds.LastOrDefault();
+            }
+            else
+            {
+                _selectedIds.Add(id);
+                _selectedId=id;
+            }
+        }
+        else if(!_selectedIds.Contains(id))
+        {
+            _selectedIds.Clear();
+            _selectedIds.Add(id);
+            _selectedId=id;
+        }
+        else _selectedId=id; // dragging one of several keeps the whole group together
+        SyncLayersFromSelection();
         RefreshAllVisuals();
         LoadProperties();
+        if(_selectedIds.Count==0||_selectedId!=id)return;
+        _dragElement=item;
+        _dragStartPoint=e.GetPosition(DesignCanvas);
+        _dragOrigins.Clear();
+        foreach(var selectedId in _selectedIds)
+        {
+            var element=_catalog.Layout.Elements.FirstOrDefault(x=>x.Id==selectedId);
+            if(element is not null)_dragOrigins[selectedId]=(element.X,element.Y);
+        }
         host.CaptureMouse();
         e.Handled=true;
     }
@@ -688,24 +985,51 @@ public partial class ScorebugEditorWindow : Window
     {
         if(_resizing||_dragElement is null||e.LeftButton!=MouseButtonState.Pressed)return;
         var p=e.GetPosition(DesignCanvas);
-        var x=Math.Clamp(p.X-_dragOffset.X,0,Math.Max(0,_catalog.Layout.Width-_dragElement.Width));
-        var y=Math.Clamp(p.Y-_dragOffset.Y,0,Math.Max(0,_catalog.Layout.Height-_dragElement.Height));
-        _dragElement.X=x; _dragElement.Y=y;
-        if(sender is Border host){Canvas.SetLeft(host,x);Canvas.SetTop(host,y);}
-        if(!_loading){_loading=true;XInput.Text=x.ToString("0");YInput.Text=y.ToString("0");_loading=false;}
+        var dx=p.X-_dragStartPoint.X;
+        var dy=p.Y-_dragStartPoint.Y;
+        // The whole selection moves by the same offset, each box still kept inside the artwork.
+        foreach(var (selectedId,origin) in _dragOrigins)
+        {
+            var element=_catalog.Layout.Elements.FirstOrDefault(x=>x.Id==selectedId);
+            if(element is null)continue;
+            var x=Math.Clamp(origin.X+dx,0,Math.Max(0,_catalog.Layout.Width-element.Width));
+            var y=Math.Clamp(origin.Y+dy,0,Math.Max(0,_catalog.Layout.Height-element.Height));
+            element.X=x; element.Y=y;
+            if(_visuals.TryGetValue(selectedId,out var visual)){Canvas.SetLeft(visual.Host,x);Canvas.SetTop(visual.Host,y);}
+        }
+        if(_dragElement is { } primary&&!string.IsNullOrEmpty(primary.Id))
+        {
+            var current=_catalog.Layout.Elements.FirstOrDefault(x=>x.Id==primary.Id);
+            if(current is not null&&!_loading){_loading=true;XInput.Text=current.X.ToString("0");YInput.Text=current.Y.ToString("0");_loading=false;}
+        }
     }
 
     void Element_MouseUp(object sender,MouseButtonEventArgs e)
     {
         if(_resizing)return;
         if(sender is Border host)host.ReleaseMouseCapture();
-        if(_dragElement is { } item)
-        {
-            var id=item.Id; var x=item.X; var y=item.Y;
-            _dragElement=null;
-            _catalog.Update(layout=>{var target=layout.Elements.FirstOrDefault(z=>z.Id==id);if(target is not null){target.X=x;target.Y=y;}});
-        }
+        SaveDrag();
         e.Handled=true;
+    }
+
+    /// <summary>Writes every dragged object's new position in one catalog edit.</summary>
+    void SaveDrag()
+    {
+        if(_dragElement is null)return;
+        _dragElement=null;
+        var moved=_catalog.Layout.Elements
+            .Where(x=>_dragOrigins.ContainsKey(x.Id))
+            .ToDictionary(x=>x.Id,x=>(x.X,x.Y));
+        _dragOrigins.Clear();
+        if(moved.Count==0)return;
+        _catalog.Update(layout=>
+        {
+            foreach(var (id,position) in moved)
+            {
+                var target=layout.Elements.FirstOrDefault(z=>z.Id==id);
+                if(target is not null){target.X=position.X;target.Y=position.Y;}
+            }
+        });
     }
 
     void Canvas_MouseMove(object sender,MouseEventArgs e) { }
@@ -713,18 +1037,17 @@ public partial class ScorebugEditorWindow : Window
     void Canvas_MouseUp(object sender,MouseButtonEventArgs e)
     {
         if(_resizing)return;
-        if(_dragElement is { } item)
-        {
-            var id=item.Id; var x=item.X; var y=item.Y;
-            _dragElement=null;
-            _catalog.Update(layout=>{var target=layout.Elements.FirstOrDefault(z=>z.Id==id);if(target is not null){target.X=x;target.Y=y;}});
-        }
+        SaveDrag();
     }
 
     void Resize_MouseDown(object sender,MouseButtonEventArgs e)
     {
         if(sender is not Border handle||handle.Tag is not ScorebugElement item)return;
-        _dragElement=item; _resizing=true; _selectedId=item.Id;
+        _dragElement=item; _resizing=true;
+        _selectedIds.Clear(); _selectedIds.Add(item.Id); _selectedId=item.Id;
+        SyncLayersFromSelection();
+        RefreshAllVisuals();
+        LoadProperties();
         var origin=e.GetPosition(DesignCanvas);
         _resizeStartX=origin.X; _resizeStartY=origin.Y;
         _resizeStartWidth=item.Width; _resizeStartHeight=item.Height;
@@ -738,6 +1061,12 @@ public partial class ScorebugEditorWindow : Window
         var p=e.GetPosition(DesignCanvas);
         var width=Math.Clamp(_resizeStartWidth+(p.X-_resizeStartX),24,Math.Max(24,_catalog.Layout.Width-_dragElement.X));
         var height=Math.Clamp(_resizeStartHeight+(p.Y-_resizeStartY),24,Math.Max(24,_catalog.Layout.Height-_dragElement.Y));
+        // A video box that preserves its aspect ratio can only be resized along one diagonal.
+        if(_dragElement.PreserveVideoAspect&&_dragElement.VideoAspect>0.05)
+        {
+            height=Math.Clamp(width/_dragElement.VideoAspect,24,Math.Max(24,_catalog.Layout.Height-_dragElement.Y));
+            width=height*_dragElement.VideoAspect;
+        }
         _dragElement.Width=width; _dragElement.Height=height;
         if(_visuals.TryGetValue(_dragElement.Id,out var visual))
         {
@@ -808,6 +1137,16 @@ public partial class ScorebugEditorWindow : Window
             _propertySave.Stop(); SaveProperties(); RefreshAllVisuals();
             e.Handled=true;
             return;
+        }
+        // Delete removes every selected object, but never while the operator is typing a value.
+        if(e.Key==Key.Delete&&Keyboard.FocusedElement is not TextBox&&e.OriginalSource is not TextBox)
+        {
+            if(_selectedIds.Count>0)
+            {
+                RemoveSelected();
+                e.Handled=true;
+                return;
+            }
         }
         base.OnPreviewKeyDown(e);
     }

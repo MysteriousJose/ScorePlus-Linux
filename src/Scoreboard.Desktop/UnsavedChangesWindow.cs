@@ -17,7 +17,7 @@ public enum UnsavedChoice
 /// </summary>
 public sealed class UnsavedChangesWindow : Window
 {
-    public UnsavedChangesWindow(string theme, string gameLabel, string detail)
+    public UnsavedChangesWindow(string theme, string detail)
     {
         Title = "Unsaved game — ScorePlus";
         Width = 560;
@@ -59,28 +59,8 @@ public sealed class UnsavedChangesWindow : Window
             Text = detail,
             FontSize = 12,
             TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.78,
-            Margin = new Thickness(0, 0, 0, 10)
+            Opacity = 0.78
         });
-        var card = new Border
-        {
-            Background = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x14)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x38, 0x38, 0x38)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 9, 12, 9),
-            Child = new TextBlock
-            {
-                Text = gameLabel,
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 13,
-                FontWeight = FontWeights.Bold
-            }
-        };
-        // This is an information card, not a second dialog; the palette is its own.
-        ThemeManager.SetSkipTheme(card, true);
-        ThemeManager.SetSkipTheme(card.Child, true);
-        body.Children.Add(card);
         root.Children.Add(body);
 
         var buttons = new StackPanel
@@ -134,9 +114,9 @@ public sealed class UnsavedChangesWindow : Window
         return button;
     }
 
-    public static UnsavedChoice Ask(Window owner, string theme, string gameLabel, string detail)
+    public static UnsavedChoice Ask(Window owner, string theme, string detail)
     {
-        var dialog = new UnsavedChangesWindow(theme, gameLabel, detail) { Owner = owner };
+        var dialog = new UnsavedChangesWindow(theme, detail) { Owner = owner };
         dialog.ShowDialog();
         return dialog.Choice;
     }

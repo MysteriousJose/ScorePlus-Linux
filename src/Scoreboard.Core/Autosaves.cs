@@ -85,13 +85,53 @@ public static class AutosaveStore
     /// <summary>Prunes the folder now; used at launch so old piles shrink without waiting for a save.</summary>
     public static void Trim() => Prune();
 
-    /// <summary>Brings the single recovery file from older builds into the list, once.</summary>
+    /// <summary>
+    /// Removes every recoverable point on this computer, including any file that is not readable as
+    /// a game. Saved .spg files elsewhere are untouched. Returns how many were deleted.
+    /// </summary>
+    public static int DeleteAll()
+    {
+        var deleted = 0;
+        try
+        {
+            if (!Directory.Exists(Folder)) return 0;
+            foreach (var path in Directory.EnumerateFiles(Folder).Where(IsGameFile).ToArray())
+            {
+                try { File.Delete(path); deleted++; } catch { }
+            }
+            // Deleting the recovery points is final: the one-time legacy import must not undo it.
+            if (deleted > 0 || File.Exists(MarkerPath)) File.WriteAllText(MarkerPath, DateTimeOffset.Now.ToString("u"));
+        }
+        catch
+        {
+            // A locked file simply stays; the ones that could be removed are gone.
+        }
+        return deleted;
+    }
+
+    /// <summary>
+    /// Brings the single recovery file from older builds into the list, once. The marker is what
+    /// makes it once: without it, deleting every autosave would pull the old file back on the next
+    /// launch, because the import only ran when the list was empty.
+    /// </summary>
     public static void ImportLegacy()
     {
-        Import(AppPaths.Combine("recovery.scoreboard"));
-        // The pre-rename folder is only a fallback; a redirected root (tests) must stay isolated.
-        if (AppPaths.IsUsingDefaultRoot) Import(Path.Combine(AppPaths.PreviousRoot, "recovery.scoreboard"));
+        try
+        {
+            if (File.Exists(MarkerPath)) return;
+            Directory.CreateDirectory(Folder);
+            Import(AppPaths.Combine("recovery.scoreboard"));
+            // The pre-rename folder is only a fallback; a redirected root (tests) must stay isolated.
+            if (AppPaths.IsUsingDefaultRoot) Import(Path.Combine(AppPaths.PreviousRoot, "recovery.scoreboard"));
+            File.WriteAllText(MarkerPath, DateTimeOffset.Now.ToString("u"));
+        }
+        catch
+        {
+            // An unreadable legacy file must not stop the app from starting.
+        }
     }
+
+    static string MarkerPath => Path.Combine(Folder, ".legacy-imported");
 
     /// <summary>Moves a pre-autosave-folder recovery file into the list, once.</summary>
     public static void Import(string? legacyPath)

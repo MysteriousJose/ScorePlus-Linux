@@ -65,6 +65,21 @@ public sealed class ScorebugElement
 
     /// <summary>For video elements: only media assigned to this tag plays inside the element.</summary>
     public string MediaTag { get; set; } = "";
+
+    /// <summary>
+    /// For video elements: lock the box to the picture's aspect ratio, so the clip is never
+    /// stretched or cropped. Off means the box can be any shape and the clip fills it.
+    /// </summary>
+    public bool PreserveVideoAspect { get; set; }
+
+    /// <summary>The picture's width ÷ height while <see cref="PreserveVideoAspect"/> is on. 16:9 by default.</summary>
+    public double VideoAspect { get; set; } = 16.0 / 9.0;
+
+    /// <summary>
+    /// For video elements: which speaker this element's clip plays through (a WASAPI render device
+    /// id). Empty means the Windows default, which is what the audience output uses.
+    /// </summary>
+    public string? AudioDevice { get; set; }
     public double X { get; set; } = 100;
     public double Y { get; set; } = 100;
     public double Width { get; set; } = 240;
@@ -129,8 +144,22 @@ public sealed class ScorebugElement
 
 public sealed class ScorebugLayout
 {
-    public int Version { get; set; } = 3;
+    public int Version { get; set; } = 4;
+
+    /// <summary>Stable identity, so a layout can be the target of a link on another display.</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
     public string Name { get; set; } = "Broadcast Classic";
+
+    /// <summary>
+    /// The display this layout sends to when it goes on air. A linked layout switches the other
+    /// display to <see cref="LinkLayoutId"/> at the same time, so one click can change a main
+    /// scorebug and its matching lower third together.
+    /// </summary>
+    public string? LinkDisplayId { get; set; }
+
+    /// <summary>The layout id, on <see cref="LinkDisplayId"/>, that this layout switches to.</summary>
+    public string? LinkLayoutId { get; set; }
 
     /// <summary>Design canvas size in pixels. Elements are positioned in this space and scaled to fit any output.</summary>
     public int Width { get; set; } = 1280;
@@ -167,16 +196,40 @@ public sealed class ScorebugLayout
     {
         var copy = JsonSerializer.Deserialize<ScorebugLayout>(JsonSerializer.Serialize(this))!;
         copy.Name = name ?? $"{Name} copy";
+        // A duplicate is its own layout: it keeps the link settings but gets a fresh identity.
+        copy.Id = Guid.NewGuid().ToString("N");
         foreach (var element in copy.Elements) element.Id = Guid.NewGuid().ToString("N");
         return copy;
     }
 }
 
-/// <summary>What is written to scorebug.json: every layout, plus which one is being edited.</summary>
+/// <summary>
+/// One program feed. A show usually has a main scorebug display and a lower-thirds display, and
+/// each one keeps its own set of layouts and its own choice of what is on air.
+/// </summary>
+public sealed class ScorebugDisplay
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = "Program";
+    public List<ScorebugLayout> Layouts { get; set; } = [];
+
+    /// <summary>The layout last open for editing on this display.</summary>
+    public int ActiveIndex { get; set; }
+
+    /// <summary>The layout this display is currently sending to its audience output.</summary>
+    public int PublishedIndex { get; set; }
+}
+
+/// <summary>What is written to scorebug.json: every display, with its layouts and what is on air.</summary>
 public sealed class ScorebugDocument
 {
-    public int Version { get; set; } = 3;
-    public List<ScorebugLayout> Layouts { get; set; } = [];
+    public int Version { get; set; } = 4;
+    public List<ScorebugDisplay> Displays { get; set; } = [];
+    public int ActiveDisplayIndex { get; set; }
+
+    /// <summary>A v3 file held one flat list of layouts for one screen; read so it still opens.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public List<ScorebugLayout>? Layouts { get; set; }
     public int ActiveIndex { get; set; }
     public int PublishedIndex { get; set; }
 }
@@ -184,9 +237,13 @@ public sealed class ScorebugDocument
 public sealed class ScorebugCatalog
 {
     readonly string _path;
-    public List<ScorebugLayout> Layouts { get; private set; } = [];
-    public int ActiveIndex { get; private set; }
-    public int PublishedIndex { get; private set; }
+
+    /// <summary>Every program feed in this game. A new game starts with one display.</summary>
+    public List<ScorebugDisplay> Displays { get; private set; } = [];
+
+    /// <summary>The display whose layouts the studio is editing.</summary>
+    public int ActiveDisplayIndex { get; private set; }
+
     public string? Warning { get; private set; }
     public event Action? Changed;
 
@@ -196,44 +253,175 @@ public sealed class ScorebugCatalog
         try { Load(); }
         catch (Exception ex)
         {
-            Layouts = [ScorebugLayout.Default()];
+            Displays = [DefaultDisplay()];
             Warning = $"Could not load scorebug layout: {ex.Message}";
         }
         Validate();
     }
 
+    /// <summary>A display and the layout that has to change with it, in another display.</summary>
+    public sealed record LayoutLink(string DisplayId, int LayoutIndex);
+
+    static ScorebugDisplay DefaultDisplay() => new()
+    {
+        Name = "Program",
+        Layouts = [ScorebugLayout.Default()]
+    };
+
+    static ScorebugDisplay BlankDisplay(int number) => new()
+    {
+        Name = $"Display {number}",
+        Layouts = [new ScorebugLayout { Name = "Layout 1" }]
+    };
+
+    public ScorebugDisplay ActiveDisplay => Displays[Math.Clamp(ActiveDisplayIndex, 0, Displays.Count - 1)];
+
+    /// <summary>The layouts of the display being edited.</summary>
+    public IReadOnlyList<ScorebugLayout> Layouts => ActiveDisplay.Layouts;
+
+    public int ActiveIndex => ActiveDisplay.ActiveIndex;
+
+    public int PublishedIndex => ActiveDisplay.PublishedIndex;
+
     /// <summary>The layout being designed and previewed.</summary>
-    public ScorebugLayout Layout => Layouts[Math.Clamp(ActiveIndex, 0, Layouts.Count - 1)];
+    public ScorebugLayout Layout => ActiveDisplay.Layouts[Math.Clamp(ActiveDisplay.ActiveIndex, 0, ActiveDisplay.Layouts.Count - 1)];
 
     /// <summary>The layout currently on air. It changes only when Update Output is pressed.</summary>
-    public ScorebugLayout PublishedLayout => Layouts[Math.Clamp(PublishedIndex, 0, Layouts.Count - 1)];
+    public ScorebugLayout PublishedLayout => ActiveDisplay.Layouts[Math.Clamp(ActiveDisplay.PublishedIndex, 0, ActiveDisplay.Layouts.Count - 1)];
+
+    // ---------- displays ----------
+
+    public ScorebugDisplay? FindDisplay(string? id) =>
+        id is null ? null : Displays.FirstOrDefault(display => string.Equals(display.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    public IReadOnlyList<ScorebugLayout> LayoutsOf(string? displayId) =>
+        (FindDisplay(displayId) ?? ActiveDisplay).Layouts;
+
+    public ScorebugLayout? LayoutOf(string? displayId, int index)
+    {
+        var layouts = LayoutsOf(displayId);
+        return layouts.Count == 0 ? null : layouts[Math.Clamp(index, 0, layouts.Count - 1)];
+    }
+
+    /// <summary>What a display is actually sending to its audience output.</summary>
+    public ScorebugLayout PublishedLayoutOf(string? displayId)
+    {
+        var display = FindDisplay(displayId) ?? ActiveDisplay;
+        return display.Layouts[Math.Clamp(display.PublishedIndex, 0, display.Layouts.Count - 1)];
+    }
+
+    public bool IsPublished(string? displayId, int layoutIndex)
+    {
+        var display = FindDisplay(displayId);
+        return display is not null && display.PublishedIndex == Math.Clamp(layoutIndex, 0, display.Layouts.Count - 1);
+    }
+
+    /// <summary>
+    /// Where a layout sends the other screen when it is chosen. Null when the layout has no link or
+    /// the link no longer resolves (a deleted layout, or a link pointing at its own display).
+    /// </summary>
+    public LayoutLink? LinkTarget(string? displayId, int layoutIndex)
+    {
+        var source = FindDisplay(displayId);
+        if (source is null || layoutIndex < 0 || layoutIndex >= source.Layouts.Count) return null;
+        var layout = source.Layouts[layoutIndex];
+        if (string.IsNullOrWhiteSpace(layout.LinkDisplayId) || string.IsNullOrWhiteSpace(layout.LinkLayoutId)) return null;
+        var target = FindDisplay(layout.LinkDisplayId);
+        if (target is null || string.Equals(target.Id, source.Id, StringComparison.OrdinalIgnoreCase)) return null;
+        var index = target.Layouts.FindIndex(candidate => string.Equals(candidate.Id, layout.LinkLayoutId, StringComparison.OrdinalIgnoreCase));
+        return index < 0 ? null : new LayoutLink(target.Id, index);
+    }
+
+    /// <summary>Adds a second (or third) program feed and makes it the one being edited.</summary>
+    public int AddDisplay(string? name = null)
+    {
+        var display = BlankDisplay(Displays.Count + 1);
+        if (!string.IsNullOrWhiteSpace(name)) display.Name = name.Trim();
+        Displays.Add(display);
+        ActiveDisplayIndex = Displays.Count - 1;
+        Save();
+        Changed?.Invoke();
+        return ActiveDisplayIndex;
+    }
+
+    public bool RemoveDisplay(int index)
+    {
+        if (Displays.Count <= 1 || index < 0 || index >= Displays.Count) return false;
+        var removed = Displays[index];
+        Displays.RemoveAt(index);
+        // Nothing may keep a link (or an audience window) pointing at a display that is gone.
+        foreach (var display in Displays)
+            foreach (var layout in display.Layouts)
+                if (string.Equals(layout.LinkDisplayId, removed.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    layout.LinkDisplayId = null;
+                    layout.LinkLayoutId = null;
+                }
+        ActiveDisplayIndex = Math.Clamp(ActiveDisplayIndex, 0, Displays.Count - 1);
+        Save();
+        Changed?.Invoke();
+        return true;
+    }
+
+    public void RenameDisplay(int index, string name)
+    {
+        if (index < 0 || index >= Displays.Count || string.IsNullOrWhiteSpace(name)) return;
+        Displays[index].Name = name.Trim();
+        Save();
+        Changed?.Invoke();
+    }
+
+    /// <summary>Chooses which display the studio edits. Never changes what any display is on air with.</summary>
+    public void SelectDisplay(int index)
+    {
+        var next = Math.Clamp(index, 0, Displays.Count - 1);
+        if (next == ActiveDisplayIndex) return;
+        ActiveDisplayIndex = next;
+        Save();
+        Changed?.Invoke();
+    }
 
     void Load()
     {
         Warning = null;
         if (!File.Exists(_path))
         {
-            Layouts = [ScorebugLayout.Default()];
-            ActiveIndex = PublishedIndex = 0;
+            Displays = [DefaultDisplay()];
+            ActiveDisplayIndex = 0;
             return;
         }
         var text = File.ReadAllText(_path);
         var node = JsonNode.Parse(text);
-        if (node is JsonObject root && root["Layouts"] is not null)
+        if (node is JsonObject root && root["Displays"] is not null)
         {
             var document = root.Deserialize<ScorebugDocument>() ?? new ScorebugDocument();
-            Layouts = document.Layouts ?? [];
-            ActiveIndex = document.ActiveIndex;
-            PublishedIndex = document.PublishedIndex;
+            Displays = document.Displays ?? [];
+            ActiveDisplayIndex = document.ActiveDisplayIndex;
+        }
+        else if (node is JsonObject legacy && legacy["Layouts"] is not null)
+        {
+            // A v3 file held one flat list of layouts for a single screen. It becomes display 1.
+            var document = legacy.Deserialize<ScorebugDocument>() ?? new ScorebugDocument();
+            Displays =
+            [
+                new ScorebugDisplay
+                {
+                    Name = "Program",
+                    Layouts = document.Layouts ?? [],
+                    ActiveIndex = document.ActiveIndex,
+                    PublishedIndex = document.PublishedIndex
+                }
+            ];
+            ActiveDisplayIndex = 0;
         }
         else
         {
-            // An older file held one layout. It keeps its artwork and becomes layout 1.
+            // An even older file held one layout. It keeps its artwork and becomes layout 1.
             var single = node?.Deserialize<ScorebugLayout>() ?? ScorebugLayout.Default();
-            Layouts = [single];
-            ActiveIndex = PublishedIndex = 0;
+            Displays = [new ScorebugDisplay { Name = "Program", Layouts = [single] }];
+            ActiveDisplayIndex = 0;
         }
-        if (Layouts.Count == 0) Layouts = [ScorebugLayout.Default()];
+        if (Displays.Count == 0) Displays = [DefaultDisplay()];
     }
 
     void Save()
@@ -241,9 +429,8 @@ public sealed class ScorebugCatalog
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
         var document = new ScorebugDocument
         {
-            Layouts = Layouts,
-            ActiveIndex = ActiveIndex,
-            PublishedIndex = PublishedIndex
+            Displays = Displays,
+            ActiveDisplayIndex = ActiveDisplayIndex
         };
         var temp = _path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true }));
@@ -259,30 +446,70 @@ public sealed class ScorebugCatalog
 
     void Validate()
     {
-        if (Layouts.Count == 0) Layouts = [ScorebugLayout.Default()];
-        ActiveIndex = Math.Clamp(ActiveIndex, 0, Layouts.Count - 1);
-        PublishedIndex = Math.Clamp(PublishedIndex, 0, Layouts.Count - 1);
-        foreach (var layout in Layouts)
+        if (Displays.Count == 0) Displays = [DefaultDisplay()];
+        var seenDisplays = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenLayouts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var display in Displays)
         {
-            layout.Elements ??= [];
-            if (layout.Elements.Count > 100) layout.Elements = layout.Elements.Take(100).ToList();
-            layout.Width = (int)Math.Clamp(layout.Width, 320, 7680);
-            layout.Height = (int)Math.Clamp(layout.Height, 240, 7680);
-            if (string.IsNullOrWhiteSpace(layout.Name)) layout.Name = "Untitled layout";
-            foreach (var item in layout.Elements)
+            display.Layouts ??= [];
+            if (display.Layouts.Count == 0) display.Layouts.Add(new ScorebugLayout { Name = "Layout 1" });
+            if (string.IsNullOrWhiteSpace(display.Name)) display.Name = "Display";
+            if (string.IsNullOrWhiteSpace(display.Id) || !seenDisplays.Add(display.Id)) display.Id = Guid.NewGuid().ToString("N");
+            seenDisplays.Add(display.Id);
+            display.ActiveIndex = Math.Clamp(display.ActiveIndex, 0, display.Layouts.Count - 1);
+            display.PublishedIndex = Math.Clamp(display.PublishedIndex, 0, display.Layouts.Count - 1);
+            foreach (var layout in display.Layouts)
             {
-                item.X = Math.Clamp(double.IsFinite(item.X) ? item.X : 0, 0, layout.Width);
-                item.Y = Math.Clamp(double.IsFinite(item.Y) ? item.Y : 0, 0, layout.Height);
-                item.Width = Math.Clamp(double.IsFinite(item.Width) ? item.Width : 100, 24, layout.Width);
-                item.Height = Math.Clamp(double.IsFinite(item.Height) ? item.Height : 50, 24, layout.Height);
-                item.FontSize = Math.Clamp(double.IsFinite(item.FontSize) ? item.FontSize : 24, 8, 480);
-                item.Opacity = Math.Clamp(double.IsFinite(item.Opacity) ? item.Opacity : 1, 0, 1);
-                item.Rotation = Math.Clamp(double.IsFinite(item.Rotation) ? item.Rotation : 0, -360, 360);
-                item.BorderThickness = Math.Clamp(double.IsFinite(item.BorderThickness) ? item.BorderThickness : 0, 0, 40);
-                item.TransitionSeconds = Math.Clamp(double.IsFinite(item.TransitionSeconds) ? item.TransitionSeconds : 0.2, 0, 5);
-                if (string.IsNullOrWhiteSpace(item.BorderColor)) item.BorderColor = "#FFFFFFFF";
-                if (item.PeriodFormat is not ("Full" or "Short" or "Number")) item.PeriodFormat = null;
-                if (string.IsNullOrWhiteSpace(item.FontFamily)) item.FontFamily = "Segoe UI";
+                if (string.IsNullOrWhiteSpace(layout.Id) || !seenLayouts.Add(layout.Id))
+                {
+                    layout.Id = Guid.NewGuid().ToString("N");
+                    seenLayouts.Add(layout.Id);
+                }
+                layout.Elements ??= [];
+                if (layout.Elements.Count > 100) layout.Elements = layout.Elements.Take(100).ToList();
+                layout.Width = (int)Math.Clamp(layout.Width, 320, 7680);
+                layout.Height = (int)Math.Clamp(layout.Height, 240, 7680);
+                if (string.IsNullOrWhiteSpace(layout.Name)) layout.Name = "Untitled layout";
+                foreach (var item in layout.Elements)
+                {
+                    item.X = Math.Clamp(double.IsFinite(item.X) ? item.X : 0, 0, layout.Width);
+                    item.Y = Math.Clamp(double.IsFinite(item.Y) ? item.Y : 0, 0, layout.Height);
+                    item.Width = Math.Clamp(double.IsFinite(item.Width) ? item.Width : 100, 24, layout.Width);
+                    item.Height = Math.Clamp(double.IsFinite(item.Height) ? item.Height : 50, 24, layout.Height);
+                    item.FontSize = Math.Clamp(double.IsFinite(item.FontSize) ? item.FontSize : 24, 8, 480);
+                    item.Opacity = Math.Clamp(double.IsFinite(item.Opacity) ? item.Opacity : 1, 0, 1);
+                    item.Rotation = Math.Clamp(double.IsFinite(item.Rotation) ? item.Rotation : 0, -360, 360);
+                    item.BorderThickness = Math.Clamp(double.IsFinite(item.BorderThickness) ? item.BorderThickness : 0, 0, 40);
+                    item.TransitionSeconds = Math.Clamp(double.IsFinite(item.TransitionSeconds) ? item.TransitionSeconds : 0.2, 0, 5);
+                    item.VideoAspect = Math.Clamp(double.IsFinite(item.VideoAspect) && item.VideoAspect > 0.05 ? item.VideoAspect : 16.0 / 9.0, 0.1, 10);
+                    if (string.IsNullOrWhiteSpace(item.BorderColor)) item.BorderColor = "#FFFFFFFF";
+                    if (item.PeriodFormat is not ("Full" or "Short" or "Number")) item.PeriodFormat = null;
+                    if (string.IsNullOrWhiteSpace(item.FontFamily)) item.FontFamily = "Segoe UI";
+                }
+            }
+        }
+        ActiveDisplayIndex = Math.Clamp(ActiveDisplayIndex, 0, Displays.Count - 1);
+        // A link that no longer resolves (a deleted layout, a display that is gone) is dropped rather
+        // than left dangling; a layout can only link to another display.
+        foreach (var display in Displays)
+        {
+            foreach (var layout in display.Layouts)
+            {
+                if (string.IsNullOrWhiteSpace(layout.LinkDisplayId) || string.IsNullOrWhiteSpace(layout.LinkLayoutId))
+                {
+                    layout.LinkDisplayId = null;
+                    layout.LinkLayoutId = null;
+                    continue;
+                }
+                var target = FindDisplay(layout.LinkDisplayId);
+                var valid = target is not null
+                    && !string.Equals(target.Id, display.Id, StringComparison.OrdinalIgnoreCase)
+                    && target.Layouts.Any(candidate => string.Equals(candidate.Id, layout.LinkLayoutId, StringComparison.OrdinalIgnoreCase));
+                if (!valid)
+                {
+                    layout.LinkDisplayId = null;
+                    layout.LinkLayoutId = null;
+                }
             }
         }
     }
@@ -316,59 +543,91 @@ public sealed class ScorebugCatalog
     /// <summary>Selects the layout being designed. Never touches what is on air until PublishLayout.</summary>
     public void SelectLayout(int index, bool publish = false)
     {
-        var next = Math.Clamp(index, 0, Layouts.Count - 1);
-        if (next == ActiveIndex && !publish) return;
-        ActiveIndex = next;
-        if (publish) PublishedIndex = next;
+        var display = ActiveDisplay;
+        var next = Math.Clamp(index, 0, display.Layouts.Count - 1);
+        if (next == display.ActiveIndex && !publish) return;
+        display.ActiveIndex = next;
+        if (publish) display.PublishedIndex = next;
         Save(); Changed?.Invoke();
     }
 
     /// <summary>Sends the previewed layout to the audience output.</summary>
-    public void PublishLayout()
+    public void PublishLayout() => PublishLayout(ActiveDisplay.Id, ActiveDisplay.ActiveIndex);
+
+    /// <summary>
+    /// Puts one display's chosen layout on air. Each display publishes on its own, so a lower-third
+    /// display never has to show the same layout as the main scorebug.
+    /// </summary>
+    public void PublishLayout(string? displayId, int layoutIndex)
     {
-        if (PublishedIndex == ActiveIndex) return;
-        PublishedIndex = ActiveIndex;
+        var display = FindDisplay(displayId) ?? ActiveDisplay;
+        var next = Math.Clamp(layoutIndex, 0, display.Layouts.Count - 1);
+        if (display.PublishedIndex == next) return;
+        display.PublishedIndex = next;
         Save(); Changed?.Invoke();
     }
 
     public int AddLayout(string? name = null, bool copyActive = false)
     {
-        var layout = copyActive ? Layout.Copy(name) : new ScorebugLayout { Name = string.IsNullOrWhiteSpace(name) ? $"Layout {Layouts.Count + 1}" : name.Trim() };
-        if (string.IsNullOrWhiteSpace(layout.Name)) layout.Name = $"Layout {Layouts.Count + 1}";
-        Layouts.Add(layout);
-        ActiveIndex = Layouts.Count - 1;
+        var display = ActiveDisplay;
+        var layout = copyActive ? Layout.Copy(name) : new ScorebugLayout { Name = string.IsNullOrWhiteSpace(name) ? $"Layout {display.Layouts.Count + 1}" : name.Trim() };
+        if (string.IsNullOrWhiteSpace(layout.Name)) layout.Name = $"Layout {display.Layouts.Count + 1}";
+        display.Layouts.Add(layout);
+        display.ActiveIndex = display.Layouts.Count - 1;
         Save(); Changed?.Invoke();
-        return ActiveIndex;
+        return display.ActiveIndex;
     }
 
     public bool RemoveLayout(int index)
     {
-        if (Layouts.Count <= 1 || index < 0 || index >= Layouts.Count) return false;
-        Layouts.RemoveAt(index);
-        if (ActiveIndex >= Layouts.Count) ActiveIndex = Layouts.Count - 1;
-        if (PublishedIndex >= Layouts.Count) PublishedIndex = Layouts.Count - 1;
-        if (ActiveIndex > index) ActiveIndex--;
-        if (PublishedIndex > index) PublishedIndex--;
+        var display = ActiveDisplay;
+        if (display.Layouts.Count <= 1 || index < 0 || index >= display.Layouts.Count) return false;
+        var removed = display.Layouts[index];
+        display.Layouts.RemoveAt(index);
+        if (display.ActiveIndex >= display.Layouts.Count) display.ActiveIndex = display.Layouts.Count - 1;
+        if (display.PublishedIndex >= display.Layouts.Count) display.PublishedIndex = display.Layouts.Count - 1;
+        if (display.ActiveIndex > index) display.ActiveIndex--;
+        if (display.PublishedIndex > index) display.PublishedIndex--;
+        // A link that pointed at the deleted layout is broken, not silently aimed somewhere else.
+        foreach (var other in Displays)
+            foreach (var layout in other.Layouts)
+                if (string.Equals(layout.LinkLayoutId, removed.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    layout.LinkDisplayId = null;
+                    layout.LinkLayoutId = null;
+                }
         Save(); Changed?.Invoke();
         return true;
     }
 
     public void RenameLayout(int index, string name)
     {
-        if (index < 0 || index >= Layouts.Count || string.IsNullOrWhiteSpace(name)) return;
-        Layouts[index].Name = name.Trim();
+        var layouts = ActiveDisplay.Layouts;
+        if (index < 0 || index >= layouts.Count || string.IsNullOrWhiteSpace(name)) return;
+        layouts[index].Name = name.Trim();
+        Save(); Changed?.Invoke();
+    }
+
+    /// <summary>Points this layout at a layout on another display, or clears the link.</summary>
+    public void SetLink(string? displayId, int layoutIndex, string? linkDisplayId, string? linkLayoutId)
+    {
+        var display = FindDisplay(displayId) ?? ActiveDisplay;
+        if (layoutIndex < 0 || layoutIndex >= display.Layouts.Count) return;
+        var layout = display.Layouts[layoutIndex];
+        layout.LinkDisplayId = string.IsNullOrWhiteSpace(linkDisplayId) ? null : linkDisplayId;
+        layout.LinkLayoutId = string.IsNullOrWhiteSpace(linkLayoutId) ? null : linkLayoutId;
+        Validate();
         Save(); Changed?.Invoke();
     }
 
     /// <summary>
-    /// Starts over with the single factory layout. A new game is a blank slate: no layouts from
-    /// the previous game, and the same default design every fresh install opens with.
+    /// Starts over with a single display and the factory layout. A new game is a blank slate: no
+    /// layouts or displays from the previous game, and the same design every fresh install opens with.
     /// </summary>
     public void ResetToDefault()
     {
-        Layouts = [ScorebugLayout.Default()];
-        ActiveIndex = 0;
-        PublishedIndex = 0;
+        Displays = [DefaultDisplay()];
+        ActiveDisplayIndex = 0;
         Save(); Changed?.Invoke();
     }
 }

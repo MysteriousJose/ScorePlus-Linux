@@ -11,12 +11,27 @@ public partial class OutputWindow : Window
     readonly ScorebugCatalog _catalog;
     GameState _displayState;
     readonly ScorebugCanvasView _scorebugView;
+    // Which display this window is the audience output for. Only that display's published layout
+    // is ever drawn here, so two screens can be on air with completely different designs.
+    readonly string _displayId;
     string _broadcastTheme;
     WindowStyle _style; WindowState _state; bool _full;
     double _left, _top, _width, _height;
     bool _geometrySaved;
-    public OutputWindow(GameEngine engine, ScorebugCatalog catalog,string broadcastTheme="Dark",MediaPlayback? playback=null) {InitializeComponent(); _broadcastTheme=broadcastTheme; _engine = engine; _catalog=catalog; _displayState=engine.CloneState();        // The audience only ever sees the layout that was published, never the one being designed.
-        _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState,playback,muteVideo:false,publishedLayout:true); ScorebugHost.Children.Add(_scorebugView); _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update(); }
+    public OutputWindow(GameEngine engine, ScorebugCatalog catalog,string broadcastTheme="Dark",MediaPlayback? playback=null,string? displayId=null)
+    {
+        InitializeComponent(); _broadcastTheme=broadcastTheme; _engine = engine; _catalog=catalog; _displayState=engine.CloneState();
+        _displayId=(catalog.FindDisplay(displayId)??catalog.Displays[0]).Id;
+        // The audience only ever sees the layout that was published, never the one being designed.
+        _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState,playback,muteVideo:false,layoutProvider:()=>_catalog.PublishedLayoutOf(_displayId));
+        ScorebugHost.Children.Add(_scorebugView); _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update();
+    }
+
+    /// <summary>The display this window shows.</summary>
+    public string DisplayId => _displayId;
+
+    /// <summary>The display's name, for the window title and the chooser.</summary>
+    public string DisplayName => _catalog.FindDisplay(_displayId)?.Name ?? "Program";
     public void Publish(){_displayState=_engine.CloneState();Update();_scorebugView.Refresh();}
     /// <summary>Re-creates the on-air visuals; used when a new game replaces everything.</summary>
     public void Rebuild(){Update();_scorebugView.Rebuild();}

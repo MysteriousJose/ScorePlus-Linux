@@ -57,9 +57,12 @@ public partial class MediaDock : UserControl
     static readonly AudioRouter.OutputDevice DefaultOutput = new("", "Default output");
     IReadOnlyList<AudioRouter.OutputDevice> _audioDevices = [];
 
-    // Instant-replay lengths offered by the dock. The chosen one is remembered in preferences.
-    static readonly int[] ReplayLengths = [3, 5, 10, 15, 20, 30, 45, 60];
     IReadOnlyList<CameraChoice> _cameraChoices = [];
+
+    // A dock used as a full-width tab gets console-sized controls; the rail version stays compact.
+    bool _large;
+    double _tileWidth = 108, _tileHeight = 116, _thumbHeight = 70;
+    double _folderWidth = 94, _folderHeight = 50, _playlistWidth = 106, _newShelfWidth = 64;
 
     /// <summary>A capture device in the LIVE picker; <see cref="ToString"/> is what the combo shows.</summary>
     sealed record CameraChoice(MediaEntry Entry)
@@ -78,6 +81,11 @@ public partial class MediaDock : UserControl
         TagBox.ItemsSource = MediaLibrary.SuggestedTags;
         TagBox.Text = MediaLibrary.DefaultTag;
         ApplyTheme("Dark");
+        // A UserControl's children only reach the visual tree when its template is applied, so the
+        // size swap has to run once more after load or the first pass finds nothing to restyle.
+        Loaded += (_, _) => { if (_large) ApplyControlSize(this); };
+        // The dock starts hidden behind the console tab, so it is restyled when the tab reveals it.
+        IsVisibleChanged += (_, _) => { if (IsVisible) ApplyControlSize(this); };
     }
 
     /// <summary>Matches the dock to the operator theme (Dark is near-black, Light is white).</summary>
@@ -212,11 +220,18 @@ public partial class MediaDock : UserControl
             SyncSpeaker(selected);
 
             SyncCameraPicker();
-            SyncReplayLength();
 
             // Camera transport: Replay has something to cut to while live, Live goes back again.
             ReplayButton.IsEnabled = _session.IsCameraLive || _session.IsReplaying;
             LiveButton.IsEnabled = _session.IsReplaying;
+            StartReplayButton.IsEnabled = _session.IsReplaying;
+            SaveReplayButton.IsEnabled = _session.IsReplaying;
+            var cameraItem = _session.Current?.IsCamera == true ? _session.Current
+                : _session.Selected?.IsCamera == true ? _session.Selected : null;
+            RouteButton.IsEnabled = cameraItem is not null;
+            RouteButton.ToolTip = cameraItem is null
+                ? "Select a camera item in the library to rename it or point it at another camera"
+                : $"Rename {cameraItem.Label} and choose which camera it uses";
         }
         finally { _syncing = false; }
 
@@ -266,12 +281,67 @@ public partial class MediaDock : UserControl
             : _cameraChoices.FirstOrDefault(choice => string.Equals(choice.Entry.Path, active.Path, StringComparison.OrdinalIgnoreCase));
     }
 
-    void SyncReplayLength()
+    /// <summary>Shows the dock again (the tab was just opened).</summary>
+    public void RefreshView() => Refresh();
+
+    /// <summary>
+    /// Grows the dock's buttons to the size of the rest of the console when it lives in a tab.
+    /// The stock styles are swapped for their larger twins and the tiles grow with them.
+    /// </summary>
+    public void SetLargeMode(bool large)
     {
-        if (_session is null) return;
-        if (ReplayLengthBox.Items.Count == 0) ReplayLengthBox.ItemsSource = ReplayLengths.Select(seconds => $"{seconds}s").ToArray();
-        var index = Array.IndexOf(ReplayLengths, _session.ReplaySeconds);
-        if (index >= 0 && ReplayLengthBox.SelectedIndex != index) ReplayLengthBox.SelectedIndex = index;
+        _large = large;
+        _tileWidth = large ? 158 : 108;
+        _tileHeight = large ? 168 : 116;
+        _thumbHeight = large ? 106 : 70;
+        _folderWidth = large ? 128 : 94;
+        _folderHeight = large ? 64 : 50;
+        _playlistWidth = large ? 150 : 106;
+        _newShelfWidth = large ? 88 : 64;
+        ApplyControlSize(this);
+        Refresh();
+    }
+
+    /// <summary>
+    /// Sizes every dock control for the current mode. Values are set locally rather than by
+    /// swapping styles: the dock may be hidden when the mode is chosen, so the walk has to be
+    /// repeatable and must survive a template being applied later.
+    /// </summary>
+    void ApplyControlSize(DependencyObject root)
+    {
+        var transportStyle = (Style)Resources["TransportButton"];
+        var actionStyle = (Style)Resources["DockAction"];
+        var clearStyle = (Style)Resources["ClearAction"];
+        var comboStyle = (Style)Resources["DockCombo"];
+        var searchStyle = (Style)Resources["DockSearch"];
+        // The logical tree exists as soon as the XAML is parsed, where the visual tree only grows
+        // when a hidden dock is first measured — which is exactly when this has to work.
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            switch (child)
+            {
+                case Button button when ReferenceEquals(button.Style, transportStyle):
+                    button.Width = _large ? 58 : 44;
+                    button.Height = _large ? 44 : 34;
+                    button.FontSize = _large ? 18 : 15;
+                    break;
+                case Button button when ReferenceEquals(button.Style, actionStyle) || ReferenceEquals(button.Style, clearStyle):
+                    button.FontSize = _large ? 13 : 11;
+                    button.MinHeight = _large ? 44 : 30;
+                    button.Padding = _large ? new Thickness(14, 10, 14, 10) : new Thickness(9, 5, 9, 5);
+                    break;
+                case ComboBox box when ReferenceEquals(box.Style, comboStyle):
+                    box.FontSize = _large ? 13 : 11;
+                    box.MinHeight = _large ? 38 : 28;
+                    break;
+                case TextBox field when ReferenceEquals(field.Style, searchStyle):
+                    field.FontSize = _large ? 13 : 11;
+                    field.MinHeight = _large ? 40 : 30;
+                    field.Padding = _large ? new Thickness(10, 8, 10, 8) : new Thickness(7, 5, 7, 5);
+                    break;
+            }
+            ApplyControlSize(child);
+        }
     }
 
     // ---------- search ----------
@@ -372,8 +442,8 @@ public partial class MediaDock : UserControl
             : string.Equals(_session?.FolderFilter, filter ?? "", StringComparison.OrdinalIgnoreCase);
         var tile = new Border
         {
-            Width = 94,
-            Height = 50,
+            Width = _folderWidth,
+            Height = _folderHeight,
             Margin = new Thickness(0, 0, 6, 0),
             CornerRadius = new CornerRadius(7),
             Background = selected ? _accentSoft : _tilePanel,
@@ -451,8 +521,8 @@ public partial class MediaDock : UserControl
             var onAir = string.Equals(_session.ActivePlaylist?.Name, playlist.Name, StringComparison.OrdinalIgnoreCase);
             var tile = new Border
             {
-                Width = 106,
-                Height = 50,
+                Width = _playlistWidth,
+                Height = _folderHeight,
                 Margin = new Thickness(0, 0, 6, 0),
                 CornerRadius = new CornerRadius(7),
                 Background = onAir ? _accentSoft : _tilePanel,
@@ -543,8 +613,8 @@ public partial class MediaDock : UserControl
     {
         var tile = new Border
         {
-            Width = 64,
-            Height = 50,
+            Width = _newShelfWidth,
+            Height = _folderHeight,
             Margin = new Thickness(0, 0, 6, 0),
             CornerRadius = new CornerRadius(7),
             Background = Brushes.Transparent,
@@ -632,8 +702,8 @@ public partial class MediaDock : UserControl
         var isOnAir = ReferenceEquals(entry, session.Current);
         var tile = new Border
         {
-            Width = 108,
-            Height = 116,
+            Width = _tileWidth,
+            Height = _tileHeight,
             Margin = new Thickness(0, 0, 8, 8),
             CornerRadius = new CornerRadius(8),
             Background = _tilePanel,
@@ -649,7 +719,7 @@ public partial class MediaDock : UserControl
         ThemeManager.SetSkipTheme(tile, true);
 
         var grid = new Grid();
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(70) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(_thumbHeight) });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
@@ -754,6 +824,29 @@ public partial class MediaDock : UserControl
     {
         if (_session is null) return;
         PlayPauseButton.Content = _session.IsPlaying ? "❚❚" : "▶";
+        // Replay: the bar covers the last two minutes and the far right is live. Dragging left goes
+        // further back; the readout says how far behind live the playhead is.
+        if (_session.IsReplaying)
+        {
+            ScrubBar.IsEnabled = true;
+            var depth = Math.Max(1, _session.ReplayDepth);
+            var back = Math.Clamp(_session.ReplayBack, 0, depth);
+            ElapsedText.Text = $"-{Stamp(TimeSpan.FromSeconds(back))}";
+            DurationText.Text = "LIVE";
+            ReplayHint.Text = _session.ReplayOnAir
+                ? $"  ON AIR · {Stamp(TimeSpan.FromSeconds(back))} behind live"
+                : $"  PREVIEW ONLY · {Stamp(TimeSpan.FromSeconds(back))} behind live · Start replay goes to air";
+            if (_scrubbing || _syncingBar || DateTime.UtcNow < _settleUntil || ScrubBar.IsMouseCaptureWithin || ScrubBar.IsKeyboardFocusWithin) return;
+            _syncingBar = true;
+            try
+            {
+                ScrubBar.Maximum = depth;
+                ScrubBar.Value = Math.Clamp(depth - back, 0, depth);
+            }
+            finally { _syncingBar = false; }
+            return;
+        }
+        ReplayHint.Text = "  scrub back, then save from there to now";
         if (_session.Current?.IsCamera == true)
         {
             // A live feed has no timeline to scrub: the bar is a status light instead.
@@ -928,13 +1021,6 @@ public partial class MediaDock : UserControl
         }
     }
 
-    void ReplayLength_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (_syncing || _session is null) return;
-        var index = ReplayLengthBox.SelectedIndex;
-        if (index >= 0 && index < ReplayLengths.Length) _session.SetReplaySeconds(ReplayLengths[index]);
-    }
-
     /// <summary>
     /// The panic button: stop everything, release the camera (so its last frame cannot stay on the
     /// scorebug) and blank every video box. Clearing the library is the operator's choice.
@@ -997,22 +1083,63 @@ public partial class MediaDock : UserControl
     void Camera_Click(object sender, RoutedEventArgs e)
     {
         if (_session is null) return;
-        // Add the next capture device that is not already in the library.
+        // Add the next camera item id that is not already in the library. The device it shows can
+        // be changed later from Route…, so the id only has to be free.
         var index = 0;
-        while (_session.Library.Any(m => m.IsCamera && m.CameraIndex == index)) index++;
+        while (_session.Library.Any(m => m.IsCamera && MediaLibrary.CameraIndex(m.Path) == index)) index++;
         _session.AddCamera(index, MediaLibrary.NormalizeTag(TagBox.Text));
         Refresh();
     }
 
     void Replay_Click(object sender, RoutedEventArgs e)
     {
-        _session?.StartReplay();
+        if (_session is null) return;
+        if (_session.IsReplaying) _session.ReturnToLive();
+        _session.BeginReplay();
+        Refresh();
+    }
+
+    void StartReplay_Click(object sender, RoutedEventArgs e)
+    {
+        _session?.PlayReplay();
         Refresh();
     }
 
     void Live_Click(object sender, RoutedEventArgs e)
     {
         _session?.ReturnToLive();
+        Refresh();
+    }
+
+    void SaveReplay_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null || !_session.IsReplaying) return;
+        var behind = Math.Max(1, (int)Math.Round(_session.ReplayBack));
+        var dialog = new SaveFileDialog
+        {
+            Title = "Save replay",
+            Filter = "Video (*.avi)|*.avi",
+            DefaultExt = "avi",
+            FileName = $"replay-{DateTime.Now:yyyyMMdd-HHmmss}-{behind}s",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos)
+        };
+        if (dialog.ShowDialog() != true) return;
+        _session.SaveReplayClip(dialog.FileName);
+        Refresh();
+    }
+
+    /// <summary>Renames the selected camera item and points it at another camera.</summary>
+    void Route_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null) return;
+        var entry = _session.Current?.IsCamera == true ? _session.Current
+            : _session.Selected?.IsCamera == true ? _session.Selected : null;
+        if (entry is null)
+        {
+            _session.Report("SELECT A CAMERA ITEM FIRST");
+            return;
+        }
+        if (Window.GetWindow(this) is { } owner) CameraRoutingWindow.Ask(owner, _session, entry, _theme);
         Refresh();
     }
 
@@ -1027,7 +1154,8 @@ public partial class MediaDock : UserControl
     void Scrub_End(object sender, MouseButtonEventArgs e)
     {
         if (_session is null) { _scrubbing = false; return; }
-        _session.Seek(ScrubBar.Value);
+        if (_session.IsReplaying) _session.SeekReplay(Math.Max(0, ScrubBar.Maximum - ScrubBar.Value));
+        else _session.Seek(ScrubBar.Value);
         _session.EndScrub();
         _scrubbing = false;
         // Hold the bar at the requested point until the player has actually moved there.
@@ -1039,7 +1167,8 @@ public partial class MediaDock : UserControl
     {
         if (_session is null || _syncingBar) return;
         if (!_scrubbing && !ScrubBar.IsKeyboardFocusWithin) return;
-        _session.Seek(e.NewValue);
+        if (_session.IsReplaying) _session.SeekReplay(Math.Max(0, ScrubBar.Maximum - e.NewValue));
+        else _session.Seek(e.NewValue);
     }
 
     // ---------- small themed prompt ----------
