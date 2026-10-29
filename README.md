@@ -1,4 +1,5 @@
 # ScorePlus
+# Disclaimer!! The linux release for this will often be behind or skip versions, the current linux way to run it just wine until I rebuild it.
 
 **Currently in alpha. The project is updated frequently and extremely buggy. I would not recommend building unless for experimental purposes.**
 
