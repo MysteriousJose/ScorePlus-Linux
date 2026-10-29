@@ -1,4 +1,4 @@
-<Window x:Class="Scoreboard.Desktop.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ScorePlus — Preferences" Width="520" SizeToContent="Height" MinHeight="380" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" Background="#171C25" Foreground="#F4F7FB" FontFamily="Segoe UI">
+<Window x:Class="Scoreboard.Desktop.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ScorePlus — Preferences" PreviewKeyDown="Window_PreviewKeyDown" Width="520" SizeToContent="Height" MinHeight="380" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" Background="#171C25" Foreground="#F4F7FB" FontFamily="Segoe UI">
   <DockPanel Margin="22">
     <DockPanel DockPanel.Dock="Bottom" Margin="0,18,0,0">
       <TextBlock Text="Preferences are stored locally." VerticalAlignment="Center" Foreground="#93A0B2" FontSize="11"/>

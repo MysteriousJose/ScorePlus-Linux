@@ -362,6 +362,25 @@ internal static class Program
                 throw new Exception($"FAIL: the System theme saved as '{prefsProbe.Theme}'");
             Console.WriteLine("PASS: preferences only apply when saved, and System is a saved option");
 
+            // Enter while typing in a preference field saves the value but keeps the page open:
+            // Save is the default button, so the keystroke used to dismiss the whole page mid-edit.
+            var enterPrefs = new UserPreferences { Theme = "Dark", ValueSwitchDelay = 0 };
+            var enterPrefsWindow = new SettingsWindow(enterPrefs);
+            enterPrefsWindow.Show();
+            enterPrefsWindow.UpdateLayout();
+            var enterDelay = (TextBox)enterPrefsWindow.FindName("DelayInput")!;
+            enterDelay.Text = "2.5";
+            enterDelay.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(enterPrefsWindow)!, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            });
+            if (!enterPrefsWindow.IsVisible)
+                throw new Exception("FAIL: Enter in a preference field closed the page");
+            if (Math.Abs(enterPrefs.ValueSwitchDelay - 2.5) > 0.001)
+                throw new Exception($"FAIL: Enter in a preference field saved {enterPrefs.ValueSwitchDelay}s instead of 2.5s");
+            enterPrefsWindow.Close();
+            Console.WriteLine("PASS: Enter in a preference field saves and leaves the page open");
+
             var enterEditor = new ScorebugEditorWindow(catalog, engine);
             enterEditor.Show();
             enterEditor.UpdateLayout();
