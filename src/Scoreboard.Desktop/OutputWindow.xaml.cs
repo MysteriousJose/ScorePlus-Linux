@@ -59,7 +59,7 @@ public partial class OutputWindow : Window
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Update); return; }
         var s = _displayState;
-        Background=ColorBrush(_broadcastTheme=="Light"?"#FFF3F5F8":"#FF000000");
+        Background=ColorBrush(ThemeManager.Resolve(_broadcastTheme)=="Light"?"#FFF3F5F8":"#FF000000");
         HomeLabel.Text = s.HomeTeam; AwayLabel.Text = s.AwayTeam;
         HomeScore.Text = s.HomeScore.ToString(); AwayScore.Text = s.AwayScore.ToString();
         Period.Text = PeriodDisplay.Format(s).ToUpperInvariant(); Clock.Text = GameEngine.FormatClock(s.ClockSeconds);

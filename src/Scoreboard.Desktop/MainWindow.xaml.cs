@@ -62,6 +62,9 @@ public partial class MainWindow : Window, IControlPanelHost
     public MainWindow(LaunchMode? mode = null, string? gamePath = null, bool waitForLaunch = false)
     {
         InitializeComponent();
+        // Follow the window onto portrait monitors and laptops at 150% scaling instead of hanging
+        // the console off the screen; the console itself is reflowable down to its minimum width.
+        ScreenFit.Track(this);
         _session = new MediaSession(_preferences);
         _playback = _session.Playback;
         ThemeManager.Apply(this, _preferences.Theme);

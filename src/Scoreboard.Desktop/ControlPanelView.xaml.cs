@@ -124,7 +124,9 @@ public partial class ControlPanelView : UserControl
 
     Stepper BuildScoreStepper(bool home)
     {
-        var stepper = new Stepper("Score", 38);
+        // No caption: the card already says VISITORS or HOME, and the line it freed is what keeps
+        // the − row inside the card when a panel opens at its smallest allowed size.
+        var stepper = new Stepper(null, 36);
         stepper.Stepped += Step;
         stepper.Committed += value => _engine.SetScore(home, value);
         return stepper;
@@ -245,20 +247,10 @@ public partial class ControlPanelView : UserControl
         AwayPossessionButton.FontWeight = s.HomePossession ? FontWeights.Normal : FontWeights.Bold;
         HomePossessionButton.FontWeight = s.HomePossession ? FontWeights.Bold : FontWeights.Normal;
 
-        (AwayMeta.Text, HomeMeta.Text) = s.SportId switch
-        {
-            "football" => ($"Yards {s.AwayYards} · Turnovers {s.AwayTurnovers}", $"Yards {s.HomeYards} · Turnovers {s.HomeTurnovers}"),
-            "basketball" => ($"Fouls {s.AwayFouls}", $"Fouls {s.HomeFouls}"),
-            "soccer" => ($"🟨 {s.AwayYellowCards}  🟥 {s.AwayRedCards}  ⚽ {s.AwayShots}  ◆ {s.AwayCorners}",
-                         $"🟨 {s.HomeYellowCards}  🟥 {s.HomeRedCards}  ⚽ {s.HomeShots}  ◆ {s.HomeCorners}"),
-            "baseball" => ($"Hits {s.AwayHits}", $"Hits {s.HomeHits}"),
-            _ => ($"Timeouts {s.AwayTimeouts}", $"Timeouts {s.HomeTimeouts}")
-        };
-
         var football = s.SportId == "football";
         FootballDetail.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
         OtherDetail.Visibility = football ? Visibility.Collapsed : Visibility.Visible;
-        NewSeriesButton.Visibility = FootballExtras.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
+        NewSeriesButton.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
         DetailCardTitle.Text = football ? "DOWN & DISTANCE" : "SPORT CONTROLS";
         DetailCardHint.Text = football ? $"{Ordinal(s.Down)} & {s.YardsToGo} · ball on {(s.BallOnHomeSide ? "home" : "visitors")}' {s.YardsToGoal}" : string.Empty;
         DetailCardHint.Visibility = _showHints && football ? Visibility.Visible : Visibility.Collapsed;
@@ -589,8 +581,6 @@ public partial class ControlPanelView : UserControl
             case "football.ball.side": _engine.SetBallSide(!_engine.State.BallOnHomeSide); break;
             case "football.ball.plus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Min(50, _engine.State.YardsToGoal + 1)); break;
             case "football.series.new": _engine.NewSeries(); break;
-            case "football.yards.home": _engine.AddFootballYards(true, 10); break;
-            case "football.yards.away": _engine.AddFootballYards(false, 10); break;
             case "basketball.foul.home": _engine.AddFoul(true); break;
             case "basketball.foul.away": _engine.AddFoul(false); break;
             case "basketball.shotclock.toggle": _engine.ToggleShotClock(); break;

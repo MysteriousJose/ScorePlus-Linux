@@ -348,7 +348,19 @@ internal static class Program
             var saveButton = FindAll<Button>(saveWindow).First(b => (b.Content as string) == "Save");
             saveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             if (prefsProbe.Theme != "Light") throw new Exception("FAIL: saving preferences did not apply the theme");
-            Console.WriteLine("PASS: preferences only apply when saved");
+            // System is offered alongside the pinned themes and can be saved.
+            var systemChoices = ((ComboBox)saveWindow.FindName("ThemeSelector")!).ItemsSource as string[];
+            if (systemChoices is null || !systemChoices.Contains("System"))
+                throw new Exception("FAIL: preferences do not offer the System theme");
+            var systemWindow = new SettingsWindow(prefsProbe);
+            systemWindow.Show();
+            systemWindow.UpdateLayout();
+            ((ComboBox)systemWindow.FindName("ThemeSelector")!).SelectedItem = "System";
+            FindAll<Button>(systemWindow).First(b => (b.Content as string) == "Save")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (prefsProbe.Theme != "System")
+                throw new Exception($"FAIL: the System theme saved as '{prefsProbe.Theme}'");
+            Console.WriteLine("PASS: preferences only apply when saved, and System is a saved option");
 
             var enterEditor = new ScorebugEditorWindow(catalog, engine);
             enterEditor.Show();
@@ -391,6 +403,33 @@ internal static class Program
             var plusLabels = plusRow.Children.OfType<Button>().Select(b => b.Content as string).ToArray();
             if (!plusLabels.Contains("+1") || !plusLabels.Contains("+6") || plusRow.Children.Count != minusRow.Children.Count)
                 throw new Exception($"FAIL: score steppers missing add buttons ({string.Join(",", plusLabels)})");
+            // The − row must actually be inside the team card: a cramped panel used to clip it off
+            // the bottom, so the subtract buttons existed but were never on screen.
+            var homeHost = (ContentControl)stepPanel.Panel.FindName("HomeScoreHost")!;
+            DependencyObject? cardAncestor = VisualTreeHelper.GetParent(homeHost);
+            while (cardAncestor is not null && cardAncestor is not Border) cardAncestor = VisualTreeHelper.GetParent(cardAncestor);
+            var homeCard = (Border?)cardAncestor ?? throw new Exception("FAIL: the home score is not in a team card");
+            stepPanel.Panel.UpdateLayout();
+            var cardBottom = homeCard.TransformToAncestor(stepPanel.Panel).TransformBounds(new Rect(0, 0, homeCard.ActualWidth, homeCard.ActualHeight)).Bottom;
+            void CheckMinusRow(string where)
+            {
+                foreach (var minus in minusRow.Children.OfType<Button>())
+                {
+                    if (minus.ActualHeight < 24 || !minus.IsVisible)
+                        throw new Exception($"FAIL: the {(minus.Content as string)} button is not laid out {where} ({minus.ActualHeight:0}px)");
+                    var bottom = minus.TransformToAncestor(stepPanel.Panel)
+                        .TransformBounds(new Rect(0, 0, minus.ActualWidth, minus.ActualHeight)).Bottom;
+                    if (bottom > cardBottom + 0.5)
+                        throw new Exception($"FAIL: the {(minus.Content as string)} button sits {(bottom - cardBottom):0}px below the team card {where}");
+                }
+            }
+            CheckMinusRow("at the default size");
+            // The smallest window a panel allows must fit them too.
+            stepPanel.Height = stepPanel.MinHeight;
+            stepPanel.UpdateLayout();
+            stepPanel.Panel.UpdateLayout();
+            cardBottom = homeCard.TransformToAncestor(stepPanel.Panel).TransformBounds(new Rect(0, 0, homeCard.ActualWidth, homeCard.ActualHeight)).Bottom;
+            CheckMinusRow("at the minimum window size");
             Console.WriteLine($"PASS: stepper stacks {string.Join("/", plusLabels)} above the value and subtracts below");
 
             // Clicking the value and typing overrides it.
@@ -455,6 +494,18 @@ internal static class Program
             }
             finally { if (File.Exists(studioLayout)) File.Delete(studioLayout); }
 
+            // Deleting a roster asks in the app's own dialog, not a system message box.
+            {
+                var confirm = new ConfirmWindow("Dark", "DELETE ROSTER", "Delete \"Visitors squad\" and its 2 players?", "Delete roster", destructive: true);
+                confirm.Show();
+                confirm.UpdateLayout();
+                if (!FindAll<Button>(confirm).Any(b => (b.Content as string) == "Delete roster") ||
+                    !FindAll<Button>(confirm).Any(b => (b.Content as string) == "Cancel"))
+                    throw new Exception("FAIL: the roster delete confirmation has no actions");
+                confirm.Close();
+                Console.WriteLine("PASS: destructive library actions ask in the app's own themed dialog");
+            }
+
             // The football console fits its smallest window without scrolling, and away stays left of home.
             engine.AddStat("Penalties");
             // The console itself needs ~900px; the detached window also carries the media dock, so its
@@ -479,6 +530,22 @@ internal static class Program
                 throw new Exception($"FAIL: Update Output is off the page ({updateBottom:0} of {view.ActualHeight:0})");
             var scrollers = FindAll<ScrollViewer>(view).Where(s => s.IsVisible && s.ScrollableHeight > 0).ToArray();
             if (scrollers.Length > 0) throw new Exception($"FAIL: {scrollers.Length} section(s) need scrolling at the smallest window ({string.Join(", ", scrollers.Select(s => $"{s.Name}:{s.ScrollableHeight:0}/{s.ActualHeight:0}"))})");
+
+            // A portrait monitor: about 1040 wide and taller than the desk. The window must be
+            // allowed to get that narrow and the console must still fit without scrolling.
+            if (fitPanel.MinWidth > 1040)
+                throw new Exception($"FAIL: a panel refuses to be narrower than {fitPanel.MinWidth:0}px");
+            fitPanel.Width = 1040;
+            fitPanel.Height = 1280;
+            fitPanel.UpdateLayout();
+            view.UpdateLayout();
+            if (Left(awayBox) >= Left(homeBox))
+                throw new Exception("FAIL: visitors are not left of home on a portrait window");
+            var portraitScrollers = FindAll<ScrollViewer>(view).Where(s => s.IsVisible && s.ScrollableHeight > 0).ToArray();
+            if (portraitScrollers.Length > 0)                    throw new Exception($"FAIL: the console needs scrolling at 1040px wide ({portraitScrollers.Length} section(s))");
+            foreach (var narrowCard in FindAll<Border>(view).Where(b => b.Style == (Style)view.FindResource("Card")))
+                if (narrowCard.ActualWidth + 0.5 < narrowCard.DesiredSize.Width)
+                    throw new Exception($"FAIL: a section is squeezed horizontally on a portrait window ({narrowCard.ActualWidth:0} of {narrowCard.DesiredSize.Width:0} needed)");
             var logoFrame = (Border)view.FindName("AwayLogoFrame")!;
             if (logoFrame.Width < 60)
                 throw new Exception($"FAIL: the team logo thumbnail is still small ({logoFrame.Width:0})");
@@ -657,11 +724,13 @@ internal static class Program
             chainPanel.Close();
             Console.WriteLine("PASS: the New panel button asks for another synced window");
 
-            // Preference defaults: dark theme, detached control panel, heading tips off.
+            // Preference defaults: follow Windows, heading tips off.
             var freshPrefs = new UserPreferences();
-            if (freshPrefs.Theme != "Dark" || freshPrefs.ShowHeadingHints)
+            if (freshPrefs.Theme != "System" || freshPrefs.ShowHeadingHints)
                 throw new Exception($"FAIL: defaults are {freshPrefs.Theme}/{freshPrefs.ShowHeadingHints}");
-            Console.WriteLine("PASS: defaults are dark theme with heading tips off");
+            if (ThemeManager.Resolve("System") is not ("Dark" or "Light"))
+                throw new Exception("FAIL: the System theme does not resolve to a real theme");
+            Console.WriteLine("PASS: defaults follow the Windows theme with heading tips off");
 
             // Heading tips stay hidden unless the preference is on.
             var hintWindow = new GameControlWindow(engine, () => { }, _ => { }, () => true);
@@ -1334,6 +1403,14 @@ internal static class Program
                     throw new Exception("FAIL: the studio did not print the element's own quarter style");
                 // The artwork is scaled by a Viewbox, never by a transform the frame can outgrow, so
                 // the whole canvas fits the editing panel and every edge stays draggable.
+                // The gradient's second colour offers every palette slot, not an empty list.
+                var gradientChoices = (ComboBox)contextEditor.FindName("GradientSourceInput")!;
+                if (gradientChoices.Items.Count < 5)
+                    throw new Exception($"FAIL: the gradient second colour lists {gradientChoices.Items.Count} choices");
+                if (!FindAll<Button>(contextEditor).Any(b => (b.Content as string) == "Move to…") ||
+                    !FindAll<Button>(contextEditor).Any(b => (b.Content as string) == "Copy to…"))
+                    throw new Exception("FAIL: the studio has no Move to…/Copy to… layout actions");
+
                 var fitCanvas = (Canvas)contextEditor.FindName("DesignCanvas")!;
                 var fitFrame = (Border)contextEditor.FindName("CanvasFrame")!;
                 var inViewbox = false;
@@ -2405,6 +2482,27 @@ internal static class Program
                     backdropStudio.UpdateLayout();
                     if (((StackPanel)backdropStudio.FindName("PlayerDataSection")!).Visibility != Visibility.Collapsed)
                         throw new Exception("FAIL: a shape still shows the player-data pickers");
+                    // A shape prints nothing, so the type, rotation and value-transition blocks are
+                    // gone; its own shape picker and the shared background/outline stay.
+                    foreach (var section in new[] { "FontSection", "TransformSection", "TransitionSection" })
+                        if (((StackPanel)backdropStudio.FindName(section)!).Visibility != Visibility.Collapsed)
+                            throw new Exception($"FAIL: a shape still shows {section}");
+                    if (((StackPanel)backdropStudio.FindName("BackgroundSection")!).Visibility != Visibility.Visible ||
+                        ((StackPanel)backdropStudio.FindName("BorderSection")!).Visibility != Visibility.Visible)
+                        throw new Exception("FAIL: a shape lost its background or outline controls");
+                    // A video is not text either, but it can still be outlined.
+                    backdropCatalog.Update(layout => layout.Elements.Add(new ScorebugElement
+                    {
+                        Name = "Clip", Kind = ScorebugElementKind.Video, X = 40, Y = 40, Width = 320, Height = 180
+                    }));
+                    backdropStudio.UpdateLayout();
+                    ((ListBox)backdropStudio.FindName("Layers")!).SelectedIndex = 0;
+                    backdropStudio.UpdateLayout();
+                    if (((StackPanel)backdropStudio.FindName("FontSection")!).Visibility != Visibility.Collapsed ||
+                        ((StackPanel)backdropStudio.FindName("TransitionSection")!).Visibility != Visibility.Collapsed ||
+                        ((StackPanel)backdropStudio.FindName("VideoPanel")!).Visibility != Visibility.Visible ||
+                        ((StackPanel)backdropStudio.FindName("BorderSection")!).Visibility != Visibility.Visible)
+                        throw new Exception("FAIL: a video shows the wrong property sections");
                     backdropStudio.Close();
                     Console.WriteLine("PASS: the studio sets the artwork backdrop, and a player element can pin one player from the roster");
                 }

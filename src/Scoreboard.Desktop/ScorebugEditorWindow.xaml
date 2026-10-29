@@ -105,6 +105,10 @@
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
             <Button Content="New layout" Style="{StaticResource LayoutButton}" Click="LayoutNew_Click" ToolTip="Start a blank scorebug layout"/>
             <Button Content="Duplicate" Style="{StaticResource LayoutButton}" Click="LayoutDuplicate_Click" ToolTip="Copy this layout, artwork and all"/>
+            <Button Content="Move to…" Style="{StaticResource LayoutButton}" Click="LayoutMove_Click"
+                    ToolTip="Move this layout, artwork and all, onto another display"/>
+            <Button Content="Copy to…" Style="{StaticResource LayoutButton}" Click="LayoutCopy_Click"
+                    ToolTip="Copy this layout onto another display, leaving this one untouched"/>
             <Button Content="Rename…" Style="{StaticResource LayoutButton}" Click="LayoutRename_Click"/>
             <Button Content="Delete" Style="{StaticResource LayoutButton}" Click="LayoutDelete_Click" ToolTip="Remove this layout (the last one cannot be deleted)"/>
           </StackPanel>
@@ -275,6 +279,15 @@
           </StackPanel>
         </StackPanel>
 
+        <!-- Rotation is drawn by the text element itself, so it is offered only where it prints.
+             It used to sit inside TYPE, where a logo or a shape could set a value that did nothing. -->
+        <StackPanel x:Name="TransformSection">
+          <TextBlock Text="TRANSFORM" Style="{StaticResource SectionTitle}"/>
+          <TextBlock Text="Rotation (degrees)" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="RotationInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                   ToolTip="Rotate this element clockwise, for example −8 for rising text"/>
+        </StackPanel>
+
         <StackPanel x:Name="FontSection">
           <TextBlock Text="TYPE" Style="{StaticResource SectionTitle}"/>
           <TextBlock Text="Font" Style="{StaticResource FieldLabel}"/>
@@ -286,9 +299,6 @@
           </DockPanel>
           <TextBlock Text="Font size" Style="{StaticResource FieldLabel}"/>
           <TextBox x:Name="FontInputSize" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
-          <TextBlock Text="Rotation (degrees)" Style="{StaticResource FieldLabel}"/>
-          <TextBox x:Name="RotationInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
-                   ToolTip="Slant this element clockwise, for example −8 for rising text"/>
           <TextBlock Text="Text style" Style="{StaticResource FieldLabel}"/>
           <WrapPanel Margin="8,0,8,2">
             <CheckBox x:Name="BoldInput" Content="Bold" Margin="2,2,10,2" Checked="Property_Changed" Unchecked="Property_Changed"/>
@@ -383,6 +393,11 @@
                    ToolTip="0 runs left to right, 90 top to bottom"/>
           <CheckBox x:Name="TransparentBackgroundInput" Content="No background box (transparent)" Margin="10,4,10,6"
                     Checked="Property_Changed" Unchecked="Property_Changed"/>
+        </StackPanel>
+
+        <!-- An outline is drawn by the element's host, so it works on text, logos, shapes and video. -->
+        <StackPanel x:Name="BorderSection">
+          <TextBlock Text="BORDER" Style="{StaticResource SectionTitle}"/>
           <TextBlock Text="Border width (0 = none)" Style="{StaticResource FieldLabel}"/>
           <TextBox x:Name="BorderWidthInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
                    ToolTip="Outline thickness in design pixels"/>
@@ -399,12 +414,15 @@
         </StackPanel>
 
         <TextBlock Text="BEHAVIOUR" Style="{StaticResource SectionTitle}"/>
-        <TextBlock Text="Value change" Style="{StaticResource FieldLabel}"/>
-        <ComboBox x:Name="TransitionInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
-                  ToolTip="How this value crosses to a new number or name"/>
-        <TextBlock Text="Transition time (0–5 seconds)" Style="{StaticResource FieldLabel}"/>
-        <TextBox x:Name="TransitionSpeedInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
-                 ToolTip="0 is an instant swap, 5 a very slow dissolve. The value leaves slightly faster than it arrives."/>
+        <!-- Only printed values change; a logo, shape or video has nothing to cross to. -->
+        <StackPanel x:Name="TransitionSection">
+          <TextBlock Text="Value change" Style="{StaticResource FieldLabel}"/>
+          <ComboBox x:Name="TransitionInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
+                    ToolTip="How this value crosses to a new number or name"/>
+          <TextBlock Text="Transition time (0–5 seconds)" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="TransitionSpeedInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                   ToolTip="0 is an instant swap, 5 a very slow dissolve. The value leaves slightly faster than it arrives."/>
+        </StackPanel>
         <TextBlock Text="Motion" Style="{StaticResource FieldLabel}"/>
         <ComboBox x:Name="AnimationInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"/>
         <TextBlock Text="Opacity (0–1)" Style="{StaticResource FieldLabel}"/>

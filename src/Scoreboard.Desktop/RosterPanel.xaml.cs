@@ -24,6 +24,8 @@ public partial class RosterPanel : UserControl
     string _signature = "";
     string _choiceSignature = "";
     string _search = "";
+    // The theme this desk is painted with, so its own dialogs match it.
+    string _theme = "Dark";
 
     sealed class PlayerRow(RosterPlayer player, bool onAir, Brush background, Brush foreground)
     {
@@ -49,6 +51,7 @@ public partial class RosterPanel : UserControl
     /// <summary>Repaints the panel and its rows for the operator theme.</summary>
     public void ApplyTheme(string theme)
     {
+        _theme = ThemeManager.Resolve(theme);
         RosterPalette.Apply(theme, Resources);
         _signature = "";
         Refresh(force: true);
@@ -508,10 +511,12 @@ public partial class RosterPanel : UserControl
     void DeleteRoster_Click(object sender, RoutedEventArgs e)
     {
         if (_engine is null || _roster is null) return;
-        var answer = MessageBox.Show(Window.GetWindow(this)!,
-            $"Delete the roster \"{_roster.Name}\" and its {_roster.Players.Count} player{(_roster.Players.Count == 1 ? "" : "s")}? Saved games keep their own copy.",
-            "Delete roster", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (answer != MessageBoxResult.Yes) return;
+        var owner = Window.GetWindow(this);
+        if (owner is null) return;
+        // The app's own confirmation, not a system message box: it follows the operator theme.
+        if (!ConfirmWindow.Ask(owner, _theme, "DELETE ROSTER",
+                $"Delete the roster \"{_roster.Name}\" and its {_roster.Players.Count} player{(_roster.Players.Count == 1 ? "" : "s")}? Saved games keep their own copy, and the roster library is shared by every panel.",
+                "Delete roster", destructive: true)) return;
         var id = _roster.Id;
         RosterStore.Book.Remove(id);
         RosterStore.Save();

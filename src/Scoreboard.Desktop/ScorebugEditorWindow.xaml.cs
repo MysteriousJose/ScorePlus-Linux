@@ -129,6 +129,8 @@ public partial class ScorebugEditorWindow : Window
         MaxWidth=work.Width; MaxHeight=work.Height;
         Width=MaxWidth; Height=MaxHeight;
         WindowState=WindowState.Maximized;
+        // Follow it onto a portrait or higher-DPI monitor without running off the screen.
+        ScreenFit.Track(this);
         AnimationInput.ItemsSource=Enum.GetValues<ScorebugAnimation>();
         TransitionInput.ItemsSource=Enum.GetValues<ScorebugTransition>();
         ShapeInput.ItemsSource=Enum.GetValues<ScorebugShape>();
@@ -136,6 +138,7 @@ public partial class ScorebugEditorWindow : Window
         PeriodFormatInput.ItemsSource=PeriodOptions;
         ForegroundSourceInput.ItemsSource=ColorSources;
         BackgroundSourceInput.ItemsSource=ColorSources;
+        GradientSourceInput.ItemsSource=ColorSources;
         BorderSourceInput.ItemsSource=ColorSources;
         LogoInput.ItemsSource=Logos;
         FontInput.ItemsSource=FontCatalog.All;
@@ -676,17 +679,25 @@ public partial class ScorebugEditorWindow : Window
         var e=Selected;
         var kind=e?.Kind;
         var text=kind==ScorebugElementKind.Text;
+        var any=e is not null;
         TextSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
-        FontSection.Visibility=kind is ScorebugElementKind.Text or ScorebugElementKind.Logo or ScorebugElementKind.Shape?Visibility.Visible:Visibility.Collapsed;
+        // Type is typography: a logo, shape or video has no text to set a face, weight or colour on.
+        FontSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
+        // Rotation is drawn inside the text element, so only text can use it.
+        TransformSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
         LogoSection.Visibility=kind==ScorebugElementKind.Logo?Visibility.Visible:Visibility.Collapsed;
         ShapePanel.Visibility=kind==ScorebugElementKind.Shape?Visibility.Visible:Visibility.Collapsed;
         VideoPanel.Visibility=kind==ScorebugElementKind.Video?Visibility.Visible:Visibility.Collapsed;
-        BackgroundSection.Visibility=kind is ScorebugElementKind.Text or ScorebugElementKind.Shape or ScorebugElementKind.Logo?Visibility.Visible:Visibility.Collapsed;
+        // The host paints the backdrop and the outline for every kind, shapes included.
+        BackgroundSection.Visibility=any?Visibility.Visible:Visibility.Collapsed;
+        BorderSection.Visibility=any?Visibility.Visible:Visibility.Collapsed;
         PeriodSection.Visibility=text&&e!.Content.Contains("{{PERIOD}}",StringComparison.OrdinalIgnoreCase)?Visibility.Visible:Visibility.Collapsed;
         // Player data only means something on a text element: it decides which player's value that
         // text prints, so a shape or a logo has no business showing the pickers.
         PlayerDataSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
         IconSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
+        // A value transition needs a printed value to cross to.
+        TransitionSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
         var icon=e?.Icon??ScorebugIcon.None;
         IconVisitorsInput.Visibility=icon==ScorebugIcon.TimeoutBars?Visibility.Visible:Visibility.Collapsed;
         IconFlipInput.Visibility=icon==ScorebugIcon.PossessionDot?Visibility.Visible:Visibility.Collapsed;
@@ -949,6 +960,41 @@ public partial class ScorebugEditorWindow : Window
         _catalog.AddLayout($"{_catalog.Layout.Name} copy",copyActive:true);
         ClearSelection();
         Render();
+    }
+
+    /// <summary>Sends the layout being edited to another display it should live on instead.</summary>
+    void LayoutMove_Click(object sender,RoutedEventArgs e)
+    {
+        if(!PickLayoutTarget(copy:false)) return;
+    }
+
+    /// <summary>Puts a copy of the layout being edited on another display.</summary>
+    void LayoutCopy_Click(object sender,RoutedEventArgs e)
+    {
+        if(!PickLayoutTarget(copy:true)) return;
+    }
+
+    bool PickLayoutTarget(bool copy)
+    {
+        if(_catalog.Displays.Count<=1)
+        {
+            LayoutHintText.Text="Add a second display to move or copy a layout onto it.";
+            return false;
+        }
+        var index=_catalog.ActiveIndex;
+        var target=DisplayPickerWindow.AskLayoutTarget(this,_catalog,_theme,copy);
+        if(target is null)return false;
+        var name=_catalog.FindDisplay(target)?.Name??"the other display";
+        // Move takes the studio to the target so the layout stays in view; copy leaves it here.
+        var done=copy
+            ? _catalog.CopyLayoutToDisplay(index,target)>=0
+            : _catalog.MoveLayoutToDisplay(index,target);
+        ClearSelection();
+        Render();
+        LayoutHintText.Text=done
+            ? (copy?$"Copied to {name}. This layout is unchanged.":$"Moved to {name}. This display keeps its other layouts.")
+            : "Nothing changed — a display always keeps at least one layout.";
+        return done;
     }
 
     void LayoutDelete_Click(object sender,RoutedEventArgs e)

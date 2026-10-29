@@ -90,7 +90,6 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
           <DockPanel>
             <TextBlock x:Name="AwayPossessionTag" DockPanel.Dock="Right" Text="" Foreground="#38D7A3" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
@@ -115,17 +114,14 @@
                     Padding="0" FontSize="18" VerticalAlignment="Center" Click="AwayDetails_Click"
                     ToolTip="Team name, abbreviation, logo, primary and secondary colours"/>
           </Grid>
-          <!-- Auto, not star: the score stepper keeps its full height and never slides down over
-               the yards/turnover line below it. -->
+          <!-- Auto, not star: the score stepper keeps its full height, including the − row. -->
           <ContentControl x:Name="AwayScoreHost" Grid.Row="2" VerticalAlignment="Center" Margin="0,4,0,0"/>
-          <TextBlock x:Name="AwayMeta" Grid.Row="3" Style="{StaticResource Caption}" HorizontalAlignment="Center" Margin="0,4,0,0"/>
         </Grid>
       </Border>
 
       <Border Style="{StaticResource Card}" Grid.Column="1" Margin="0">
         <Grid>
           <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -155,7 +151,6 @@
             </Border>
           </Grid>
           <ContentControl x:Name="HomeScoreHost" Grid.Row="2" VerticalAlignment="Center" Margin="0,4,0,0"/>
-          <TextBlock x:Name="HomeMeta" Grid.Row="3" Style="{StaticResource Caption}" HorizontalAlignment="Center" Margin="0,4,0,0"/>
         </Grid>
       </Border>
     </Grid>
@@ -203,10 +198,7 @@
               <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <Button x:Name="NewSeriesButton" Style="{StaticResource Tiny}" Content="New series" Tag="football.series.new" Click="Action_Click"/>
-            <UniformGrid x:Name="FootballExtras" Grid.Column="1" Columns="2">
-              <Button Style="{StaticResource Tiny}" Content="Home +10 yd" Tag="football.yards.home" Click="Action_Click"/>
-              <Button Style="{StaticResource Tiny}" Content="Away +10 yd" Tag="football.yards.away" Click="Action_Click"/>
-            </UniformGrid>
+            <StackPanel Grid.Column="1" />
           </Grid>
         </Grid>
       </Border>

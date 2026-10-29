@@ -18,8 +18,8 @@ public partial class SettingsWindow : Window
         InitializeComponent();
         _original = prefs;
         _draft = prefs.Clone();
-        ThemeSelector.ItemsSource = new[] { "Dark", "Light" };
-        ThemeSelector.SelectedItem = _draft.Theme;
+        ThemeSelector.ItemsSource = new[] { "System", "Dark", "Light" };
+        ThemeSelector.SelectedItem = ThemeSelector.Items.Contains(_draft.Theme) ? _draft.Theme : "System";
         ShowHints.IsChecked = _draft.ShowHeadingHints;
         DelayInput.Text = _draft.ValueSwitchDelay.ToString("0.##", CultureInfo.CurrentCulture);
         _loading = false;

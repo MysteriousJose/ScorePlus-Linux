@@ -638,6 +638,50 @@ public sealed class ScorebugCatalog
         Save(); Changed?.Invoke();
     }
 
+    /// <summary>
+    /// Moves a layout to another display, artwork and identity included. The display being edited
+    /// becomes the target, so the layout stays on screen where the operator just sent it.
+    /// </summary>
+    public bool MoveLayoutToDisplay(int index, string targetDisplayId)
+    {
+        var source = ActiveDisplay;
+        var target = FindDisplay(targetDisplayId);
+        if (target is null || string.Equals(target.Id, source.Id, StringComparison.OrdinalIgnoreCase)) return false;
+        // Every display keeps one layout; the source cannot be left empty.
+        if (source.Layouts.Count <= 1 || index < 0 || index >= source.Layouts.Count) return false;
+        var layout = source.Layouts[index];
+        source.Layouts.RemoveAt(index);
+        target.Layouts.Add(layout);
+        if (source.ActiveIndex >= source.Layouts.Count) source.ActiveIndex = source.Layouts.Count - 1;
+        if (source.PublishedIndex >= source.Layouts.Count) source.PublishedIndex = source.Layouts.Count - 1;
+        if (source.ActiveIndex > index) source.ActiveIndex--;
+        if (source.PublishedIndex > index) source.PublishedIndex--;
+        target.ActiveIndex = target.Layouts.Count - 1;
+        ActiveDisplayIndex = Displays.FindIndex(display => string.Equals(display.Id, target.Id, StringComparison.OrdinalIgnoreCase));
+        Validate();
+        Save();
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Copies a layout onto another display. The copy is independent: new layout and element ids,
+    /// so editing it there never touches the original.
+    /// </summary>
+    public int CopyLayoutToDisplay(int index, string targetDisplayId)
+    {
+        var source = ActiveDisplay;
+        var target = FindDisplay(targetDisplayId);
+        if (target is null || string.Equals(target.Id, source.Id, StringComparison.OrdinalIgnoreCase)) return -1;
+        if (index < 0 || index >= source.Layouts.Count) return -1;
+        target.Layouts.Add(source.Layouts[index].Copy());
+        target.ActiveIndex = target.Layouts.Count - 1;
+        Validate();
+        Save();
+        Changed?.Invoke();
+        return target.Layouts.Count - 1;
+    }
+
     /// <summary>Points this layout at a layout on another display, or clears the link.</summary>
     public void SetLink(string? displayId, int layoutIndex, string? linkDisplayId, string? linkLayoutId)
     {

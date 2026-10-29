@@ -162,6 +162,25 @@ try
     Check(reopened.Displays.Count==2&&reopened.LinkTarget(reopened.Displays[0].Id,0) is not null,"displays and layout links persist in scorebug.json");
     reopened.SelectDisplay(0);
     Check(reopened.RemoveLayout(0)==false&&reopened.Layouts.Count==1,"the last layout on a display cannot be deleted");
+    // Layouts can move between displays, or be copied with an independent identity.
+    var lowerId=reopened.Displays[1].Id;
+    var sourceIds=reopened.Layouts[0].Elements.Select(element=>element.Id).ToArray();
+    var copiedIndex=reopened.CopyLayoutToDisplay(0,lowerId);
+    var copiedLayout=reopened.Displays[1].Layouts[copiedIndex];
+    Check(copiedIndex>=0&&copiedLayout.Name.EndsWith("copy")&&copiedLayout.Elements.Select(element=>element.Id).SequenceEqual(sourceIds)==false,"copying a layout to another display makes an independent copy");
+    Check(reopened.Layouts.Count==1,"copying a layout leaves the display it came from untouched");
+    reopened.SelectDisplay(1);
+    var movedCountBefore=reopened.Layouts.Count;
+    Check(reopened.MoveLayoutToDisplay(copiedIndex,reopened.Displays[0].Id),"a layout can be moved to another display");
+    Check(reopened.Layouts.Count==movedCountBefore-1&&reopened.ActiveDisplayIndex==0&&reopened.Layouts.Count==2&&reopened.Layouts[1].Id==copiedLayout.Id,"the moved layout joins the target display and stays in view");
+    // A move keeps the display being edited on the target, so select the source again each time.
+    while(reopened.Displays[1].Layouts.Count>1)
+    {
+        reopened.SelectDisplay(1);
+        reopened.MoveLayoutToDisplay(0,reopened.Displays[0].Id);
+    }
+    reopened.SelectDisplay(1);
+    Check(!reopened.MoveLayoutToDisplay(0,reopened.Displays[0].Id),"a display cannot give away its last layout");
     reopened.RemoveDisplay(1);
     Check(reopened.Displays.Count==1&&reopened.Displays[0].Layouts[0].LinkDisplayId is null,"removing a display clears the links that pointed at it");
     reopened.ResetToDefault();

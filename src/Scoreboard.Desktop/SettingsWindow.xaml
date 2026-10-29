@@ -12,7 +12,7 @@
         <TextBlock Text="PREFERENCES" FontSize="18" FontWeight="Bold" Margin="0,0,0,16"/>
         <TextBlock Text="APPEARANCE" Foreground="#93A0B2" FontSize="11" Margin="4,0,0,2"/>
         <ComboBox x:Name="ThemeSelector" SelectionChanged="Theme_Changed"/>
-        <TextBlock Text="Applies to operator windows only. Scorebug and audience graphics keep their designed colors." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,14"/>
+        <TextBlock Text="System follows the Windows app theme (Settings → Personalisation → Colours), so the panels match your desktop. Dark and Light pin one. Applies to operator windows only: scorebug and audience graphics keep their designed colors." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,14"/>
         <Separator/>
         <TextBlock Text="OPERATOR WORKFLOW" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
         <CheckBox x:Name="ShowHints" Content="Show tips next to headings (for example 'scoring, timing, actions')" Checked="Controls_Changed" Unchecked="Controls_Changed"/>
