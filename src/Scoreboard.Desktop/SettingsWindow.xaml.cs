@@ -25,7 +25,140 @@ public partial class SettingsWindow : Window
         ThemeSelector.SelectedItem = ThemeSelector.Items.Contains(_draft.Theme) ? _draft.Theme : "System";
         ShowHints.IsChecked = _draft.ShowHeadingHints;
         DelayInput.Text = _draft.ValueSwitchDelay.ToString("0.##", CultureInfo.CurrentCulture);
+        AccentInput.Text = _draft.AccentColor;
+        Accent2Input.Text = _draft.AccentColor2;
+        PaintSwatches();
+        RemoteEnabledInput.IsChecked = _draft.RemoteEnabled;
+        RemotePasswordInput.Password = _draft.RemotePassword;
+        RemotePortInput.Text = _draft.RemotePort.ToString(CultureInfo.InvariantCulture);
+        CheckUpdatesInput.IsChecked = _draft.CheckForUpdates;
+        UpdateFeedInput.Text = _draft.UpdateFeedUrl;
         _loading = false;
+        UpdateRemoteStatus();
+        UpdateStatus.Text = AppInfo.IsInstalled
+            ? $"Installed build {AppInfo.Version}. Updates are checked at launch when a feed is set."
+            : "This copy runs from a folder, so it does not check for updates. Install ScorePlus to enable updates.";
+    }
+
+    // ---------- interface colours ----------
+
+    void PaintSwatches()
+    {
+        AccentSwatch.Background = new System.Windows.Media.SolidColorBrush(UiPalette.Parse(_draft.AccentColor, System.Windows.Media.Color.FromRgb(0x38, 0xD7, 0xA3)));
+        Accent2Swatch.Background = new System.Windows.Media.SolidColorBrush(UiPalette.Parse(_draft.AccentColor2, System.Windows.Media.Color.FromRgb(0x0B, 0x6B, 0x50)));
+    }
+
+    /// <summary>A typed hex value is used as soon as it is a real colour; half-typed text waits.</summary>
+    void Accent_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading || AccentInput is null || Accent2Input is null) return;
+        if (IsColor(AccentInput.Text)) _draft.AccentColor = AccentInput.Text.Trim();
+        if (IsColor(Accent2Input.Text)) _draft.AccentColor2 = Accent2Input.Text.Trim();
+        PaintSwatches();
+    }
+
+    static bool IsColor(string? text)
+    {
+        var value = (text ?? "").Trim();
+        if (value.Length < 4 || value[0] != '#') return false;
+        var digits = value[1..];
+        return digits.Length is 3 or 4 or 6 or 8 && digits.All(Uri.IsHexDigit);
+    }
+
+    void AccentPick_Click(object sender, RoutedEventArgs e)
+    {
+        if (ColorPickerWindow.Pick(this, _draft.AccentColor) is not string picked) return;
+        _draft.AccentColor = picked;
+        AccentInput.Text = picked;
+        PaintSwatches();
+        ThemeManager.Apply(this, _draft.Theme);
+    }
+
+    void Accent2Pick_Click(object sender, RoutedEventArgs e)
+    {
+        if (ColorPickerWindow.Pick(this, _draft.AccentColor2) is not string picked) return;
+        _draft.AccentColor2 = picked;
+        Accent2Input.Text = picked;
+        PaintSwatches();
+        ThemeManager.Apply(this, _draft.Theme);
+    }
+
+    void ResetColours_Click(object sender, RoutedEventArgs e)
+    {
+        _draft.AccentColor = "#FF38D7A3";
+        _draft.AccentColor2 = "#FF0B6B50";
+        AccentInput.Text = _draft.AccentColor;
+        Accent2Input.Text = _draft.AccentColor2;
+        PaintSwatches();
+        ThemeManager.Apply(this, _draft.Theme);
+    }
+
+    // ---------- remote control ----------
+
+    void Remote_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || RemoteEnabledInput is null) return;
+        _draft.RemoteEnabled = RemoteEnabledInput.IsChecked == true;
+        _draft.RemotePassword = RemotePasswordInput.Password;
+        if (int.TryParse(RemotePortInput.Text.Trim(), out var port) && port is >= 1024 and <= 65535) _draft.RemotePort = port;
+        UpdateRemoteStatus();
+    }
+
+    void Remote_Changed(object sender, TextChangedEventArgs e) => Remote_Changed(sender, (RoutedEventArgs)e);
+
+    void UpdateRemoteStatus()
+    {
+        if (!_draft.RemoteEnabled)
+        {
+            RemoteStatus.Text = "Remote is off. Tick the box and set a password to serve it.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_draft.RemotePassword))
+        {
+            RemoteStatus.Text = "Add a password — the remote stays off until it has one.";
+            return;
+        }
+        var urls = RemoteControlServer.Urls(_draft.RemotePort);
+        // The network address is the one a phone types; localhost is listed too, for this computer.
+        var lan = urls.Count > 1 ? urls[^1] : urls[0];
+        RemoteStatus.Text = $"Ready on port {_draft.RemotePort}. On this computer http://localhost:{_draft.RemotePort} · on a phone on the same Wi-Fi {lan}";
+    }
+
+    void OpenRemote_Click(object sender, RoutedEventArgs e)
+    {
+        // The address on the network, not localhost: the operator usually copies it from the URL
+        // bar onto a phone, and a localhost URL is useless there.
+        var urls = RemoteControlServer.Urls(_draft.RemotePort);
+        var url = urls.Count > 1 ? urls[^1] : urls[0];
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception ex) { RemoteStatus.Text = $"Could not open a browser: {ex.Message}"; }
+    }
+
+    // ---------- updates ----------
+
+    void Update_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || CheckUpdatesInput is null || UpdateFeedInput is null) return;
+        _draft.CheckForUpdates = CheckUpdatesInput.IsChecked == true;
+        _draft.UpdateFeedUrl = UpdateFeedInput.Text.Trim();
+    }
+
+    void Update_Changed(object sender, TextChangedEventArgs e) => Update_Changed(sender, (RoutedEventArgs)e);
+
+    async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        var feed = UpdateFeedInput.Text.Trim();
+        if (feed.Length == 0) { UpdateStatus.Text = "Add the address of your release manifest first."; return; }
+        if (!AppInfo.IsInstalled)
+        {
+            UpdateStatus.Text = "This copy runs from a folder, so it does not update itself. Use the installer, then updates work here.";
+            return;
+        }
+        UpdateStatus.Text = "Checking…";
+        var manifest = await UpdateChecker.CheckAsync(feed);
+        UpdateStatus.Text = manifest is null
+            ? $"You are on the newest version ({AppInfo.Version})."
+            : $"Version {manifest.Version} is available. {(string.IsNullOrWhiteSpace(manifest.Notes) ? "" : manifest.Notes)}";
     }
 
     void Theme_Changed(object sender, SelectionChangedEventArgs e)
@@ -83,7 +216,7 @@ public partial class SettingsWindow : Window
     /// </summary>
     void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Enter || e.OriginalSource is not TextBox) return;
+        if (e.Key != Key.Enter || e.OriginalSource is not (TextBox or PasswordBox)) return;
         e.Handled = true;
         Commit();
         _committed = true;
@@ -100,6 +233,14 @@ public partial class SettingsWindow : Window
         _original.Theme = _draft.Theme;
         _original.ShowHeadingHints = _draft.ShowHeadingHints;
         _original.ValueSwitchDelay = Math.Clamp(_draft.ValueSwitchDelay, 0, MaxDelay);
+        _original.AccentColor = _draft.AccentColor;
+        _original.AccentColor2 = _draft.AccentColor2;
+        _original.RemotePort = _draft.RemotePort;
+        _original.RemotePassword = _draft.RemotePassword;
+        // A remote with no password is refused rather than served openly on the network.
+        _original.RemoteEnabled = _draft.RemoteEnabled && !string.IsNullOrWhiteSpace(_draft.RemotePassword);
+        _original.CheckForUpdates = _draft.CheckForUpdates;
+        _original.UpdateFeedUrl = _draft.UpdateFeedUrl;
         PreferencesStore.Save(_original);
         DisplayTiming.Apply(_original);
     }

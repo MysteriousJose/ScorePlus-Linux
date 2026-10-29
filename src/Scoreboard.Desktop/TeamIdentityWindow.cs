@@ -131,6 +131,14 @@ public sealed class TeamIdentityWindow : Window
         ThemeManager.SetSkipTheme(_secondarySwatch, true);
         ThemeManager.Apply(this, theme);
         PaintSwatches();
+        // Enter settles the field being typed instead of dismissing the window, so a whole identity
+        // (name, abbreviation, colours) can be filled in without reopening it.
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != System.Windows.Input.Key.Enter || e.OriginalSource is not TextBox) return;
+            e.Handled = true;
+            Apply();
+        };
         Loaded += (_, _) => { _name.Focus(); _name.SelectAll(); };
     }
 
@@ -205,7 +213,8 @@ public sealed class TeamIdentityWindow : Window
         try { _secondarySwatch.Background = (Brush)new BrushConverter().ConvertFromString(_secondaryHex.Text)!; } catch { }
     }
 
-    void Save()
+    /// <summary>Publishes what is typed. Returns false when a pending logo could not be copied.</summary>
+    bool Apply()
     {
         var logo = _logoPath;
         if (_pendingLogoSource is not null)
@@ -217,14 +226,23 @@ public sealed class TeamIdentityWindow : Window
                 var target = Path.Combine(folder, $"{( _home ? "home" : "away")}-{Guid.NewGuid():N}{Path.GetExtension(_pendingLogoSource)}");
                 File.Copy(_pendingLogoSource, target);
                 logo = target;
+                // The import happened: a second Enter must not import the same picture again.
+                _logoPath = target;
+                _pendingLogoSource = null;
             }
             catch (Exception ex)
             {
                 NoticeWindow.Tell(this, "That logo could not be imported", ex.Message, warning: true);
-                return;
+                return false;
             }
         }
         _engine.SetTeamIdentity(_home, _name.Text, _abbreviation.Text, logo, _primaryHex.Text, _secondaryHex.Text);
+        return true;
+    }
+
+    void Save()
+    {
+        if (!Apply()) return;
         // DialogResult is only valid for a modal dialog; the window can also be shown modelessly.
         if (System.Windows.Interop.ComponentDispatcher.IsThreadModal) DialogResult = true;
         Close();

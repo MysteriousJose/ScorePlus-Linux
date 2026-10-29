@@ -40,9 +40,15 @@ public sealed class SportCatalog
         }
     }
 
-    /// <summary>Built-in presets with any saved overrides applied, followed by custom sports.</summary>
+    /// <summary>
+    /// Built-in presets with any saved overrides applied, then custom sports, all by name — except
+    /// the blank <c>Custom</c> preset, which always sits at the bottom where it is easy to find.
+    /// </summary>
     public IReadOnlyList<SportDefinition> All =>
-        SportDefinition.BuiltIns.Select(ApplyOverride).Concat(_custom).OrderBy(s => s.Name).ToArray();
+        SportDefinition.BuiltIns.Select(ApplyOverride).Concat(_custom)
+            .OrderBy(s => string.Equals(s.Id, "generic", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
 
     public IReadOnlyList<SportDefinition> Custom => _custom.AsReadOnly();
     public SportDefinition? Find(string? id) => All.FirstOrDefault(s => s.Id == id);

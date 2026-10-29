@@ -12,6 +12,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Product>ScorePlus</Product>
     <AssemblyTitle>ScorePlus</AssemblyTitle>
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <Description>ScorePlus live production scoreboard</Description>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -19,6 +20,11 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Scoreboard.Core/Scoreboard.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <!-- The brand mark and the taskbar icon. The transparent mark is the one used inside the app. -->
+    <Resource Include="app.ico" />
+    <Resource Include="Assets\logo.png" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="NAudio" Version="3.3.0" />
     <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" />

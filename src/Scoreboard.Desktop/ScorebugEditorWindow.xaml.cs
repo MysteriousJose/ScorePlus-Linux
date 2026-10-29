@@ -1,10 +1,12 @@
-using System.Windows;
+﻿using System.Windows;
 using System.IO;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using Microsoft.Win32;
 using Scoreboard.Core;
@@ -24,6 +26,9 @@ public partial class ScorebugEditorWindow : Window
     readonly System.Windows.Threading.DispatcherTimer _wallClock = new() { Interval=TimeSpan.FromSeconds(1) };
     bool _canvasLoading;
     bool _layoutLoading;
+    // Layout pictures for the strip above the canvas, keyed by layout: the signature is the
+    // artwork they were drawn from, so a thumbnail is only re-rendered when that artwork changed.
+    readonly Dictionary<string,(string Signature,ImageSource Image)> _layoutThumbs = [];
     bool _displayLoading;
     bool _linkLoading;
     // Set while the player-data pickers are being filled for an element, so the sync is not
@@ -36,6 +41,8 @@ public partial class ScorebugEditorWindow : Window
     sealed record PlayerFieldOption(string Field, string Label) { public override string ToString() => Label; }
 
     static readonly Regex PlayerToken = new(@"\{\{PLAYER:(?<side>HOME|AWAY):(?<field>[^}]+)\}\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // A marker in the Add sport data menu: not a token, it means "add the bases artwork".
+    const string BasesMarker = "!bases";
     // Speakers are listed once per studio window; asking WASAPI per keystroke would be wasteful.
     readonly IReadOnlyList<AudioOption> _audioOptions;
     readonly System.Windows.Threading.DispatcherTimer _propertySave = new() { Interval=TimeSpan.FromMilliseconds(350) };
@@ -160,7 +167,36 @@ public partial class ScorebugEditorWindow : Window
         _engine.Changed += RefreshBoundText;
         _wallClock.Tick+=(_,_)=>{if(UsesWallClock())RefreshBoundText();};
         _wallClock.Start();
+        // Every text field in the property panel commits on Enter. The window handler below also
+        // covers Enter, but wiring the boxes themselves means a field always settles even when it
+        // lives inside a template the window-level preview never sees.
+        foreach(var box in Descendants<TextBox>(PropertyPanel))
+            box.KeyDown+=(_,e)=>
+            {
+                if(e.Key!=Key.Enter)return;
+                _propertySave.Stop(); SaveProperties(); RefreshAllVisuals();
+                box.SelectAll();
+                e.Handled=true;
+            };
         Render();
+    }
+
+    /// <summary>A fresh copy of a linked part follows the original; a fresh copy of anything else
+    /// starts its own link group so the two can be edited as one.</summary>
+    static void LinkCopies(ScorebugElement original,ScorebugElement copy)
+    {
+        if(string.IsNullOrWhiteSpace(original.LinkId))original.LinkId=original.Id;
+        copy.LinkId=original.LinkId;
+    }
+
+    static IEnumerable<T> Descendants<T>(DependencyObject root) where T:DependencyObject
+    {
+        for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++)
+        {
+            var child=VisualTreeHelper.GetChild(root,i);
+            if(child is T match)yield return match;
+            foreach(var nested in Descendants<T>(child))yield return nested;
+        }
     }
 
     /// <summary>True when any element prints the date or the time of day.</summary>
@@ -270,24 +306,109 @@ public partial class ScorebugEditorWindow : Window
         LoadProperties();
     }
 
-    /// <summary>Keeps the layout picker in step without treating the sync as the operator's choice.</summary>
+    /// <summary>
+    /// Fills the layout strip: every layout on this display as a picture with its name beneath, so
+    /// switching layouts is a click on the one the operator can see rather than a name in a list.
+    /// </summary>
     void SyncLayoutPicker()
     {
         _layoutLoading=true;
         try
         {
-            var names=_catalog.Layouts.Select((layout,index)=>$"{index+1}. {layout.Name}").ToArray();
-            // Replacing ItemsSource during its own SelectionChanged resets the picker, so only
-            // rebuild the list when the layouts themselves changed.
-            if(LayoutBox.ItemsSource is not IEnumerable<string> existing||!existing.SequenceEqual(names))
-                LayoutBox.ItemsSource=names;
-            LayoutBox.SelectedIndex=_catalog.ActiveIndex;
+            LayoutStrip.Children.Clear();
+            var layouts=_catalog.Layouts;
+            for(var index=0;index<layouts.Count;index++)
+            {
+                var layout=layouts[index];
+                var active=index==_catalog.ActiveIndex;
+                var tile=new Button
+                {
+                    Padding=new Thickness(4),
+                    Margin=new Thickness(0,0,6,0),
+                    MinWidth=0,
+                    Background=Brushes.Transparent,
+                    BorderThickness=new Thickness(active?2:1),
+                    BorderBrush=new SolidColorBrush(active?Color.FromRgb(0x38,0xD7,0xA3):Color.FromRgb(0x2E,0x3B,0x4A)),
+                    Cursor=Cursors.Hand,
+                    ToolTip=active?$"{layout.Name} — being designed now":$"Switch the studio to {layout.Name}"
+                };
+                var image=new Image
+                {
+                    Source=ThumbnailFor(layout),
+                    Width=122,
+                    Height=68,
+                    Stretch=Stretch.Uniform,
+                    SnapsToDevicePixels=true
+                };
+                RenderOptions.SetBitmapScalingMode(image,BitmapScalingMode.HighQuality);
+                var label=new TextBlock
+                {
+                    Text=$"{index+1}. {layout.Name}",
+                    FontSize=10,
+                    Margin=new Thickness(2,3,2,0),
+                    TextAlignment=TextAlignment.Center,
+                    TextTrimming=TextTrimming.CharacterEllipsis,
+                    MaxWidth=140,
+                    Foreground=new SolidColorBrush(active?Color.FromRgb(0x38,0xD7,0xA3):Color.FromRgb(0x93,0xA0,0xB2))
+                };
+                var stack=new StackPanel();
+                stack.Children.Add(image);
+                stack.Children.Add(label);
+                tile.Content=stack;
+                // The theme pass repaints every button it meets; these tiles carry their own colours.
+                ThemeManager.SetSkipTheme(tile,true);
+                var target=index;
+                tile.Click+=(_,_)=>SelectLayoutFromStrip(target);
+                LayoutStrip.Children.Add(tile);
+            }
             LayoutHintText.Text=_catalog.ActiveIndex==_catalog.PublishedIndex
                 ? "This layout is on air."
                 : "Preview only — press Update Output in the control panel to put it on air.";
         }
         finally { _layoutLoading=false; }
     }
+
+    void SelectLayoutFromStrip(int index)
+    {
+        if(_layoutLoading||index<0||index>=_catalog.Layouts.Count||index==_catalog.ActiveIndex)return;
+        ClearSelection();
+        _catalog.SelectLayout(index);
+    }
+
+    /// <summary>A small picture of one layout, cached until its artwork changes.</summary>
+    ImageSource ThumbnailFor(ScorebugLayout layout)
+    {
+        var signature=ThumbSignature(layout);
+        if(_layoutThumbs.TryGetValue(layout.Id,out var cached)&&cached.Signature==signature)return cached.Image;
+        ImageSource image;
+        try
+        {
+            // A throwaway view of the same artwork, rendered once: no media plays in a thumbnail.
+            var view=new ScorebugCanvasView(_catalog,_engine,stateProvider:()=>_engine.State,playback:null,layoutProvider:()=>layout)
+            {
+                Width=264,
+                Height=148
+            };
+            view.Measure(new Size(264,148));
+            view.Arrange(new Rect(0,0,264,148));
+            view.UpdateLayout();
+            var bitmap=new RenderTargetBitmap(264,148,96,96,PixelFormats.Pbgra32);
+            bitmap.Render(view);
+            bitmap.Freeze();
+            view.Dispose();
+            image=bitmap;
+        }
+        catch
+        {
+            image=new DrawingImage();
+        }
+        _layoutThumbs[layout.Id]=(signature,image);
+        return image;
+    }
+
+    static string ThumbSignature(ScorebugLayout layout) =>
+        $"{layout.Width}x{layout.Height}|{layout.Background}|"+
+        string.Join(";",layout.Elements.Select(item=>$"{item.Id}:{item.Kind}:{item.X},{item.Y},{item.Width},{item.Height}:{item.Content}:{item.FontSize}:{item.Foreground}:{item.Background}:{item.TransparentBackground}"));
 
     /// <summary>Fills the display picker from the catalog without treating the sync as a choice.</summary>
     void SyncDisplayPicker()
@@ -677,6 +798,12 @@ public partial class ScorebugEditorWindow : Window
     void UpdatePropertyVisibility()
     {
         var e=Selected;
+        var linked=e is not null&&!string.IsNullOrWhiteSpace(e.LinkId);
+        LinkSection.Visibility=e is null?Visibility.Collapsed:Visibility.Visible;
+        LinkHint.Text=linked
+            ? "This part is linked: moving it, resizing it or changing anything here updates every copy of it on every layout."
+            : "This element stands on its own. \"Add parts…\" makes a copy that stays linked to its original.";
+        BreakLinkButton.Visibility=linked?Visibility.Visible:Visibility.Collapsed;
         var kind=e?.Kind;
         var text=kind==ScorebugElementKind.Text;
         var any=e is not null;
@@ -816,6 +943,8 @@ public partial class ScorebugEditorWindow : Window
             target.BorderSource=borderSource;
             if(transitionSpeedOk)target.TransitionSeconds=Math.Clamp(transitionSpeed,0,5);
             if(target.Kind==ScorebugElementKind.Logo&&target.LogoSide==ScorebugLogoSide.None)target.LogoSide=ScorebugLogoSide.Home;
+            // A linked part carries the edit to every copy of it, on every layout and display.
+            _catalog.PropagateLink(target);
         });
         }
         finally { _skipRebuild=false; }
@@ -942,14 +1071,6 @@ public partial class ScorebugEditorWindow : Window
 
     // ---------- layouts ----------
 
-    void LayoutBox_Changed(object sender,SelectionChangedEventArgs e)
-    {
-        if(_layoutLoading||LayoutBox.SelectedIndex<0)return;
-        if(LayoutBox.SelectedIndex==_catalog.ActiveIndex)return;
-        ClearSelection();
-        _catalog.SelectLayout(LayoutBox.SelectedIndex);
-    }
-
     void LayoutNew_Click(object sender,RoutedEventArgs e)
     {
         _catalog.AddLayout($"Layout {_catalog.Layouts.Count+1}");
@@ -1029,6 +1150,8 @@ public partial class ScorebugEditorWindow : Window
 
     // New artwork starts with no background box so it lands clean on the canvas; turn one on in the properties if needed.
     void AddText_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New text",Content="EDIT TEXT",X=480,Y=470,TransparentBackground=true});
+
+    /// <summary>The baseball diamond as one element: three bases that light up with a runner on.</summary>
     void AddLogo_Click(object sender,RoutedEventArgs e)=>Add(new ScorebugElement{Name="New logo",Kind=ScorebugElementKind.Logo,LogoSide=ScorebugLogoSide.Home,Content="HOME LOGO",X=520,Y=470,Width=140,Height=90,TransparentBackground=true});
     void AddShape_Click(object sender,RoutedEventArgs e)
     {
@@ -1055,22 +1178,54 @@ public partial class ScorebugEditorWindow : Window
             ("Score · home","{{HOME_SCORE}}"),("Score · visitors","{{AWAY_SCORE}}"),
             ("Period (quarter)","{{PERIOD}}"),("Game clock","{{GAME_CLOCK}}"),("Play clock","{{PLAY_CLOCK}}"),
             ("Timeout clock","{{TIMEOUT_CLOCK}}"),("Timeouts left","{{TIMEOUTS}}"),("Possession","{{POSSESSION}}"),
-            ("Sport name","{{SPORT}}"),("Date","{{DATE}}"),("Time of day","{{TIME}}"),
+            ("Sport name","{{SPORT}}"),("Date","{{DATE}}"),("Time of day","{{TIME}}")
+        };
+        // Only the sport being played puts its own words in this menu: a hockey game should never
+        // offer "Football · down", and a baseball game should never offer soccer corners.
+        void Sport(string id,params (string Label,string Token)[] items)
+        {
+            if(!string.Equals(_engine.State.SportId,id,StringComparison.OrdinalIgnoreCase))return;
+            choices.AddRange(items);
+        }
+        Sport("football",
             ("Football · down","{{DOWN}}"),("Football · to go","{{TO_GO}}"),("Football · down & distance","{{DOWNS}}"),
             ("Football · yards to go","{{YARDS_TO_GO}}"),("Football · ball on (number)","{{BALL_ON}}"),
             ("Football · ball on side","{{BALL_SIDE}}"),("Football · ball on side + number","{{BALL_SIDE_SPOT}}"),
             ("Football · ball side team name","{{BALL_TEAM}}"),("Football · ball spot","{{BALL_SPOT}}"),
             ("Football · team yards","{{YARDS}}"),("Football · home yards","{{HOME_YARDS}}"),("Football · visitors yards","{{AWAY_YARDS}}"),
-            ("Football · turnovers","{{TURNOVERS}}"),
-            ("Basketball · shot clock","{{SHOT_CLOCK}}"),("Basketball · fouls","{{BASKETBALL_FOULS}}"),("Fouls (both)","{{FOULS}}"),
-            ("Baseball · count & outs","{{BASEBALL_COUNT}}"),("Baseball · hits","{{HITS}}"),("Baseball · outs","{{BASEBALL_OUTS}}"),
-            ("Soccer · cards","{{SOCCER_CARDS}}"),("Soccer · cards (short)","{{CARDS}}"),("Soccer · shots","{{SHOTS}}"),("Soccer · corners","{{CORNERS}}")
-        };
+            ("Football · turnovers","{{TURNOVERS}}"));
+        Sport("basketball",("Basketball · shot clock","{{SHOT_CLOCK}}"),("Basketball · fouls","{{BASKETBALL_FOULS}}"),("Basketball · fouls (both)","{{FOULS}}"));
+        Sport("baseball",("Baseball · count & outs","{{BASEBALL_COUNT}}"),("Baseball · hits","{{HITS}}"),("Baseball · outs","{{BASEBALL_OUTS}}"),
+            ("Baseball · bases (diamond)",BasesMarker));
+        Sport("soccer",("Soccer · cards","{{SOCCER_CARDS}}"),("Soccer · cards (short)","{{CARDS}}"),("Soccer · shots","{{SHOTS}}"),("Soccer · corners","{{CORNERS}}"));
+        // The sport's own values, first: bases, count, power play, overs and wickets all belong here.
+        foreach(var control in _engine.State.Controls)
+            choices.Add(($"{_engine.Sport.Name} · {control.Label}",$"{{{{SPORT:{control.Id}}}}}"));
         foreach(var stat in _engine.State.Stats)choices.Add(($"Custom stat · {stat.Name}",$"{{{{STAT:{stat.Name}}}}}"));
         choices.Add(("Custom stat · any name","{{STAT:Name}}"));
         var picker=new Window{Title="Add sport data",Width=380,Height=470,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
         var list=new ListBox{ItemsSource=choices.Select(x=>x.Item1).ToArray(),Margin=new Thickness(10)};
-        var add=new Button{Content="Add selected data",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right};            add.Click+=(_,_)=>{if(list.SelectedIndex<0)return;var token=choices[list.SelectedIndex].Item2;Add(new ScorebugElement{Name=choices[list.SelectedIndex].Item1,Content=token,X=420,Y=470,TransparentBackground=true});picker.DialogResult=true;picker.Close();};
+        var add=new Button{Content="Add selected data",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right};
+        add.Click+=(_,_) =>
+        {
+            if(list.SelectedIndex<0)return;
+            var token=choices[list.SelectedIndex].Item2;
+            // The bases diamond is artwork rather than a printed value, so it is added as an
+            // icon element instead of a text element holding a token.
+            if(token==BasesMarker) Add(new ScorebugElement
+            {
+                Name="Bases",
+                Content="",
+                Icon=ScorebugIcon.Bases,
+                X=420,
+                Y=430,
+                Width=220,
+                Height=150,
+                TransparentBackground=true
+            });
+            else Add(new ScorebugElement{Name=choices[list.SelectedIndex].Item1,Content=token,X=420,Y=470,TransparentBackground=true});
+            picker.DialogResult=true;picker.Close();
+        };
         picker.Content=new DockPanel{Children={add,list}}; DockPanel.SetDock(add,Dock.Bottom); ThemeManager.Apply(picker,_theme); picker.ShowDialog();
     }
 
@@ -1190,6 +1345,118 @@ public partial class ScorebugEditorWindow : Window
         Render();
     }
 
+    /// <summary>
+    /// Copies elements from another layout into this one. Each copy gets a new identity and is
+    /// nudged clear of the original position, so a score bar built once can be reused everywhere
+    /// instead of rebuilding a dozen near-identical layouts.
+    /// </summary>
+    void AddMany(IEnumerable<ScorebugElement> items)
+    {
+        var source=items.ToArray();
+        if(source.Length==0)return;
+        _catalog.Update(layout=>
+        {
+            foreach(var item in source)
+            {
+                var copy=JsonSerializer.Deserialize<ScorebugElement>(JsonSerializer.Serialize(item))!;
+                copy.Id=Guid.NewGuid().ToString("N");
+                // The original and its copy become one part: move or restyle either and the
+                // other follows, on any layout. Break the link in the properties to split them.
+                LinkCopies(item,copy);
+                var original=_catalog.Displays.SelectMany(d=>d.Layouts).SelectMany(l=>l.Elements)
+                    .FirstOrDefault(x=>string.Equals(x.Id,item.Id,StringComparison.OrdinalIgnoreCase));
+                if(original is not null)original.LinkId=item.LinkId;
+                copy.Width=Math.Clamp(copy.Width,24,layout.Width);
+                copy.Height=Math.Clamp(copy.Height,24,layout.Height);
+                copy.X=Math.Clamp(copy.X+24,0,Math.Max(0,layout.Width-copy.Width));
+                copy.Y=Math.Clamp(copy.Y+24,0,Math.Max(0,layout.Height-copy.Height));
+                layout.Elements.Add(copy);
+            }
+        });
+        ClearSelection();
+        foreach(var element in _catalog.Layout.Elements.TakeLast(source.Length))
+        {
+            _selectedIds.Add(element.Id);
+            _selectedId=element.Id;
+        }
+        Render();
+    }
+
+    /// <summary>Pick another layout, tick the parts worth reusing, and they land on this canvas.</summary>
+    void ImportParts_Click(object sender,RoutedEventArgs e)
+    {
+        var current=_catalog.Layout;
+        var sources=_catalog.Displays
+            .SelectMany(display=>display.Layouts.Select(layout=>(Display:display.Name,Layout:layout)))
+            .Where(entry=>!ReferenceEquals(entry.Layout,current)&&entry.Layout.Elements.Count>0)
+            .ToArray();
+        if(sources.Length==0)
+        {
+            NoticeWindow.Tell(this,"NOTHING TO COPY YET","This game has one layout, and it has no artwork to borrow from another. Add elements to this layout, or start a second layout, and its parts appear here.");
+            return;
+        }
+        var dialog=new Window
+        {
+            Title="Add parts from another layout",Width=560,Height=560,MinWidth=460,MinHeight=420,
+            Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner,
+            Background=new SolidColorBrush(Color.FromRgb(0x17,0x1C,0x25)),Foreground=Brushes.White,
+            FontFamily=new FontFamily("Segoe UI")
+        };
+        var panel=new DockPanel{Margin=new Thickness(14)};
+        var intro=new TextBlock
+        {
+            Text="Copy artwork from any layout in this game. The copies are independent — editing them here never touches the layout they came from.",
+            TextWrapping=TextWrapping.Wrap,FontSize=11,Opacity=0.75,Margin=new Thickness(2,0,2,8)
+        };
+        var sourceBox=new ComboBox{ItemsSource=sources.Select(s=>$"{s.Display}  ·  {s.Layout.Name}").ToArray(),SelectedIndex=0,Margin=new Thickness(0,0,0,8)};
+        var list=new ListBox{SelectionMode=SelectionMode.Extended,Margin=new Thickness(0,0,0,8)};
+        var count=new TextBlock{FontSize=11,Opacity=0.6,Margin=new Thickness(2,0,2,0)};
+        void Fill()
+        {
+            var chosen=sources[Math.Max(0,sourceBox.SelectedIndex)];
+            list.ItemsSource=chosen.Layout.Elements.AsEnumerable().Reverse().Select(item=>new PartItem(item,$"{KindName(item)} · {item.Name}")).ToArray();
+            count.Text=$"{chosen.Layout.Elements.Count} part{(chosen.Layout.Elements.Count==1?"":"s")} in {chosen.Layout.Name}. Ctrl-click to pick several.";
+        }
+        sourceBox.SelectionChanged+=(_,_)=>Fill();
+        Fill();
+        var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
+        var cancel=new Button{Content="Cancel",MinWidth=90,Margin=new Thickness(4,0,0,0)};
+        cancel.Click+=(_,_)=>dialog.Close();
+        var add=new Button{Content="Add selected parts",IsDefault=true,MinWidth=150,Margin=new Thickness(6,0,0,0),Background=new SolidColorBrush(Color.FromRgb(0x0B,0x6B,0x50)),BorderBrush=new SolidColorBrush(Color.FromRgb(0x14,0xA6,0x7C)),Foreground=Brushes.White};
+        ThemeManager.SetSkipTheme(add,true);
+        add.Click+=(_,_)=>
+        {
+            if(list.SelectedItems.Count==0)return;
+            AddMany(list.SelectedItems.Cast<PartItem>().Select(part=>part.Element));
+            dialog.DialogResult=true;
+            dialog.Close();
+        };
+        actions.Children.Add(cancel);
+        actions.Children.Add(add);
+        DockPanel.SetDock(intro,Dock.Top);
+        DockPanel.SetDock(sourceBox,Dock.Top);
+        DockPanel.SetDock(actions,Dock.Bottom);
+        DockPanel.SetDock(count,Dock.Bottom);
+        panel.Children.Add(intro);
+        panel.Children.Add(sourceBox);
+        panel.Children.Add(actions);
+        panel.Children.Add(count);
+        panel.Children.Add(list);
+        dialog.Content=panel;
+        ThemeManager.Apply(dialog,_theme);
+        dialog.ShowDialog();
+    }
+
+    static string KindName(ScorebugElement item)=>item.Kind switch
+    {
+        ScorebugElementKind.Logo=>"Logo",
+        ScorebugElementKind.Shape=>"Shape",
+        ScorebugElementKind.Video=>"Video",
+        _=>"Text"
+    };
+
+    sealed record PartItem(ScorebugElement Element,string Text){ public override string ToString()=>Text; }
+
     /// <summary>Deletes every selected object at once — the Remove button and the Delete key.</summary>
     void RemoveSelected()
     {
@@ -1202,19 +1469,36 @@ public partial class ScorebugEditorWindow : Window
 
     void Remove_Click(object sender,RoutedEventArgs e) => RemoveSelected();
 
+    /// <summary>Leaves this copy alone from now on; its linked siblings keep following each other.</summary>
+    void BreakLink_Click(object sender,RoutedEventArgs e)
+    {
+        var item=Selected;
+        if(item is null||string.IsNullOrWhiteSpace(item.LinkId))return;
+        var id=item.Id;
+        _catalog.Update(layout=>
+        {
+            var target=layout.Elements.FirstOrDefault(x=>x.Id==id);
+            if(target is not null)target.LinkId=null;
+        });
+        LoadProperties();
+    }
+
     void Element_MouseDown(object sender,MouseButtonEventArgs e)
     {
         if(_resizing||sender is not Border host||host.Tag is not ScorebugElement item)return;
         var id=item.Id;
-        if((Keyboard.Modifiers&ModifierKeys.Control)!=0)
+        var ctrl=(Keyboard.Modifiers&ModifierKeys.Control)!=0;
+        var shift=(Keyboard.Modifiers&ModifierKeys.Shift)!=0;
+        if(ctrl||shift)
         {
-            // Ctrl-click adds this object to the selection, or takes it back out again.
-            if(_selectedIds.Contains(id))
+            // Ctrl-click adds this object to the selection, or takes it back out again; Shift-click
+            // only ever adds, so a whole group can be gathered one object at a time.
+            if(ctrl&&_selectedIds.Contains(id))
             {
                 _selectedIds.Remove(id);
                 if(_selectedId==id)_selectedId=_selectedIds.LastOrDefault();
             }
-            else
+            else if(!_selectedIds.Contains(id))
             {
                 _selectedIds.Add(id);
                 _selectedId=id;
@@ -1289,7 +1573,7 @@ public partial class ScorebugEditorWindow : Window
             foreach(var (id,position) in moved)
             {
                 var target=layout.Elements.FirstOrDefault(z=>z.Id==id);
-                if(target is not null){target.X=position.X;target.Y=position.Y;}
+                if(target is not null){target.X=position.X;target.Y=position.Y;_catalog.PropagateLink(target);}
             }
         });
     }
@@ -1346,7 +1630,7 @@ public partial class ScorebugEditorWindow : Window
         {
             var id=item.Id; var w=item.Width; var h=item.Height;
             _dragElement=null; _resizing=false;
-            _catalog.Update(layout=>{var target=layout.Elements.FirstOrDefault(z=>z.Id==id);if(target is not null){target.Width=Math.Clamp(w,24,layout.Width);target.Height=Math.Clamp(h,24,layout.Height);}});
+            _catalog.Update(layout=>{var target=layout.Elements.FirstOrDefault(z=>z.Id==id);if(target is not null){target.Width=Math.Clamp(w,24,layout.Width);target.Height=Math.Clamp(h,24,layout.Height);_catalog.PropagateLink(target);}});
         }
         _resizing=false;
         e.Handled=true;
@@ -1420,6 +1704,21 @@ public partial class ScorebugEditorWindow : Window
             _propertySave.Stop(); SaveProperties(); RefreshAllVisuals();
             e.Handled=true;
             return;
+        }
+        // Escape drops the selection, so the operator never has to click empty canvas to get out.
+        // It also lets go of a property box, which is why focus is cleared first.
+        if(e.Key==Key.Escape)
+        {
+            if(_selectedIds.Count>0)
+            {
+                Keyboard.ClearFocus();
+                ClearSelection();
+                SyncLayersFromSelection();
+                RefreshAllVisuals();
+                LoadProperties();
+                e.Handled=true;
+                return;
+            }
         }
         // Delete removes every selected object, but never while the operator is typing a value.
         if(e.Key==Key.Delete&&Keyboard.FocusedElement is not TextBox&&e.OriginalSource is not TextBox)

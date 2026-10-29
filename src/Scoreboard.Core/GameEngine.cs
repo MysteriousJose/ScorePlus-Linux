@@ -6,20 +6,26 @@ namespace Scoreboard.Core;
 
 public sealed record SportDefinition(string Id, string Name, string Unit, int Periods, int PeriodSeconds, int[] ScoringOptions, bool HasShotClock = false, bool CountUp = false, int Timeouts = 5)
 {
+    /// <summary>
+    /// The sport's own values — balls, strikes and bases, power play, overs and wickets, sets — with
+    /// the starting value a new game uses. Edited in Sport Profiles, copied onto the game when it starts.
+    /// </summary>
+    public SportControl[] Controls { get; init; } = [];
+
     public static IReadOnlyList<SportDefinition> BuiltIns { get; } = new[]
     {
-        new SportDefinition("football", "American Football", "Quarter", 4, 15 * 60, [1, 2, 3, 6, 7, 8], true, false, 3),
-        new SportDefinition("australian-football", "Australian Football", "Quarter", 4, 20 * 60, [1, 2, 3, 6], false, false, 0),
-        new SportDefinition("baseball", "Baseball", "Inning", 9, 0, [1], false, true, 3),
-        new SportDefinition("basketball", "Basketball", "Quarter", 4, 12 * 60, [1, 2, 3], true, false, 5),
-        new SportDefinition("cricket", "Cricket", "Innings", 2, 0, [1, 2, 3, 4, 6], false, true, 0),
-        new SportDefinition("hockey", "Hockey", "Period", 3, 20 * 60, [1], true, false, 1),
-        new SportDefinition("lacrosse", "Lacrosse", "Quarter", 4, 12 * 60, [1], true, false, 3),
-        new SportDefinition("rugby", "Rugby", "Half", 2, 40 * 60, [2, 3, 5, 7], false, false, 3),
-        new SportDefinition("soccer", "Soccer", "Half", 2, 45 * 60, [1], false, false, 5),
-        new SportDefinition("tennis", "Tennis", "Set", 3, 0, [1], false, true, 3),
-        new SportDefinition("volleyball", "Volleyball", "Set", 5, 0, [1], false, true, 2),
-        new SportDefinition("wrestling", "Wrestling", "Period", 3, 3 * 60, [1, 2, 3], false, false, 0),
+        new SportDefinition("football", "American Football", "Quarter", 4, 15 * 60, [1, 2, 3, 6, 7, 8], true, false, 3) { Controls = [.. SportControls.For("football")] },
+        new SportDefinition("australian-football", "Australian Football", "Quarter", 4, 20 * 60, [1, 2, 3, 6], false, false, 0) { Controls = [.. SportControls.For("australian-football")] },
+        new SportDefinition("baseball", "Baseball", "Inning", 9, 0, [1], false, true, 3) { Controls = [.. SportControls.For("baseball")] },
+        new SportDefinition("basketball", "Basketball", "Quarter", 4, 12 * 60, [1, 2, 3], true, false, 5) { Controls = [.. SportControls.For("basketball")] },
+        new SportDefinition("cricket", "Cricket", "Innings", 2, 0, [1, 2, 3, 4, 6], false, true, 0) { Controls = [.. SportControls.For("cricket")] },
+        new SportDefinition("hockey", "Hockey", "Period", 3, 20 * 60, [1], true, false, 1) { Controls = [.. SportControls.For("hockey")] },
+        new SportDefinition("lacrosse", "Lacrosse", "Quarter", 4, 12 * 60, [1], true, false, 3) { Controls = [.. SportControls.For("lacrosse")] },
+        new SportDefinition("rugby", "Rugby", "Half", 2, 40 * 60, [2, 3, 5, 7], false, false, 3) { Controls = [.. SportControls.For("rugby")] },
+        new SportDefinition("soccer", "Soccer", "Half", 2, 45 * 60, [1], false, false, 5) { Controls = [.. SportControls.For("soccer")] },
+        new SportDefinition("tennis", "Tennis", "Set", 3, 0, [1], false, true, 3) { Controls = [.. SportControls.For("tennis")] },
+        new SportDefinition("volleyball", "Volleyball", "Set", 5, 0, [1], false, true, 2) { Controls = [.. SportControls.For("volleyball")] },
+        new SportDefinition("wrestling", "Wrestling", "Period", 3, 3 * 60, [1, 2, 3], false, false, 0) { Controls = [.. SportControls.For("wrestling")] },
         // The blank starting point: everything editable in Sport Profiles.
         new SportDefinition("generic", "Custom", "Period", 2, 10 * 60, [1, 2, 3], false, false, 3)
     };
@@ -104,6 +110,13 @@ public sealed class GameState
     public int AwayShots { get; set; }
     public int HomeCorners { get; set; }
     public int AwayCorners { get; set; }
+    /// <summary>
+    /// The sport's own values (bases, power play, overs, sets…). Values that already have a field
+    /// above — balls, strikes, fouls, cards — stay in that field, so old saves and templates still read.
+    /// </summary>
+    public Dictionary<string, int> SportValues { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The controls this game was started with, so an edited profile never rewrites a live game.</summary>
+    public List<SportControl> Controls { get; set; } = [];
     public List<GameStat> Stats { get; set; } = [];
     /// <summary>The roster each side draws players from, chosen in the Rosters tab.</summary>
     public string? HomeRosterId { get; set; }
@@ -162,8 +175,42 @@ public sealed class GameEngine
     public void NewGame(string sportId)
     {
         var sport = Sports.Find(sportId) ?? SportDefinition.BuiltIns[^1];
-        State = new GameState { SportId = sport.Id, ClockSeconds = sport.PeriodSeconds, PeriodSeconds = sport.PeriodSeconds, TotalPeriods = sport.Periods, PeriodLabel = sport.Unit, ScoringOptions = sport.ScoringOptions.ToArray(), ClockCountsUp = sport.CountUp, HomeTimeouts = sport.Timeouts, AwayTimeouts = sport.Timeouts, PlayClockSeconds = 40, TimeoutClockSeconds = 60 };
+        State = new GameState { SportId = sport.Id, ClockSeconds = sport.PeriodSeconds, PeriodSeconds = sport.PeriodSeconds, TotalPeriods = sport.Periods, PeriodLabel = sport.Unit, ScoringOptions = sport.ScoringOptions.ToArray(), ClockCountsUp = sport.CountUp, HomeTimeouts = sport.Timeouts, AwayTimeouts = sport.Timeouts, PlayClockSeconds = 40, TimeoutClockSeconds = 60, Controls = sport.Controls.Select(c => c with { }).ToList() };
+        // A profile's starting values (a full count of balls to start, a power play already on) are
+        // what a new game opens with; stepping them afterwards changes only this game.
+        foreach (var control in State.Controls)
+            SportValues.Write(State, control.Id, Math.Clamp(control.Default, control.Min, control.Max));
         _undo.Clear(); _lastTick = _watch.ElapsedTicks; Changed?.Invoke();
+    }
+
+    /// <summary>Sets one of the sport's own values, clamped to what its control allows.</summary>
+    public void SetSportValue(string id, int value)
+    {
+        var control = SportValues.FindControl(State, id);
+        if (control is null) return;
+        var clamped = Math.Clamp(value, control.Min, Math.Max(control.Min, control.Max));
+        if (SportValues.Read(State, control.Id) == clamped) return;
+        SaveUndo(control.Label);
+        SportValues.Write(State, control.Id, clamped);
+        Log("Sport", $"{control.Label}: {SportValues.Display(State, control)}");
+        Changed?.Invoke();
+    }
+
+    /// <summary>Steps a sport value by its own step, the way a console button does.</summary>
+    public void AdjustSportValue(string id, int direction)
+    {
+        var control = SportValues.FindControl(State, id);
+        if (control is null) return;
+        var step = control.Kind == SportControlKind.Flag ? 1 : Math.Max(1, control.Step);
+        SetSportValue(control.Id, SportValues.Read(State, control.Id) + direction * step);
+    }
+
+    /// <summary>Flips an on/off sport control such as power play or a runner on base.</summary>
+    public void ToggleSportFlag(string id)
+    {
+        var control = SportValues.FindControl(State, id);
+        if (control is null || control.Kind != SportControlKind.Flag) return;
+        SetSportValue(control.Id, SportValues.Read(State, control.Id) == 0 ? 1 : 0);
     }
 
     public void SetTeams(string home, string away)
@@ -557,6 +604,12 @@ public sealed class GameEngine
         State = JsonSerializer.Deserialize<GameState>(File.ReadAllText(path), JsonOptions) ?? new GameState();
         // Older saves could hold a spot past midfield; bring it back into the 0–50 range.
         State.YardsToGoal = Math.Clamp(State.YardsToGoal, 0, 50);
+        // A file written before sport values existed keeps the current profile's control list, so
+        // the console still has balls, bases and power play to work with.
+        State.SportValues ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        State.Controls ??= [];
+        if (State.Controls.Count == 0)
+            State.Controls = (Sports.Find(State.SportId)?.Controls ?? []).Select(c => c with { }).ToList();
         // Roster edits made since the file was written still reach the graphic on load.
         RefreshSelectedPlayers();
         _undo.Clear(); _lastTick = _watch.ElapsedTicks; Changed?.Invoke();
@@ -575,6 +628,7 @@ public sealed class GameEngine
         s.Balls, s.Strikes, s.Outs, s.HomeHits, s.AwayHits,
         s.HomeYards, s.AwayYards, s.HomeTurnovers, s.AwayTurnovers,
         s.HomeShots, s.AwayShots, s.HomeCorners, s.AwayCorners,
+        string.Join(",", s.Controls.Select(c => $"{c.Id}={SportValues.Read(s, c.Id)}")),
         string.Join(",", s.Stats.Select(x => $"{x.Name}={x.Display}")));
 
     /// <summary>What the graphic reads from a selected player, compared by the live publish.</summary>

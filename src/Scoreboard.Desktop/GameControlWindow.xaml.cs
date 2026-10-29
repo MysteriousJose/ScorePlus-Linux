@@ -235,6 +235,13 @@ public partial class GameControlWindow : Window
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        // Enter commits the field being typed in and keeps this panel open.
+        if (key == Key.Enter && Keyboard.FocusedElement is TextBox box && !box.AcceptsReturn)
+        {
+            Keyboard.ClearFocus();
+            e.Handled = true;
+            return;
+        }
         if (Panel.TryHandleKey(key, Keyboard.Modifiers)) { e.Handled = true; return; }
         base.OnPreviewKeyDown(e);
     }
