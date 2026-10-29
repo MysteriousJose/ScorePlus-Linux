@@ -53,6 +53,7 @@
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="248"/>
             <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="248"/>
           </Grid.ColumnDefinitions>
           <Border Background="#091018" CornerRadius="7" ClipToBounds="True" Height="140">
             <ContentControl x:Name="PreviewHost"/>
@@ -74,17 +75,24 @@
             <TextBlock x:Name="ProgramHint" Text="Switching layouts only changes this preview — Update Output puts it on air."
                        FontSize="10" Foreground="#5C6B7E" TextWrapping="Wrap" Margin="0,6,0,0"/>
           </StackPanel>
+          <!-- What the audience is watching right now, independent of this panel's choices. -->
+          <Border Grid.Column="2" Background="#091018" CornerRadius="7" ClipToBounds="True" Padding="8,6" Margin="12,0,0,0">
+            <ContentControl x:Name="AudienceHost"/>
+          </Border>
         </Grid>
       </Border>
 
       <StackPanel Grid.Row="1" Orientation="Horizontal">
         <Button x:Name="ControlTab" Style="{StaticResource TabButton}" Content="CONTROL PANEL" Click="ControlTab_Click"/>
         <Button x:Name="MediaTab" Style="{StaticResource TabButton}" Content="MEDIA" Click="MediaTab_Click" ToolTip="Clips, camera, replay and playlists"/>
+        <Button x:Name="RosterTab" Style="{StaticResource TabButton}" Content="ROSTERS" Click="RosterTab_Click"
+                ToolTip="Team rosters, player stats and the player on the graphic"/>
       </StackPanel>
 
       <Grid Grid.Row="2" Margin="0,9,0,0">
         <ContentControl x:Name="PanelHost"/>
         <local:MediaDock x:Name="MediaControl" Visibility="Collapsed"/>
+        <local:RosterDock x:Name="RosterControl" Visibility="Collapsed"/>
       </Grid>
     </Grid>
   </DockPanel>

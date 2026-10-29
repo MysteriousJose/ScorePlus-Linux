@@ -22,6 +22,9 @@ public sealed class VideoSurface : Grid
     // Live camera frames are drawn on this image instead of the MediaElement.
     readonly Image _live = new() { Stretch = Stretch.UniformToFill, Visibility = Visibility.Collapsed };
     readonly bool _mute;
+    // True for a surface that is showing what the audience gets, even when it is muted. The
+    // audience-view monitor is one: silent, but it must never show a replay the audience cannot.
+    readonly bool _onAir;
     CameraFeed? _feed;
     int _cameraIndex = -1;
     string? _loadedPath;
@@ -44,11 +47,12 @@ public sealed class VideoSurface : Grid
 
     /// <param name="showPlaceholder">True only in the studio. The audience output and the preview
     /// stay blank while nothing is cued, so an off-air "VIDEO · GENERAL" label can never go out.</param>
-    public VideoSurface(ScorebugElement item, MediaPlayback? playback, bool mute, bool showPlaceholder = true)
+    public VideoSurface(ScorebugElement item, MediaPlayback? playback, bool mute, bool showPlaceholder = true, bool onAir = false)
     {
         _item = item;
         _playback = playback;
         _mute = mute;
+        _onAir = onAir;
         ClipToBounds = true;
         // MediaElement's video texture can paint past its layout slot when the aspect ratios differ,
         // so the picture is clipped to the element box explicitly instead of relying on layout only.
@@ -170,9 +174,13 @@ public sealed class VideoSurface : Grid
     /// The clip this surface should be showing. A muted surface is a preview (studio, program
     /// thumbnail), and only previews see a replay that has been opened but not started.
     /// </summary>
-    MediaEntry? Cue() => _mute
+    MediaEntry? Cue() => _mute && !_onAir
         ? _playback?.PreviewFor(_item.MediaTag)
         : _playback?.ActiveFor(_item.MediaTag);
+
+    /// <summary>The clip this surface resolves right now, exposed so a check can prove a monitor and
+    /// a preview disagree about a staged replay.</summary>
+    public MediaEntry? CurrentCue => Cue();
 
     /// <summary>
     /// A clip that loops behaves like a stadium screen: rewind and keep rolling. A clip with its

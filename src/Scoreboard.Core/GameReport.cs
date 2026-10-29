@@ -23,7 +23,7 @@ public static class GameReport
         if(state.Stats is { Count: > 0 })
         {
             html.AppendLine("<div class=\"card\"><b>Custom stats</b><br/>");
-            foreach(var stat in state.Stats) html.AppendLine($"{E(stat.Name)}: {stat.Value}<br/>");
+            foreach(var stat in state.Stats) html.AppendLine($"{E(stat.Name)}: {E(stat.Display)}<br/>");
             html.AppendLine("</div>");
         }
         html.AppendLine("</div><h2>Event timeline</h2><table><thead><tr><th>Time</th><th>Score at event</th><th>Action</th></tr></thead><tbody>");

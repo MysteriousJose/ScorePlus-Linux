@@ -50,6 +50,7 @@ public partial class SportProfileWindow : Window
         MinutesInput.Text = (_selected.PeriodSeconds / 60).ToString();
         TimeoutsInput.Text = _selected.Timeouts.ToString();
         CountUpInput.IsChecked = _selected.CountUp;
+        ShotClockInput.IsChecked = _selected.HasShotClock;
         ScoringInput.Text = string.Join(", ", _selected.ScoringOptions);
         _loading = false;
         ErrorText.Text = "";
@@ -91,8 +92,32 @@ public partial class SportProfileWindow : Window
             PeriodSeconds = checked(int.Parse(MinutesInput.Text) * 60),
             Timeouts = int.Parse(TimeoutsInput.Text),
             CountUp = CountUpInput.IsChecked == true,
+            HasShotClock = ShotClockInput.IsChecked == true,
             ScoringOptions = scores
         };
+    }
+
+    /// <summary>
+    /// Starts a custom sport with blank settings rather than a copy of an existing one, selects it,
+    /// and leaves the cursor in the name so the operator can just type over it.
+    /// </summary>
+    void NewProfile_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var name = "New sport";
+            for (var suffix = 2; _catalog.All.Any(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)); suffix++)
+                name = $"New sport {suffix}";
+            var profile = new SportDefinition(Guid.NewGuid().ToString("N"), name, "Period", 4, 12 * 60, [1, 2, 3], false, false, 3);
+            var created = _catalog.AddOrUpdate(profile);
+            Changed = true;
+            RefreshList(created.Id);
+            Profiles.SelectedItem = Profiles.Items.Cast<ProfileItem>().FirstOrDefault(item => item.Profile.Id == created.Id);
+            ErrorText.Text = "New custom profile — set its name, period label, clock and scoring buttons, then Save profile.";
+            NameInput.Focus();
+            NameInput.SelectAll();
+        }
+        catch (Exception ex) { ErrorText.Text = ex.Message; }
     }
 
     void Duplicate_Click(object sender, RoutedEventArgs e)

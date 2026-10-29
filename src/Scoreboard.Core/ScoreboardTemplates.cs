@@ -6,12 +6,37 @@ public static class ScoreboardTemplates
 {
     static readonly Regex StatToken = new(@"\{\{STAT:(?<name>[^}]+)\}\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    public static string Bind(string content, GameState state, string? periodFormat = null) => StatToken.Replace(ReplaceFixed(content, state, periodFormat), match =>
-    {
-        var name = match.Groups["name"].Value.Trim();
-        var stat = state.Stats.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
-        return stat is null ? string.Empty : stat.Value.ToString();
-    });
+    /// <summary>
+    /// A value read from the player currently selected for one side, e.g.
+    /// <c>{{PLAYER:HOME:Name}}</c>, <c>{{PLAYER:AWAY:Number}}</c> or <c>{{PLAYER:HOME:Yards}}</c>.
+    /// Switching the selected player in the Rosters tab reprints every one of these.
+    /// </summary>
+    static readonly Regex PlayerToken = new(@"\{\{PLAYER:(?<side>HOME|AWAY):(?<field>[^}]+)\}\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public static string Bind(string content, GameState state, string? periodFormat = null) =>
+        PlayerToken.Replace(StatToken.Replace(ReplaceFixed(content, state, periodFormat), match =>
+        {
+            var name = match.Groups["name"].Value.Trim();
+            var stat = state.Stats.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+            return stat is null ? string.Empty : stat.Display;
+        }), match =>
+        {
+            var home = match.Groups["side"].Value.Equals("HOME", StringComparison.OrdinalIgnoreCase);
+            var field = match.Groups["field"].Value;
+            // {{PLAYER:HOME:id:<playerId>:Yards}} pins one player from that side's roster, so an
+            // element can show a specific player while somebody else is the selected one.
+            if (field.StartsWith("id:", StringComparison.OrdinalIgnoreCase))
+            {
+                var rest = field[3..];
+                var split = rest.IndexOf(':');
+                if (split <= 0) return string.Empty;
+                var roster = RosterStore.Book.Find(home ? state.HomeRosterId : state.AwayRosterId);
+                var pinned = roster?.Find(rest[..split].Trim());
+                return pinned is null ? string.Empty : PlayerFields.Read(pinned, rest[(split + 1)..]);
+            }
+            var player = home ? state.HomePlayer : state.AwayPlayer;
+            return player?.Field(field) ?? string.Empty;
+        });
 
     static string ReplaceFixed(string content, GameState state, string? periodFormat) => content
         // Team names render exactly as the operator typed them: full text, original case.

@@ -595,19 +595,17 @@ public sealed class MediaSession
             Status?.Invoke("START REPLAY · press Replay first");
             return false;
         }
-        if (!_playing)
-        {
-            try { _player.Play(); } catch { SetTransportPlaying(false); return false; }
-            SetTransportPlaying(true);
-        }
-        // Only now does the replay reach the audience; it is already rolling when it arrives.
+        // Start replay puts the replay on air and does nothing else. A paused replay goes out as a
+        // freeze frame and stays paused until the operator presses Play, so a scrub is never lost.
         if (!_replayOnAir)
         {
             _replayOnAir = true;
             Playback.PromoteStage();
         }
         StateChanged?.Invoke();
-        Status?.Invoke($"REPLAY ON AIR · playing · {Math.Round(ReplayBack)}s behind live");
+        Status?.Invoke(_playing
+            ? $"REPLAY ON AIR · playing · {Math.Round(ReplayBack)}s behind live"
+            : $"REPLAY ON AIR · paused · press Play to roll it · {Math.Round(ReplayBack)}s behind live");
         return true;
     }
 
@@ -814,8 +812,15 @@ public sealed class MediaSession
                 SetTransportPlaying(false);
                 Status?.Invoke($"REPLAY PAUSED · {Math.Round(ReplayBack)}s behind live");
             }
-            // Play on the transport means the same thing as Start replay: it goes to air.
-            else PlayReplay();
+            // Play resumes a paused replay where it was scrubbed to. If it has not gone to air
+            // yet this also promotes it, so one press both starts it and rolls it.
+            else
+            {
+                if (!_replayOnAir) PlayReplay();
+                try { _player.Play(); } catch { }
+                SetTransportPlaying(true);
+                Status?.Invoke($"REPLAY ON AIR · playing · {Math.Round(ReplayBack)}s behind live");
+            }
             return;
         }
         if (_playing)

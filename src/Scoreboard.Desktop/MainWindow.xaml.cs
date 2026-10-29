@@ -31,6 +31,7 @@ public partial class MainWindow : Window, IControlPanelHost
     readonly List<OutputWindow> _outputs = [];
     EventLogWindow? _log;
     ScorebugCanvasView? _preview;
+    AudiencePreview? _audience;
     int _eventCount = -1;
     readonly UserPreferences _preferences = PreferencesStore.Load();
     string? _projectPath;
@@ -45,6 +46,7 @@ public partial class MainWindow : Window, IControlPanelHost
     // The game state as it was the last time it went into a .spg file (or started fresh).
     string? _savedStateJson;
     bool _closingAfterPrompt;
+    GameControlWindow.ConsoleTab _tab = GameControlWindow.ConsoleTab.Control;
 
     /// <summary>
     /// The exit prompt is on for operators. The UI checks turn it off because they create and close
@@ -55,12 +57,15 @@ public partial class MainWindow : Window, IControlPanelHost
     /// <param name="mode">How the app was started: <see cref="LaunchMode.New"/> skips the autosave,
     /// <see cref="LaunchMode.Open"/> loads <paramref name="gamePath"/>. Null keeps the legacy
     /// behaviour of restoring the last autosave, which the tests rely on.</param>
-    public MainWindow(LaunchMode? mode = null, string? gamePath = null)
+    /// <param name="waitForLaunch">True when the launcher box opens on top of this window: no game
+    /// is started or restored until the operator chooses one, and the workspace stays locked.</param>
+    public MainWindow(LaunchMode? mode = null, string? gamePath = null, bool waitForLaunch = false)
     {
         InitializeComponent();
         _session = new MediaSession(_preferences);
         _playback = _session.Playback;
         ThemeManager.Apply(this, _preferences.Theme);
+        DisplayTiming.Apply(_preferences);
         SportSelector.SelectedValuePath = "Id";
         RefreshSports();
         SportSelector.SelectedValue = _engine.State.SportId;
@@ -76,14 +81,24 @@ public partial class MainWindow : Window, IControlPanelHost
         _program.Changed += ProgramChanged;
         _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback, layoutProvider: () => _program.Layout);
         PreviewHost.Content = _preview;
+        // The monitor reads the published engine and the published layout, so it is a real
+        // reflection of the audience window rather than another staged preview.
+        _audience = new AudiencePreview(_scorebug, _publishedEngine, _playback, _program.DisplayId);
+        AudienceHost.Content = _audience;
         SyncDisplayPicker();
         RefreshLayoutIndicators();
-        ShowTab(media: false);
+        ShowTab(GameControlWindow.ConsoleTab.Control);
+        // The theme pass repaints every button when the window loads, which used to wipe the green
+        // outline off the already-selected tab until another tab was clicked.
+        Loaded += (_, _) => ApplyTabVisuals();
 
         _panel = new ControlPanelView(_engine, this);
         ControlHost.Content = _panel;
         _panel.SetHintVisibility(_preferences.ShowHeadingHints);
 
+        RosterControl.Attach(_engine);
+        RosterControl.ApplyTheme(_preferences.Theme);
+        RosterControl.SetHintVisibility(_preferences.ShowHeadingHints);
         MediaControl.Attach(_session);
         MediaControl.ApplyTheme(_preferences.Theme);
         // The dock now lives in a full-width tab instead of a narrow rail, so its controls are the
@@ -94,6 +109,15 @@ public partial class MainWindow : Window, IControlPanelHost
 
         Refresh();
         _initializing = false;
+
+        if (waitForLaunch)
+        {
+            // The main window is already up behind the launcher, with nothing to change yet.
+            _savedStateJson = _engine.ExportJson();
+            SetWorkspaceEnabled(false);
+            StatusText.Text = "WAITING · choose New Game or Open Game in the launch window";
+            return;
+        }
 
         // No recovery prompt: a "New Game" launch always starts clean, "Open Game" loads the chosen
         // file, and the window shows whatever the newest autosave holds only when no choice was made.
@@ -119,6 +143,31 @@ public partial class MainWindow : Window, IControlPanelHost
         // Panels are opened deliberately with New Panel; starting a game never spawns a second window.
     }
 
+    /// <summary>
+    /// Applies the choice made in the launch box to the window that is already open behind it.
+    /// </summary>
+    public void StartFromLauncher(LaunchMode mode, string? path)
+    {
+        if (mode == LaunchMode.Open && !string.IsNullOrWhiteSpace(path) && LoadGame(path))
+            StatusText.Text = $"GAME OPENED · {Path.GetFileNameWithoutExtension(path)}";
+        else
+        {
+            StartNewGame(string.IsNullOrWhiteSpace(_preferences.LastSport) ? "football" : _preferences.LastSport, announce: false);
+            StatusText.Text = "NEW GAME · set the teams and you are live";
+        }
+        _savedStateJson = _engine.ExportJson();
+        SetWorkspaceEnabled(true);
+        Activate();
+    }
+
+    /// <summary>Locks or unlocks everything inside the window while the launch box is up.</summary>
+    void SetWorkspaceEnabled(bool enabled)
+    {
+        Root.IsEnabled = enabled;
+        // A locked window reads as dimmed, so nobody tries to type into a game that is not there.
+        Root.Opacity = enabled ? 1 : 0.55;
+    }
+
     /// <summary>The live game, exposed so the operator surface (and the checks) can drive it.</summary>
     public GameEngine Engine => _engine;
 
@@ -127,6 +176,9 @@ public partial class MainWindow : Window, IControlPanelHost
 
     /// <summary>The console embedded in this window, exposed for the checks.</summary>
     public ControlPanelView Panel => _panel;
+
+    /// <summary>The monitor that mirrors what the audience is watching, exposed for the checks.</summary>
+    public AudiencePreview? AudienceMonitor => _audience;
 
     /// <summary>The scorebug layouts and design, exposed so the checks can drive the layout arrows.</summary>
     public ScorebugCatalog Scorebug => _scorebug;
@@ -155,6 +207,7 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         _publishedEngine.LoadFromState(_engine.CloneState());
         _preview?.Refresh();
+        // The monitor listens to the published engine itself, so the copy above already repaints it.
         foreach (var output in _outputs) output.Publish();
     }
 
@@ -224,29 +277,45 @@ public partial class MainWindow : Window, IControlPanelHost
     // ---------- tabs ----------
 
     /// <summary>Switches the operator surface between the console and the media desk.</summary>
-    public void ShowMediaTab(bool media) => ShowTab(media);
+    public void ShowMediaTab(bool media) => ShowTab(media ? GameControlWindow.ConsoleTab.Media : GameControlWindow.ConsoleTab.Control);
 
-    void ControlTab_Click(object sender, RoutedEventArgs e) => ShowTab(media: false);
+    void ControlTab_Click(object sender, RoutedEventArgs e) => ShowTab(GameControlWindow.ConsoleTab.Control);
 
-    void MediaTab_Click(object sender, RoutedEventArgs e) => ShowTab(media: true);
+    void MediaTab_Click(object sender, RoutedEventArgs e) => ShowTab(GameControlWindow.ConsoleTab.Media);
 
-    /// <summary>Switches the operator surface between the console and the media desk.</summary>
-    void ShowTab(bool media)
+    void RosterTab_Click(object sender, RoutedEventArgs e) => ShowTab(GameControlWindow.ConsoleTab.Rosters);
+
+    /// <summary>Switches the operator surface between the console, the media desk and the roster desk.</summary>
+    void ShowTab(GameControlWindow.ConsoleTab tab)
     {
-        ControlHost.Visibility = media ? Visibility.Collapsed : Visibility.Visible;
-        MediaControl.Visibility = media ? Visibility.Visible : Visibility.Collapsed;
+        _tab = tab;
+        ControlHost.Visibility = tab == GameControlWindow.ConsoleTab.Control ? Visibility.Visible : Visibility.Collapsed;
+        MediaControl.Visibility = tab == GameControlWindow.ConsoleTab.Media ? Visibility.Visible : Visibility.Collapsed;
+        RosterControl.Visibility = tab == GameControlWindow.ConsoleTab.Rosters ? Visibility.Visible : Visibility.Collapsed;
+        ApplyTabVisuals();
+        if (tab == GameControlWindow.ConsoleTab.Media) MediaControl.RefreshView();
+        if (tab == GameControlWindow.ConsoleTab.Rosters) RosterControl.RefreshView();
+    }
+
+    /// <summary>
+    /// Paints the active tab. Split out because the theme pass repaints every button when the
+    /// window loads, which silently erased the green outline on the tab that was already selected.
+    /// </summary>
+    void ApplyTabVisuals()
+    {
         var on = (Brush)new BrushConverter().ConvertFromString("#123C33")!;
         var off = (Brush)new BrushConverter().ConvertFromString("#141A23")!;
         var onBorder = (Brush)new BrushConverter().ConvertFromString("#38D7A3")!;
         var offBorder = (Brush)new BrushConverter().ConvertFromString("#28323F")!;
         var muted = (Brush)new BrushConverter().ConvertFromString("#93A0B2")!;
-        ControlTab.Background = media ? off : on;
-        ControlTab.BorderBrush = media ? offBorder : onBorder;
-        ControlTab.Foreground = media ? muted : Brushes.White;
-        MediaTab.Background = media ? on : off;
-        MediaTab.BorderBrush = media ? onBorder : offBorder;
-        MediaTab.Foreground = media ? Brushes.White : muted;
-        if (media) MediaControl.RefreshView();
+        Button[] tabs = [ControlTab, MediaTab, RosterTab];
+        var active = (int)_tab;
+        for (var i = 0; i < tabs.Length; i++)
+        {
+            tabs[i].Background = i == active ? on : off;
+            tabs[i].BorderBrush = i == active ? onBorder : offBorder;
+            tabs[i].Foreground = i == active ? Brushes.White : muted;
+        }
     }
 
     void LayoutPrev_Click(object sender, RoutedEventArgs e) => ShiftLayout(-1);
@@ -274,6 +343,7 @@ public partial class MainWindow : Window, IControlPanelHost
         var visibility = _preferences.ShowHeadingHints ? Visibility.Visible : Visibility.Collapsed;
         SportHint.Visibility = PreviewAudienceHint.Visibility = visibility;
         MediaControl.SetHintVisibility(_preferences.ShowHeadingHints);
+        RosterControl.SetHintVisibility(_preferences.ShowHeadingHints);
         _log?.SetHintVisibility(_preferences.ShowHeadingHints);
     }
 
@@ -306,11 +376,19 @@ public partial class MainWindow : Window, IControlPanelHost
         ThemeManager.Apply(dialog, _preferences.Theme);
         if (dialog.ShowDialog() != true) return; // Cancel discards: nothing is applied or saved.
         ThemeManager.Apply(this, _preferences.Theme);
+        // The new theme paints buttons as it runs; put the active tab's outline back on top.
+        ApplyTabVisuals();
         MediaControl.ApplyTheme(_preferences.Theme);
+        RosterControl.ApplyTheme(_preferences.Theme);
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.ApplyTheme(_preferences.Theme);
         foreach (var output in _outputs) output.SetBroadcastTheme(_preferences.Theme);
         ApplyHintVisibility();
         _panel.SetHintVisibility(_preferences.ShowHeadingHints);
+        // A changed value delay reaches every graphic already on screen, in this window and out.
+        DisplayTiming.Apply(_preferences);
+        _preview?.ApplyNow();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.RefreshPreview();
+        foreach (var output in _outputs) output.RefreshGraphic();
     }
 
     void NewPanel_Click(object sender, RoutedEventArgs e) => OpenControlPanel();
@@ -324,7 +402,7 @@ public partial class MainWindow : Window, IControlPanelHost
         panel.NewPanelRequested += OpenControlPanel;
         panel.Closed += (_, _) => _controlPanels.Remove(panel);
         panel.ApplyTheme(_preferences.Theme);
-        panel.Panel.SetHintVisibility(_preferences.ShowHeadingHints);
+        panel.SetHintVisibility(_preferences.ShowHeadingHints);
         _controlPanels.Add(panel);
         panel.Show();
     }
@@ -403,6 +481,7 @@ public partial class MainWindow : Window, IControlPanelHost
         // Rebuild, not refresh: a new game gets brand-new visuals, so no score, down, possession
         // or last video frame can be carried over from the game before it.
         _preview?.Rebuild();
+        _audience?.Refresh();
         foreach (var output in _outputs) { output.Publish(); output.Rebuild(); }
         _panel.Refresh();
         // Take the cued clip off the scorebug last, so a media hiccup cannot block the game reset.

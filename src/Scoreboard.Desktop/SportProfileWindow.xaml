@@ -11,7 +11,7 @@
 
     <DockPanel Grid.Row="0" Margin="0,0,14,0">
       <TextBlock DockPanel.Dock="Top" Text="SPORT PROFILES" FontSize="14" FontWeight="Bold" Margin="4,0,0,8"/>
-      <TextBlock DockPanel.Dock="Bottom" Text="Built-in presets can be edited too — your changes are saved as an override." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="4,8,4,0"/>
+      <TextBlock DockPanel.Dock="Bottom" Text="Built-in presets can be edited too — those changes are saved as an override. New profile starts one from scratch." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="4,8,4,0"/>
       <ListBox x:Name="Profiles" Background="#10151D" Foreground="White" BorderBrush="#364151" SelectionChanged="Profiles_SelectionChanged"/>
     </DockPanel>
 
@@ -44,9 +44,12 @@
             </StackPanel>
           </UniformGrid>
           <CheckBox x:Name="CountUpInput" Content="Clock counts up instead of down" Foreground="White" Margin="6,10,0,0"/>
+          <CheckBox x:Name="ShotClockInput" Content="Has a shot clock" Foreground="White" Margin="6,4,0,0"/>
           <TextBlock x:Name="BuiltInNote" Text="Built-in preset — saving stores your version as an override." TextWrapping="Wrap" Foreground="#93A0B2" Margin="4,10,4,0"/>
           <TextBlock x:Name="ErrorText" Foreground="#FF7272" TextWrapping="Wrap" Margin="4,8,4,0"/>
           <WrapPanel Margin="0,8,0,0">
+            <Button x:Name="NewProfileButton" Content="New profile" Click="NewProfile_Click"
+                    ToolTip="Start a custom sport from scratch: blank settings, not a copy of another sport"/>
             <Button x:Name="SaveButton" Content="Save profile" Click="Save_Click"/>
             <Button x:Name="DuplicateButton" Content="Duplicate" Click="Duplicate_Click"/>
             <Button x:Name="ResetButton" Content="Reset to preset" Click="Reset_Click"/>

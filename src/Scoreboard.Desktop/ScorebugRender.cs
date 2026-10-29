@@ -26,6 +26,38 @@ internal static class ScorebugRender
     public static string ResolveBackground(ScorebugElement item, GameState? state) =>
         state?.ColorFor(item.BackgroundSource) ?? item.Background;
 
+    /// <summary>The gradient's second colour, after its team-palette slot is resolved.</summary>
+    public static string ResolveBackground2(ScorebugElement item, GameState? state) =>
+        state?.ColorFor(item.BackgroundSource2) ?? item.BackgroundColor2;
+
+    /// <summary>
+    /// What the background actually paints, as a comparable string: a colour, or both stops and the
+    /// angle when the element is a gradient. Views cache on this so a brush is only rebuilt on change.
+    /// </summary>
+    public static string BackgroundSignature(ScorebugElement item, GameState? state) =>
+        item.BackgroundGradient
+            ? $"g|{ResolveBackground(item, state)}|{ResolveBackground2(item, state)}|{item.GradientAngle:0.###}"
+            : ResolveBackground(item, state);
+
+    /// <summary>
+    /// The brush an element's box is painted with: a flat colour, or a two-stop gradient running in
+    /// <see cref="ScorebugElement.GradientAngle"/> degrees (0 left→right, 90 top→bottom).
+    /// </summary>
+    public static Brush BackgroundBrush(ScorebugElement item, GameState? state = null)
+    {
+        if (!item.BackgroundGradient) return ParseBrush(ResolveBackground(item, state));
+        var start = ParseBrush(ResolveBackground(item, state));
+        var end = ParseBrush(ResolveBackground2(item, state));
+        var angle = ((item.GradientAngle % 360) + 360) % 360 * Math.PI / 180.0;
+        var dx = Math.Cos(angle) / 2;
+        var dy = Math.Sin(angle) / 2;
+        var brush = new LinearGradientBrush(ColorOf(start), ColorOf(end), new Point(0.5 - dx, 0.5 - dy), new Point(0.5 + dx, 0.5 + dy));
+        brush.Freeze();
+        return brush;
+    }
+
+    static Color ColorOf(Brush brush) => brush is SolidColorBrush solid ? solid.Color : Colors.Transparent;
+
     /// <summary>The colour of the element's outline, after its team-palette slot is resolved.</summary>
     public static string ResolveBorder(ScorebugElement item, GameState? state) =>
         state?.ColorFor(item.BorderSource) ?? item.BorderColor;
@@ -38,14 +70,14 @@ internal static class ScorebugRender
     public static Brush HostBackground(ScorebugElement item, GameState? state = null) =>
         item.Kind is ScorebugElementKind.Shape or ScorebugElementKind.Logo || item.TransparentBackground
             ? Brushes.Transparent
-            : ParseBrush(ResolveBackground(item, state));
+            : BackgroundBrush(item, state);
 
     public static string? ResolveLogoPath(ScorebugElement item, GameState? state) =>
         item.LogoSide == ScorebugLogoSide.None ? item.ImagePath : state?.LogoFor(item.LogoSide) ?? item.ImagePath;
 
-    public static FrameworkElement CreateContent(ScorebugElement item, Func<GameState>? state, MediaPlayback? playback = null, bool muteVideo = true, bool showVideoPlaceholder = false)
+    public static FrameworkElement CreateContent(ScorebugElement item, Func<GameState>? state, MediaPlayback? playback = null, bool muteVideo = true, bool showVideoPlaceholder = false, bool onAirVideo = false)
     {
-        if (item.Kind == ScorebugElementKind.Video) return new VideoSurface(item, playback, muteVideo, showVideoPlaceholder);
+        if (item.Kind == ScorebugElementKind.Video) return new VideoSurface(item, playback, muteVideo, showVideoPlaceholder, onAirVideo);
         // Icons are drawn from live data rather than typed text: small bars per timeout, or a dot
         // showing which team has the ball.
         if (item.Kind == ScorebugElementKind.Text && item.Icon != ScorebugIcon.None) return new ScorebugIconView(item, state);
@@ -91,7 +123,7 @@ internal static class ScorebugRender
         shape.Stretch = Stretch.Fill;
         // A transparent shape has no fill, only its outline — the old code always painted the
         // background, which is why a hollow shape could never be made.
-        shape.Fill = item.TransparentBackground ? Brushes.Transparent : ParseBrush(ResolveBackground(item, state));
+        shape.Fill = item.TransparentBackground ? Brushes.Transparent : BackgroundBrush(item, state);
         shape.Stroke = HostBorder(item, state);
         shape.StrokeThickness = Math.Max(0, item.BorderThickness);
         shape.StrokeStartLineCap = PenLineCap.Round;
@@ -115,7 +147,7 @@ internal static class ScorebugRender
                 plain.Text = text ?? item.Content;
                 break;
             case Shape shape:
-                shape.Fill = item.TransparentBackground ? Brushes.Transparent : ParseBrush(ResolveBackground(item, state));
+                shape.Fill = item.TransparentBackground ? Brushes.Transparent : BackgroundBrush(item, state);
                 shape.Stroke = HostBorder(item, state);
                 shape.StrokeThickness = Math.Max(0, item.BorderThickness);
                 break;

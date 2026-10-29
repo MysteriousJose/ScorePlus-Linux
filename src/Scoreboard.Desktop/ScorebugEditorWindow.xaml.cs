@@ -1,5 +1,6 @@
 using System.Windows;
 using System.IO;
+using System.Text.RegularExpressions;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -25,6 +26,16 @@ public partial class ScorebugEditorWindow : Window
     bool _layoutLoading;
     bool _displayLoading;
     bool _linkLoading;
+    // Set while the player-data pickers are being filled for an element, so the sync is not
+    // mistaken for the operator choosing a different player or value.
+    bool _bindingLoading;
+
+    /// <summary>The side, player and stat an element prints. Null player = follow the desk's selection.</summary>
+    sealed record PlayerSideOption(bool Home, string Label) { public override string ToString() => Label; }
+    sealed record PlayerChoice(string? Id, string Label) { public override string ToString() => Label; }
+    sealed record PlayerFieldOption(string Field, string Label) { public override string ToString() => Label; }
+
+    static readonly Regex PlayerToken = new(@"\{\{PLAYER:(?<side>HOME|AWAY):(?<field>[^}]+)\}\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     // Speakers are listed once per studio window; asking WASAPI per keystroke would be wasteful.
     readonly IReadOnlyList<AudioOption> _audioOptions;
     readonly System.Windows.Threading.DispatcherTimer _propertySave = new() { Interval=TimeSpan.FromMilliseconds(350) };
@@ -109,6 +120,15 @@ public partial class ScorebugEditorWindow : Window
     {
         InitializeComponent(); _catalog=catalog; _engine=engine; _playback=playback; _theme=theme;
         ThemeManager.Apply(this,theme);
+        // The studio opens filling the desktop (windowed, so the title bar and taskbar stay), and it
+        // can never be sized past the working area: a window that runs off the bottom of the screen
+        // hides the lower edge of the artwork, which read as a canvas you could not drag into.
+        var work=SystemParameters.WorkArea;
+        MinWidth=Math.Min(MinWidth,Math.Max(720,work.Width-40));
+        MinHeight=Math.Min(MinHeight,Math.Max(480,work.Height-40));
+        MaxWidth=work.Width; MaxHeight=work.Height;
+        Width=MaxWidth; Height=MaxHeight;
+        WindowState=WindowState.Maximized;
         AnimationInput.ItemsSource=Enum.GetValues<ScorebugAnimation>();
         TransitionInput.ItemsSource=Enum.GetValues<ScorebugTransition>();
         ShapeInput.ItemsSource=Enum.GetValues<ScorebugShape>();
@@ -128,6 +148,10 @@ public partial class ScorebugEditorWindow : Window
         CanvasWidthInput.Text=catalog.Layout.Width.ToString();
         CanvasHeightInput.Text=catalog.Layout.Height.ToString();
         _canvasLoading=false;
+        PlayerSideInput.ItemsSource=new[]{new PlayerSideOption(true,"Home"),new PlayerSideOption(false,"Visitors")};
+        PlayerSideInput.SelectedIndex=0;
+        PlayerPickInput.ItemsSource=new[]{new PlayerChoice(null,"Selected player — whoever is on the graphic")};
+        PlayerFieldInput.ItemsSource=PlayerFields.All(null).Select(field=>new PlayerFieldOption(field,field)).ToArray();
         _propertySave.Tick+=(_,_)=>{_propertySave.Stop();SaveProperties();RefreshAllVisuals();};
         _catalog.Changed += Render;
         _engine.Changed += RefreshBoundText;
@@ -196,13 +220,22 @@ public partial class ScorebugEditorWindow : Window
         // Elements (video especially) must never paint outside the artwork they belong to.
         DesignCanvas.ClipToBounds=true;
         CanvasInfo.Text=$"{_catalog.Layout.Name} · {_catalog.Layout.Width} × {_catalog.Layout.Height} · drag elements to reposition";
+        // The artwork backdrop is the layout's own colour, and it is exactly what the preview and
+        // every audience window paint behind the graphic.
+        var backdrop=ScorebugRender.ParseBrush(_catalog.Layout.Background);
+        // Only the artwork takes the backdrop: the letterbox around it stays the panel colour, so
+        // the canvas edge is unmistakable at the top and the bottom.
+        DesignCanvas.Background=backdrop;
         if(!_canvasLoading)
         {
             _canvasLoading=true;
             CanvasWidthInput.Text=_catalog.Layout.Width.ToString();
             CanvasHeightInput.Text=_catalog.Layout.Height.ToString();
             CanvasPreset.SelectedIndex=PresetIndex(_catalog.Layout.Width,_catalog.Layout.Height);
+            CanvasBackgroundInput.Text=_catalog.Layout.Background;
             _canvasLoading=false;
+            CanvasBackgroundSwatch.Background=backdrop;
+            CanvasBackgroundSwatch.ToolTip=$"Backdrop colour: {_catalog.Layout.Background}";
         }
         // Reuse the visual for every element that still exists instead of clearing the canvas. Taking
         // a MediaElement out of the visual tree stops its decoder, so a full rebuild on each edit
@@ -447,6 +480,106 @@ public partial class ScorebugEditorWindow : Window
                 ScorebugRender.ApplyToContent(visual.Content,item,_engine.State);
         }
         RefreshColorSwatches();
+        if(Selected is {Kind:ScorebugElementKind.Text}) UpdatePlayerHint();
+    }
+
+    // ---------- player data ----------
+
+    /// <summary>Reads the selected element's player token into the team / player / value pickers.</summary>
+    void LoadPlayerBinding(ScorebugElement element)
+    {
+        _bindingLoading=true;
+        try
+        {
+            var home=true; string? playerId=null; var field="Name";
+            var match=PlayerToken.Match(element.Content);
+            if(match.Success)
+            {
+                home=match.Groups["side"].Value.Equals("HOME",StringComparison.OrdinalIgnoreCase);
+                var raw=match.Groups["field"].Value.Trim();
+                if(raw.StartsWith("id:",StringComparison.OrdinalIgnoreCase))
+                {
+                    var rest=raw[3..];
+                    var split=rest.IndexOf(':');
+                    if(split>0){playerId=rest[..split].Trim();field=rest[(split+1)..].Trim();}
+                }
+                else field=raw;
+            }
+            PlayerSideInput.SelectedItem=(PlayerSideInput.ItemsSource as IEnumerable<PlayerSideOption>)?.FirstOrDefault(option=>option.Home==home);
+            FillPlayerChoices(home,playerId);
+            FillFieldChoices(home,field);
+            UpdatePlayerHint();
+        }
+        finally { _bindingLoading=false; }
+    }
+
+    /// <summary>The roster one side of the game draws from, if it has one.</summary>
+    Roster? RosterFor(bool home) =>
+        RosterStore.Book.Find(home?_engine.State.HomeRosterId:_engine.State.AwayRosterId);
+
+    /// <summary>Lists "selected player" first, then every player on that side's roster by name.</summary>
+    void FillPlayerChoices(bool home,string? playerId)
+    {
+        var roster=RosterFor(home);
+        var options=new List<PlayerChoice>{new(null,"Selected player — whoever is on the graphic")};
+        if(roster is not null)
+            options.AddRange(roster.Players.Select(player=>new PlayerChoice(player.Id,
+                $"#{player.Number} {player.Name}{(player.Position.Length>0?$" · {player.Position}":"")}".Trim())));
+        PlayerPickInput.ItemsSource=options;
+        PlayerPickInput.SelectedItem=options.FirstOrDefault(option=>string.Equals(option.Id??"",playerId??"",StringComparison.OrdinalIgnoreCase))??options[0];
+        PlayerPickInput.IsEnabled=roster is not null;
+        PlayerPickInput.ToolTip=roster is null
+            ? "No roster is assigned to this side yet — pick one in the Rosters tab"
+            : $"{roster.Name} · choose one player to pin, or follow whoever the desk selects";
+    }
+
+    /// <summary>Lists name, number, position and every stat column that roster tracks.</summary>
+    void FillFieldChoices(bool home,string field)
+    {
+        var options=PlayerFields.All(RosterFor(home)).Select(name=>new PlayerFieldOption(name,name)).ToArray();
+        PlayerFieldInput.ItemsSource=options;
+        PlayerFieldInput.SelectedItem=options.FirstOrDefault(option=>string.Equals(option.Field,field,StringComparison.OrdinalIgnoreCase))??options[0];
+    }
+
+    /// <summary>Writes the pickers back into the element's CONTENT as a {{PLAYER:…}} binding.</summary>
+    void PlayerBinding_Changed(object sender,SelectionChangedEventArgs e)
+    {
+        if(_loading||_bindingLoading||Selected is null)return;
+        if(sender==PlayerSideInput)
+        {
+            _bindingLoading=true;
+            try
+            {
+                var home=(PlayerSideInput.SelectedItem as PlayerSideOption)?.Home??true;
+                FillPlayerChoices(home,null);
+                FillFieldChoices(home,(PlayerFieldInput.SelectedItem as PlayerFieldOption)?.Field??"Name");
+            }
+            finally { _bindingLoading=false; }
+        }
+        var side=(PlayerSideInput.SelectedItem as PlayerSideOption)?.Home??true;
+        var player=(PlayerPickInput.SelectedItem as PlayerChoice)?.Id;
+        var field=(PlayerFieldInput.SelectedItem as PlayerFieldOption)?.Field??"Name";
+        var token=player is null
+            ? $"{{{{PLAYER:{(side?"HOME":"AWAY")}:{field}}}}}"
+            : $"{{{{PLAYER:{(side?"HOME":"AWAY")}:id:{player}:{field}}}}}";
+        if(ContentInput.Text==token){UpdatePlayerHint();return;}
+        ContentInput.Text=token;
+        UpdatePlayerHint();
+    }
+
+    /// <summary>Shows what the binding prints right now, so the operator never has to guess.</summary>
+    void UpdatePlayerHint()
+    {
+        if(PlayerBindingHint is null)return;
+        if(ContentInput.Text.Length==0||!PlayerToken.IsMatch(ContentInput.Text))
+        {
+            PlayerBindingHint.Text="This text is not tied to a player yet. Pick a team, player and value above, or type any binding in CONTENT.";
+            return;
+        }
+        var printed=ScoreboardTemplates.Bind(ContentInput.Text,_engine.State,Selected?.PeriodFormat);
+        PlayerBindingHint.Text=printed.Length==0
+            ? "Prints nothing: that player or value is empty right now."
+            : $"Prints now: \"{printed}\"";
     }
 
     void Layers_SelectionChanged(object sender,SelectionChangedEventArgs e)
@@ -468,7 +601,7 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,IconInput,IconVisitorsInput,IconFlipInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput,GradientInput,GradientSourceInput,GradientColorInput,GradientAngleInput,OpacityInput})
             control.IsEnabled=has;
         if(has)
         {
@@ -483,8 +616,13 @@ public partial class ScorebugEditorWindow : Window
             ColorInput.Text=e.Foreground; BackgroundInput.Text=e.Background;
             BorderColorInput.Text=e.BorderColor; BorderWidthInput.Text=e.BorderThickness.ToString("0.#");
             TransitionSpeedInput.Text=e.TransitionSeconds.ToString("0.00");
+            GradientInput.IsChecked=e.BackgroundGradient;
+            GradientColorInput.Text=e.BackgroundColor2;
+            GradientAngleInput.Text=e.GradientAngle.ToString("0");
+            OpacityInput.Text=e.Opacity.ToString("0.00");
             ForegroundSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.ForegroundSource)??ColorSources[0];
             BackgroundSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.BackgroundSource)??ColorSources[0];
+            GradientSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.BackgroundSource2)??ColorSources[0];
             BorderSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.BorderSource)??ColorSources[0];
             UpdateColorAvailability();
             AnimationInput.SelectedItem=e.Animation; TransitionInput.SelectedItem=e.Transition; ShapeInput.SelectedItem=e.Shape;
@@ -497,6 +635,7 @@ public partial class ScorebugEditorWindow : Window
             PeriodFormatInput.SelectedItem=PeriodOptions.FirstOrDefault(o=>o.Key==e.PeriodFormat)??PeriodOptions[0];
             IconInput.SelectedItem=e.Icon; IconVisitorsInput.IsChecked=e.IconVisitors; IconFlipInput.IsChecked=e.IconFlipped;
         }
+        if(e is not null&&e.Kind==ScorebugElementKind.Text) LoadPlayerBinding(e);
         _loading=false;
         UpdatePropertyVisibility();
         RefreshColorSwatches();
@@ -511,9 +650,11 @@ public partial class ScorebugEditorWindow : Window
         var item=Selected;
         TextColorSwatch.Background=item is null?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveForeground(item,_engine.State));
         BackgroundColorSwatch.Background=item is null||item.TransparentBackground?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveBackground(item,_engine.State));
+        GradientColorSwatch.Background=item is null||item.TransparentBackground||!item.BackgroundGradient?Brushes.Transparent:ScorebugRender.ParseBrush(_engine.State.ColorFor(item.BackgroundSource2)??item.BackgroundColor2);
         BorderColorSwatch.Background=item is null||item.BorderThickness<=0?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveBorder(item,_engine.State));
         TextColorSwatch.ToolTip=item is null?null:$"Text colour: {ScorebugRender.ResolveForeground(item,_engine.State)}";
         BackgroundColorSwatch.ToolTip=item is null?null:item.TransparentBackground?"No background box":$"Background colour: {ScorebugRender.ResolveBackground(item,_engine.State)}";
+        GradientColorSwatch.ToolTip=item is null||!item.BackgroundGradient?"No gradient":$"Second gradient colour: {_engine.State.ColorFor(item.BackgroundSource2)??item.BackgroundColor2}";
         BorderColorSwatch.ToolTip=item is null||item.BorderThickness<=0?"No border":$"Border colour: {ScorebugRender.ResolveBorder(item,_engine.State)}";
     }
 
@@ -522,6 +663,10 @@ public partial class ScorebugEditorWindow : Window
     {
         ColorInput.IsEnabled=Selected is not null && (ForegroundSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
         BackgroundInput.IsEnabled=Selected is not null && (BackgroundSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
+        var gradientOn=Selected is not null && GradientInput.IsChecked==true;
+        GradientColorInput.IsEnabled=gradientOn && (GradientSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
+        GradientSourceInput.IsEnabled=gradientOn;
+        GradientAngleInput.IsEnabled=gradientOn;
         BorderColorInput.IsEnabled=Selected is not null && (BorderSourceInput.SelectedItem as ColorSourceOption)?.Source==ScorebugColorSource.Custom;
     }
 
@@ -538,6 +683,9 @@ public partial class ScorebugEditorWindow : Window
         VideoPanel.Visibility=kind==ScorebugElementKind.Video?Visibility.Visible:Visibility.Collapsed;
         BackgroundSection.Visibility=kind is ScorebugElementKind.Text or ScorebugElementKind.Shape or ScorebugElementKind.Logo?Visibility.Visible:Visibility.Collapsed;
         PeriodSection.Visibility=text&&e!.Content.Contains("{{PERIOD}}",StringComparison.OrdinalIgnoreCase)?Visibility.Visible:Visibility.Collapsed;
+        // Player data only means something on a text element: it decides which player's value that
+        // text prints, so a shape or a logo has no business showing the pickers.
+        PlayerDataSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
         IconSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
         var icon=e?.Icon??ScorebugIcon.None;
         IconVisitorsInput.Visibility=icon==ScorebugIcon.TimeoutBars?Visibility.Visible:Visibility.Collapsed;
@@ -551,14 +699,14 @@ public partial class ScorebugEditorWindow : Window
     void ApplyProperties(object sender)
     {
         if(_loading||Selected is null)return;
-        if(sender==ForegroundSourceInput||sender==BackgroundSourceInput){UpdateColorAvailability();SaveProperties();RefreshAllVisuals();return;}
+        if(sender==ForegroundSourceInput||sender==BackgroundSourceInput||sender==GradientSourceInput){UpdateColorAvailability();SaveProperties();RefreshAllVisuals();return;}
         if(sender is ComboBox)
         {
             // Shape/font/animation changes need fresh geometry or a new face.
             SaveProperties(); Render(); return;
         }
-        if(sender is CheckBox){SaveProperties();RefreshAllVisuals();return;}
-        if(sender==ColorInput||sender==BackgroundInput){SaveProperties();RefreshAllVisuals();return;}
+        if(sender is CheckBox){UpdateColorAvailability();SaveProperties();RefreshAllVisuals();return;}
+        if(sender==ColorInput||sender==BackgroundInput||sender==GradientColorInput){SaveProperties();RefreshAllVisuals();return;}
         if(sender==ContentInput) UpdatePropertyVisibility();
         _propertySave.Stop(); _propertySave.Start();
     }
@@ -576,6 +724,11 @@ public partial class ScorebugEditorWindow : Window
         var borderWidthOk=double.TryParse(BorderWidthInput.Text,out var borderWidth);
         var borderColorOk=TryColor(BorderColorInput.Text,out _);
         var transitionSpeedOk=double.TryParse(TransitionSpeedInput.Text,out var transitionSpeed);
+        var gradient=GradientInput.IsChecked==true;
+        var gradientColorOk=TryColor(GradientColorInput.Text,out _);
+        var gradientAngleOk=double.TryParse(GradientAngleInput.Text,out var gradientAngle);
+        var opacityOk=double.TryParse(OpacityInput.Text,out var opacity);
+        var gradientSource=(GradientSourceInput.SelectedItem as ColorSourceOption)?.Source??item.BackgroundSource2;
         var borderSource=(BorderSourceInput.SelectedItem as ColorSourceOption)?.Source??item.BorderSource;
         var animation=AnimationInput.SelectedItem is ScorebugAnimation a?a:item.Animation;
         var transition=TransitionInput.SelectedItem is ScorebugTransition t?t:item.Transition;
@@ -612,6 +765,9 @@ public partial class ScorebugEditorWindow : Window
             &&item.ForegroundSource==foregroundSource&&item.BackgroundSource==backgroundSource&&item.LogoSide==logoSide
             &&(!rotationOk||Math.Abs(item.Rotation-rotation)<0.001)&&(!borderWidthOk||Math.Abs(item.BorderThickness-borderWidth)<0.001)
             &&(!borderColorOk||item.BorderColor==BorderColorInput.Text)&&item.BorderSource==borderSource
+            &&item.BackgroundGradient==gradient&&(!gradientColorOk||item.BackgroundColor2==GradientColorInput.Text)
+            &&item.BackgroundSource2==gradientSource&&(!gradientAngleOk||Math.Abs(item.GradientAngle-gradientAngle)<0.001)
+            &&(!opacityOk||Math.Abs(item.Opacity-opacity)<0.001)
             &&(!transitionSpeedOk||Math.Abs(item.TransitionSeconds-transitionSpeed)<0.001))return;
         var id=item.Id;
         // The save raises Changed, which would rebuild the canvas and restart every video; this
@@ -636,6 +792,10 @@ public partial class ScorebugEditorWindow : Window
             target.FontFamily=font; target.Bold=bold; target.Italic=italic;
             target.Underline=underline; target.StrikeThrough=strike;
             target.ForegroundSource=foregroundSource; target.BackgroundSource=backgroundSource;
+            target.BackgroundGradient=gradient; target.BackgroundSource2=gradientSource;
+            if(gradientColorOk)target.BackgroundColor2=GradientColorInput.Text;
+            if(gradientAngleOk)target.GradientAngle=Math.Clamp(gradientAngle,-360,360);
+            if(opacityOk)target.Opacity=Math.Clamp(opacity,0,1);
             target.LogoSide=logoSide;
             if(rotationOk)target.Rotation=Math.Clamp(rotation,-360,360);
             if(borderWidthOk)target.BorderThickness=Math.Clamp(borderWidth,0,40);
@@ -680,7 +840,6 @@ public partial class ScorebugEditorWindow : Window
         if(index<0||index==_catalog.ActiveDisplayIndex)return;
         ClearSelection();
         _catalog.SelectDisplay(index);
-        Fit_Click(this,new RoutedEventArgs());
     }
 
     void DisplayNew_Click(object sender,RoutedEventArgs e)
@@ -690,7 +849,6 @@ public partial class ScorebugEditorWindow : Window
         ClearSelection();
         _catalog.AddDisplay(name);
         Render();
-        Fit_Click(this,new RoutedEventArgs());
     }
 
     void DisplayRename_Click(object sender,RoutedEventArgs e)
@@ -868,6 +1026,63 @@ public partial class ScorebugEditorWindow : Window
         picker.Content=new DockPanel{Children={add,list}}; DockPanel.SetDock(add,Dock.Bottom); ThemeManager.Apply(picker,_theme); picker.ShowDialog();
     }
 
+    /// <summary>
+    /// Player data: a value read from whoever is selected for a side in the Rosters tab. Every
+    /// element added here follows the selection, so switching players reprints them all.
+    /// </summary>
+    void AddPlayerData_Click(object sender,RoutedEventArgs e)
+    {
+        var choices=new List<(string Label,string Token)>();
+        void Side(bool home,string label)
+        {
+            var prefix=home?"HOME":"AWAY";
+            var selected=home?_engine.State.HomePlayer:_engine.State.AwayPlayer;
+            var roster=RosterStore.Book.Find(home?_engine.State.HomeRosterId:_engine.State.AwayRosterId);
+            var who=selected is null?"none on the graphic"
+                :selected.Number>0?$"#{selected.Number} {selected.Name}":selected.Name;
+            foreach(var field in new[]{"Name","Number","Position"})
+                choices.Add(($"{label} · {field}  ({who})",$"{{{{PLAYER:{prefix}:{field}}}}}"));
+            var stats=(selected?.Stats.Select(s=>s.Name)??Enumerable.Empty<string>())
+                .Concat(roster?.StatNames()??[])
+                .Concat(RosterStore.Book.StatNames())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name=>name,StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foreach(var stat in stats)
+                choices.Add(($"{label} · {stat}  ({who})",$"{{{{PLAYER:{prefix}:{stat}}}}}"));
+        }
+        Side(true,"Selected player · home");
+        Side(false,"Selected player · visitors");
+
+        var picker=new Window{Title="Add player data",Width=470,Height=540,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
+        var list=new ListBox{ItemsSource=choices.Select(x=>x.Label).ToArray(),Margin=new Thickness(10,6,10,4)};
+        // The first value is ready to add, so the button never sits there doing nothing.
+        if(list.Items.Count>0)list.SelectedIndex=0;
+        var add=new Button{Content="Add selected data",IsDefault=true,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(0,0,10,10)};
+        (string Label,string Token)? chosen=null;
+        add.Click+=(_,_)=>{if(list.SelectedIndex<0)return;chosen=choices[list.SelectedIndex];picker.DialogResult=true;picker.Close();};
+        var hint=new TextBlock
+        {
+            Text="These follow the player selected for that side in the Rosters tab, so switching players reprints the element. To pin one exact player instead, add it and choose them under PLAYER DATA in the properties panel.",
+            TextWrapping=TextWrapping.Wrap,FontSize=10,Opacity=0.7,Margin=new Thickness(10,0,10,4)
+        };
+        var note=new TextBlock
+        {
+            Text="Need a value that is not listed? Add it as a stat column in the ROSTERS tab, or as a custom stat on the console — every one of those appears here.",
+            TextWrapping=TextWrapping.Wrap,FontSize=10,Opacity=0.7,Margin=new Thickness(10,0,10,8)
+        };
+        var intro=new TextBlock{Text="Pick the value this element prints. Name, Number and Position come with every roster; the rest are that team's stat columns.",TextWrapping=TextWrapping.Wrap,FontSize=11,Opacity=0.8,Margin=new Thickness(10,10,10,2)};
+        var bottom=new StackPanel();
+        bottom.Children.Add(hint); bottom.Children.Add(note); bottom.Children.Add(add);
+        var dock=new DockPanel{LastChildFill=true};
+        DockPanel.SetDock(bottom,Dock.Bottom);
+        DockPanel.SetDock(intro,Dock.Top);
+        dock.Children.Add(intro); dock.Children.Add(bottom); dock.Children.Add(list);
+        picker.Content=dock; ThemeManager.Apply(picker,_theme); picker.ShowDialog();
+        if(chosen is {} pick)
+            Add(new ScorebugElement{Name=pick.Label,Content=pick.Token,X=420,Y=470,TransparentBackground=true});
+    }
+
     /// <summary>A video box that only shows clips carrying its tag.</summary>
     void AddVideo_Click(object sender,RoutedEventArgs e)
     {
@@ -916,7 +1131,6 @@ public partial class ScorebugEditorWindow : Window
         if(width<320||height<240)return;
         _catalog.Resize(width,height);
         Render();
-        Fit_Click(this,new RoutedEventArgs());
     }
 
     void Add(ScorebugElement item)
@@ -1118,15 +1332,36 @@ public partial class ScorebugEditorWindow : Window
         if(picked is not null){target.Text=picked;SaveProperties();RefreshAllVisuals();}
     }
 
+    // ---------- the artwork backdrop ----------
+
+    void CanvasBackgroundGreen_Click(object sender,RoutedEventArgs e)=>SetCanvasBackground("#FF00B140");
+    void CanvasBackgroundBlack_Click(object sender,RoutedEventArgs e)=>SetCanvasBackground("#FF000000");
+    void CanvasBackground_Click(object sender,RoutedEventArgs e)
+    {
+        var picked=ColorPickerWindow.Pick(this,_catalog.Layout.Background);
+        if(picked is not null)SetCanvasBackground(picked);
+    }
+
+    /// <summary>Typing a valid colour repaints the backdrop as you go; half-typed hex is ignored.</summary>
+    void CanvasBackgroundInput_Changed(object sender,TextChangedEventArgs e)
+    {
+        if(_canvasLoading)return;
+        var text=CanvasBackgroundInput.Text.Trim();
+        if(TryColor(text,out _))SetCanvasBackground(text);
+    }
+
+    /// <summary>Sets the backdrop on this layout only, for the studio, the preview and the audience.</summary>
+    void SetCanvasBackground(string color)
+    {
+        if(string.Equals(_catalog.Layout.Background,color,StringComparison.OrdinalIgnoreCase))return;
+        // The catalog's Changed event repaints the studio, so the backdrop appears without a reopen.
+        _catalog.Update(layout=>layout.Background=color);
+    }
+
     void TextColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(ColorInput);
     void BackgroundColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(BackgroundInput);
     void BorderColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(BorderColorInput);
-    void Fit_Click(object sender,RoutedEventArgs e)
-    {
-        if(CanvasFrame.ActualWidth<10||CanvasFrame.ActualHeight<10)return;
-        var scale=Math.Min((CanvasFrame.ActualWidth-8)/_catalog.Layout.Width,(CanvasFrame.ActualHeight-8)/_catalog.Layout.Height);
-        CanvasScale.ScaleX=CanvasScale.ScaleY=Math.Clamp(scale,.2,1);
-    }
+    void GradientColor2_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(GradientColorInput);
     void Done_Click(object sender,RoutedEventArgs e)=>Close();
 
     // Enter inside a property field commits that value. It must never close the studio.

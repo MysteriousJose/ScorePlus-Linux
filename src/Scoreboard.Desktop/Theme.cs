@@ -16,6 +16,12 @@ public sealed class UserPreferences
     public string Theme { get; set; } = "Dark";
     public bool ShowHeadingHints { get; set; }
 
+    /// <summary>
+    /// How long the graphic holds an old value before printing the new one, in seconds. 0 is
+    /// instant. This is a show-wide timing choice, not a property of one element.
+    /// </summary>
+    public double ValueSwitchDelay { get; set; }
+
     /// <summary>The sport the operator last ran, so a launcher "New Game" opens the game they expect.</summary>
     public string LastSport { get; set; } = "football";
 
@@ -35,6 +41,7 @@ public sealed class UserPreferences
         Schema = Schema,
         Theme = Theme,
         ShowHeadingHints = ShowHeadingHints,
+        ValueSwitchDelay = ValueSwitchDelay,
         LastSport = LastSport,
         Media = [.. Media],
         Playlists = Playlists.Select(p => new MediaPlaylist { Name = p.Name, Loop = p.Loop, Paths = p.Paths.ToList() }).ToList(),
@@ -122,6 +129,14 @@ public static class ThemeManager
 
         window.Background = Brush(background);
         window.Foreground = Brush(foreground);
+        // The shared control styles read these. Setting them on the window means a button built
+        // later — a stepper, a rebuilt sport row, a dialog's extra action — still matches the theme
+        // instead of falling back to the startup shades.
+        window.Resources["OperatorPanelBrush"] = Brush(panel);
+        window.Resources["OperatorSurfaceBrush"] = Brush(surface);
+        window.Resources["OperatorInputBrush"] = Brush(input);
+        window.Resources["OperatorTextBrush"] = Brush(foreground);
+        window.Resources["OperatorBorderBrush"] = Brush(border);
 
         void ApplyTheme() => SetDescendants(window.Content as DependencyObject, panel, surface, foreground, input, border);
         window.Loaded += (_, _) => ApplyTheme();

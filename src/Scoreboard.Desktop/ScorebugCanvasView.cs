@@ -18,6 +18,8 @@ public sealed class ScorebugCanvasView : Grid
     readonly Canvas _canvas = new() { Background=new SolidColorBrush(Color.FromRgb(9,16,24)), ClipToBounds=true };
     readonly MediaPlayback? _playback;
     readonly bool _muteVideo;
+    // A silent monitor of the audience picture (not a preview), so it follows the on-air cue.
+    readonly bool _onAirVideo;
     readonly Dictionary<string, (FrameworkElement Host, FrameworkElement Content)> _visuals = [];
     // Keyed by element id so a rebuild can keep the surface (and the running picture) alive.
     readonly Dictionary<string, VideoSurface> _videoSurfaces = [];
@@ -25,6 +27,11 @@ public sealed class ScorebugCanvasView : Grid
     readonly Dictionary<string,string> _backgrounds = [];
     readonly Dictionary<string,bool> _transparentStates = [];
     readonly Dictionary<string,string> _borders = [];
+    // Value switch delay: what each element is currently printing, and the wait before a change
+    // lands. The operator sets the delay in Preferences; 0 prints instantly.
+    readonly Dictionary<string,string> _shownText = [];
+    readonly Dictionary<string,(string Target, System.Windows.Threading.DispatcherTimer Timer)> _pendingText = [];
+    bool _flushDelay;
     // Time-of-day text is not driven by the game clock, so it gets its own one-second pulse;
     // otherwise a layout with {{TIME}} freezes whenever no clock is running.
     readonly System.Windows.Threading.DispatcherTimer _wallClock = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -35,14 +42,16 @@ public sealed class ScorebugCanvasView : Grid
     /// actually published, not the one being designed in the preview.</param>
     /// <param name="layoutProvider">Draws exactly the layout this view belongs to (a specific
     /// display's on-air layout, or a window's staged one). Overrides <paramref name="publishedLayout"/>.</param>
-    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true, bool publishedLayout=false, Func<ScorebugLayout>? layoutProvider=null)
+    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true, bool publishedLayout=false, Func<ScorebugLayout>? layoutProvider=null, bool onAirVideo=false)
     {
         _catalog=catalog;_engine=engine;_live=stateProvider is null;
         _layoutProvider = layoutProvider ?? (publishedLayout ? () => _catalog.PublishedLayout : () => _catalog.Layout);
         _stateProvider=stateProvider??(()=>_engine.State);
-        _playback=playback;_muteVideo=muteVideo;
+        _playback=playback;_muteVideo=muteVideo;_onAirVideo=onAirVideo;
         Children.Add(new Viewbox { Stretch=Stretch.Uniform, Child=_canvas });
         _catalog.Changed+=Rebuild;
+        // A roster edit changes what a specific-player binding prints, without touching the game.
+        RosterStore.Changed+=UpdateValues;
         if(stateProvider is null)_engine.Changed+=UpdateValues;else _engine.Changed+=UpdateClockValues;
         _wallClock.Tick+=(_,_)=>{if(UsesWallClock())UpdateValues();};
         _wallClock.Start();
@@ -57,9 +66,12 @@ public sealed class ScorebugCanvasView : Grid
         if(!Dispatcher.CheckAccess()){Dispatcher.BeginInvoke(Rebuild);return;}
         var previousVideos=new Dictionary<string,VideoSurface>(_videoSurfaces);
         var previousVisuals=new Dictionary<string,(FrameworkElement Host, FrameworkElement Content)>(_visuals);
-        _videoSurfaces.Clear();_visuals.Clear();_animations.Clear();_backgrounds.Clear();_transparentStates.Clear();_borders.Clear();
+        foreach(var (id,_) in _pendingText) CancelPending(id);
+        _videoSurfaces.Clear();_visuals.Clear();_animations.Clear();_backgrounds.Clear();_transparentStates.Clear();_borders.Clear();_shownText.Clear();
         var layout = Layout;
         _canvas.Width=layout.Width;_canvas.Height=layout.Height;
+        // The artwork backdrop belongs to the layout, so a green-screen design and the studio agree.
+        _canvas.Background=ScorebugRender.ParseBrush(layout.Background);
         var live=new List<UIElement>();
         var zIndex=0;
         foreach(var item in layout.Elements)
@@ -70,7 +82,7 @@ public sealed class ScorebugCanvasView : Grid
             // decoder and re-opened the file, which is why editing the studio restarted playback.
             FrameworkElement content;
             if(previousVideos.TryGetValue(item.Id,out var surface)){surface.SetElement(item);content=surface;}
-            else content=ScorebugRender.CreateContent(item,_stateProvider,_playback,_muteVideo,showVideoPlaceholder:false);
+            else content=ScorebugRender.CreateContent(item,_stateProvider,_playback,_muteVideo,showVideoPlaceholder:false,onAirVideo:_onAirVideo);
             if(content is VideoSurface video) _videoSurfaces[item.Id]=video;
             // The host border is reused as well. Moving a MediaElement to a new parent takes it out
             // of the visual tree, which stops the decoder and restarts the picture from frame one:
@@ -82,6 +94,8 @@ public sealed class ScorebugCanvasView : Grid
             host.Visibility=item.Visible?Visibility.Visible:Visibility.Collapsed;
             Canvas.SetLeft(host,item.X);Canvas.SetTop(host,item.Y);Panel.SetZIndex(host,zIndex++);
             _visuals[item.Id]=(host,content);
+            // A rebuilt view starts from what it draws right now, so a delay never blanks the graphic.
+            if(content is ScorebugTextBlock shown) _shownText[item.Id]=shown.Text;
             if(!_canvas.Children.Contains(host))_canvas.Children.Add(host);
             live.Add(host);
             ApplyAnimation(item,host);
@@ -130,6 +144,18 @@ public sealed class ScorebugCanvasView : Grid
 
     public void Refresh()=>UpdateValues();
 
+    /// <summary>
+    /// Prints the newest values at once, skipping the switch delay. Used when the delay itself is
+    /// changed, so the new timing starts from what is actually on screen.
+    /// </summary>
+    public void ApplyNow()
+    {
+        if(!Dispatcher.CheckAccess()){Dispatcher.BeginInvoke(ApplyNow);return;}
+        foreach(var id in _pendingText.Keys.ToArray()) CancelPending(id);
+        _flushDelay=true;
+        try { UpdateValues(); } finally { _flushDelay=false; }
+    }
+
     void UpdateClockValues()
     {
         var state=_stateProvider();
@@ -159,7 +185,7 @@ public sealed class ScorebugCanvasView : Grid
             {
                 // Only touch the brush when the design or the palette changed; rebuilding brushes
                 // every tick made the output stutter.
-                var resolved=ScorebugRender.ResolveBackground(item,state);
+                var resolved=ScorebugRender.BackgroundSignature(item,state);
                 if(!_backgrounds.TryGetValue(item.Id,out var applied)||applied!=resolved||_transparentStates.GetValueOrDefault(item.Id)!=item.TransparentBackground)
                 {
                     hostBorder.Background=ScorebugRender.HostBackground(item,state);
@@ -184,7 +210,7 @@ public sealed class ScorebugCanvasView : Grid
             {
                 var text=ScoreboardTemplates.Bind(item.Content,state,item.PeriodFormat);
                 block.ApplyStyle(item,state);
-                block.UpdateText(text,item.Transition,item.TransitionSeconds);
+                ShowValue(item,block,text);
             }
             else if(visual.Content is ScorebugIconView icon)
             {
@@ -198,10 +224,52 @@ public sealed class ScorebugCanvasView : Grid
         }
     }
 
+    /// <summary>
+    /// Prints a value, or holds it for the show's switch delay first. While a value waits, newer
+    /// values replace the queued one, so the graphic always lands on the newest value in one step
+    /// rather than replaying a burst of stale numbers.
+    /// </summary>
+    void ShowValue(ScorebugElement item,ScorebugTextBlock block,string text)
+    {
+        var delay=DisplayTiming.ValueSwitchDelay;
+        if(_flushDelay||delay<=0||!double.IsFinite(delay))
+        {
+            CancelPending(item.Id);
+            block.UpdateText(text,item.Transition,item.TransitionSeconds);
+            _shownText[item.Id]=text;
+            return;
+        }
+        var shown=_shownText.GetValueOrDefault(item.Id,"");
+        if(text==shown){CancelPending(item.Id);return;}
+        if(_pendingText.TryGetValue(item.Id,out var pending))
+        {
+            // Already waiting: keep the newest target, leave the timer alone.
+            _pendingText[item.Id]=(text,pending.Timer);
+            return;
+        }
+        var timer=new System.Windows.Threading.DispatcherTimer{Interval=TimeSpan.FromSeconds(Math.Clamp(delay,0.05,10))};
+        timer.Tick+=(_,_)=>{
+            timer.Stop();
+            var latest=_pendingText.TryGetValue(item.Id,out var queued)?queued.Target:text;
+            _pendingText.Remove(item.Id);
+            block.UpdateText(latest,item.Transition,item.TransitionSeconds);
+            _shownText[item.Id]=latest;
+        };
+        _pendingText[item.Id]=(text,timer);
+        timer.Start();
+    }
+
+    void CancelPending(string id)
+    {
+        if(_pendingText.Remove(id,out var pending))pending.Timer.Stop();
+    }
+
     public void Dispose()
     {
         _wallClock.Stop();
+        foreach(var (id,_) in _pendingText.ToArray()) CancelPending(id);
         _catalog.Changed-=Rebuild;
+        RosterStore.Changed-=UpdateValues;
         if(_live)_engine.Changed-=UpdateValues;else _engine.Changed-=UpdateClockValues;
         foreach(var surface in _videoSurfaces.Values) surface.Dispose();
         _videoSurfaces.Clear();

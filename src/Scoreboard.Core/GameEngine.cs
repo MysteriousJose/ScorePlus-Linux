@@ -25,8 +25,18 @@ public sealed record SportDefinition(string Id, string Name, string Unit, int Pe
     };
 }
 
-/// <summary>A single user-defined statistic such as Turnovers or Penalties.</summary>
-public sealed record GameStat(string Id, string Name, int Value = 0);
+/// <summary>
+/// A single user-defined statistic such as Turnovers or Penalties. A stat is either a number (the
+/// steppers work on it) or any free text — "N/A", "3rd", "TBD" — which is what the graphic prints.
+/// </summary>
+public sealed record GameStat(string Id, string Name, int Value = 0, string? Text = null)
+{
+    /// <summary>What the graphic and the report show: the typed text when there is one.</summary>
+    public string Display => !string.IsNullOrWhiteSpace(Text) ? Text : Value.ToString();
+
+    /// <summary>True when the stat holds a number, so +/− may step it.</summary>
+    public bool IsNumber => string.IsNullOrWhiteSpace(Text);
+}
 
 public static class CommonStats
 {
@@ -95,6 +105,18 @@ public sealed class GameState
     public int HomeCorners { get; set; }
     public int AwayCorners { get; set; }
     public List<GameStat> Stats { get; set; } = [];
+    /// <summary>The roster each side draws players from, chosen in the Rosters tab.</summary>
+    public string? HomeRosterId { get; set; }
+    public string? AwayRosterId { get; set; }
+    /// <summary>The player currently on the graphic for each side, copied from the roster.</summary>
+    public SelectedPlayer? HomePlayer { get; set; }
+    public SelectedPlayer? AwayPlayer { get; set; }
+    /// <summary>
+    /// True when the operator deliberately put no player on the graphic for that side. Without
+    /// this, reloading a roster would quietly put its first player back up.
+    /// </summary>
+    public bool HomePlayerCleared { get; set; }
+    public bool AwayPlayerCleared { get; set; }
     public bool ClockRunning { get; set; }
     public bool ShotClockRunning { get; set; }
     public bool PlayClockRunning { get; set; }
@@ -380,9 +402,10 @@ public sealed class GameEngine
     {
         var stat = State.Stats.FirstOrDefault(s => s.Id == id); if (stat is null) return;
         SaveUndo(stat.Name); var index = State.Stats.IndexOf(stat);
-        var updated = stat with { Value = Math.Max(0, stat.Value + delta) };
+        // Stepping a stat makes it a number again, even if it was holding text.
+        var updated = stat with { Value = Math.Max(0, stat.Value + delta), Text = null };
         State.Stats[index] = updated;
-        Log(stat.Name, $"{updated.Name}: {updated.Value}"); Changed?.Invoke();
+        Log(stat.Name, $"{updated.Name}: {updated.Display}"); Changed?.Invoke();
     }
 
     /// <summary>Sets a custom stat to an exact value, for the typed override in the control panel.</summary>
@@ -390,17 +413,129 @@ public sealed class GameEngine
     {
         var stat = State.Stats.FirstOrDefault(s => s.Id == id); if (stat is null) return;
         var clamped = Math.Max(0, value);
-        if (stat.Value == clamped) return;
+        if (stat.Value == clamped && stat.IsNumber) return;
         SaveUndo(stat.Name); var index = State.Stats.IndexOf(stat);
-        var updated = stat with { Value = clamped };
+        var updated = stat with { Value = clamped, Text = null };
         State.Stats[index] = updated;
-        Log(stat.Name, $"{updated.Name}: {updated.Value}"); Changed?.Invoke();
+        Log(stat.Name, $"{updated.Name}: {updated.Display}"); Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Sets a custom stat to whatever the operator typed. A plain number becomes the stat's value
+    /// (so the steppers keep working); anything else is stored as text and prints as-is.
+    /// </summary>
+    public void SetStatText(string id, string text)
+    {
+        var stat = State.Stats.FirstOrDefault(s => s.Id == id); if (stat is null) return;
+        var trimmed = (text ?? "").Trim();
+        if (int.TryParse(trimmed, out var number))
+        {
+            number = Math.Max(0, number);
+            if (stat.IsNumber && stat.Value == number) return;
+            SaveUndo(stat.Name); var valueIndex = State.Stats.IndexOf(stat);
+            State.Stats[valueIndex] = stat with { Value = number, Text = null };
+        }
+        else
+        {
+            if (string.Equals(stat.Text ?? stat.Display, trimmed, StringComparison.Ordinal)) return;
+            SaveUndo(stat.Name); var textIndex = State.Stats.IndexOf(stat);
+            State.Stats[textIndex] = stat with { Text = trimmed };
+        }
+        Log(stat.Name, $"{stat.Name}: {trimmed}"); Changed?.Invoke();
     }
 
     public bool Undo()
     {
         if (_undo.Count == 0) return false;
         var snapshot = _undo.Pop(); State = snapshot.State; _lastTick = _watch.ElapsedTicks; Log("Undo", $"Undid {snapshot.Label}"); Changed?.Invoke(); return true;
+    }
+
+    // ---------- rosters ----------
+
+    /// <summary>Chooses which roster a side draws from. The current player is kept when it exists there.</summary>
+    public void AssignRoster(bool home, string? rosterId)
+    {
+        if ((home ? State.HomeRosterId : State.AwayRosterId) == rosterId) return;
+        SaveUndo(home ? "Home roster" : "Visitors roster");
+        if (home) State.HomeRosterId = rosterId; else State.AwayRosterId = rosterId;
+        // Picking a roster puts its first player up unless the operator clears them again.
+        if (home) State.HomePlayerCleared = false; else State.AwayPlayerCleared = false;
+        var roster = RosterStore.Book.Find(rosterId);
+        var previous = home ? State.HomePlayer : State.AwayPlayer;
+        var player = roster?.Find(previous?.PlayerId) ?? roster?.Players.FirstOrDefault();
+        ApplySelected(home, roster, player);
+        Log("Roster", roster is null
+            ? $"{(home ? State.HomeTeam : State.AwayTeam)} has no roster"
+            : $"{(home ? State.HomeTeam : State.AwayTeam)} roster: {roster.Name}");
+        Changed?.Invoke();
+    }
+
+    /// <summary>Puts one player on the graphic. Every "selected player" binding follows it.</summary>
+    public void SelectPlayer(bool home, string? playerId)
+    {
+        var roster = RosterStore.Book.Find(home ? State.HomeRosterId : State.AwayRosterId);
+        var player = roster?.Find(playerId);
+        if (player is null) return;
+        if ((home ? State.HomePlayer : State.AwayPlayer)?.PlayerId == player.Id && !(home ? State.HomePlayerCleared : State.AwayPlayerCleared)) return;
+        SaveUndo("Selected player");
+        if (home) State.HomePlayerCleared = false; else State.AwayPlayerCleared = false;
+        ApplySelected(home, roster, player);
+        Log("Player", $"{(home ? State.HomeTeam : State.AwayTeam)}: {player.Record}");
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Takes the player off the graphic for one side, so a player element prints nothing. The
+    /// choice survives roster edits and saving, until a player is selected again.
+    /// </summary>
+    public void ClearSelectedPlayer(bool home)
+    {
+        if ((home ? State.HomePlayerCleared : State.AwayPlayerCleared) && (home ? State.HomePlayer : State.AwayPlayer) is null) return;
+        SaveUndo("Selected player");
+        if (home) State.HomePlayerCleared = true; else State.AwayPlayerCleared = true;
+        ApplySelected(home, null, null);
+        Log("Player", $"{(home ? State.HomeTeam : State.AwayTeam)}: no player on the graphic");
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Re-reads both selected players from the library, so an edited name, number or stat reaches
+    /// the graphic without reselecting the player. Silent: callers announce the change they made.
+    /// </summary>
+    public void RefreshSelectedPlayers()
+    {
+        ResolveSelected(true);
+        ResolveSelected(false);
+    }
+
+    /// <summary>Re-reads one side's selected player from the library, keeping the same player by id.</summary>
+    void ResolveSelected(bool home)
+    {
+        var rosterId = home ? State.HomeRosterId : State.AwayRosterId;
+        if (string.IsNullOrWhiteSpace(rosterId)) { ApplySelected(home, null, null); return; }
+        var roster = RosterStore.Book.Find(rosterId);
+        // A game opened where the roster library is missing keeps the player it carries, so the
+        // graphic never goes blank just because the library moved with someone else.
+        if (roster is null) return;
+        // A deliberate "no player" is a choice, not an empty slot to fill in.
+        if (home ? State.HomePlayerCleared : State.AwayPlayerCleared) { ApplySelected(home, roster, null); return; }
+        var current = home ? State.HomePlayer : State.AwayPlayer;
+        var player = roster.Find(current?.PlayerId) ?? roster.Players.FirstOrDefault();
+        ApplySelected(home, roster, player);
+    }
+
+    /// <summary>Copies the roster entry into the game state. A null player clears the selection.</summary>
+    void ApplySelected(bool home, Roster? roster, RosterPlayer? player)
+    {
+        var snapshot = roster is not null && player is not null ? SelectedPlayer.From(roster, player) : null;
+        if (home) State.HomePlayer = snapshot; else State.AwayPlayer = snapshot;
+    }
+
+    /// <summary>Re-resolves the selected player after the roster was edited, keeping the game on air.</summary>
+    public void ReloadSelectedPlayer(bool home)
+    {
+        ResolveSelected(home);
+        Changed?.Invoke();
     }
 
     public void ResetGame()
@@ -422,6 +557,8 @@ public sealed class GameEngine
         State = JsonSerializer.Deserialize<GameState>(File.ReadAllText(path), JsonOptions) ?? new GameState();
         // Older saves could hold a spot past midfield; bring it back into the 0–50 range.
         State.YardsToGoal = Math.Clamp(State.YardsToGoal, 0, 50);
+        // Roster edits made since the file was written still reach the graphic on load.
+        RefreshSelectedPlayers();
         _undo.Clear(); _lastTick = _watch.ElapsedTicks; Changed?.Invoke();
     }
 
@@ -438,11 +575,17 @@ public sealed class GameEngine
         s.Balls, s.Strikes, s.Outs, s.HomeHits, s.AwayHits,
         s.HomeYards, s.AwayYards, s.HomeTurnovers, s.AwayTurnovers,
         s.HomeShots, s.AwayShots, s.HomeCorners, s.AwayCorners,
-        string.Join(",", s.Stats.Select(x => $"{x.Name}={x.Value}")));
+        string.Join(",", s.Stats.Select(x => $"{x.Name}={x.Display}")));
+
+    /// <summary>What the graphic reads from a selected player, compared by the live publish.</summary>
+    public static string PlayerSignature(SelectedPlayer? player) => player is null
+        ? "-"
+        : $"{player.PlayerId}:{player.Number}:{player.Name}:{player.Position}:" +
+          string.Join(",", player.Stats.Select(x => $"{x.Name}={x.Display}"));
 
     public string ExportJson() => JsonSerializer.Serialize(State, JsonOptions);
     public GameState CloneState() => JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(State, JsonOptions), JsonOptions)!;
-    public void LoadFromState(GameState state){State=JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state,JsonOptions),JsonOptions)!;_undo.Clear();_lastTick=_watch.ElapsedTicks;Changed?.Invoke();}
+    public void LoadFromState(GameState state){State=JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state,JsonOptions),JsonOptions)!;RefreshSelectedPlayers();_undo.Clear();_lastTick=_watch.ElapsedTicks;Changed?.Invoke();}
     public bool UpdateLiveScoreClock(GameState source)
     {
         if (State.HomeScore == source.HomeScore && State.AwayScore == source.AwayScore &&
@@ -455,7 +598,11 @@ public sealed class GameEngine
             State.ClockCountsUp == source.ClockCountsUp && State.ShotClockSeconds == source.ShotClockSeconds &&
             State.ShotClockRunning == source.ShotClockRunning &&
             State.PlayClockSeconds == source.PlayClockSeconds && State.PlayClockRunning == source.PlayClockRunning &&
-            State.TimeoutClockSeconds == source.TimeoutClockSeconds && State.TimeoutClockRunning == source.TimeoutClockRunning) return false;
+            State.TimeoutClockSeconds == source.TimeoutClockSeconds && State.TimeoutClockRunning == source.TimeoutClockRunning &&
+            // Player data is live too: a substitution on the roster desk reprints the graphic at once.
+            State.HomePlayerCleared == source.HomePlayerCleared && State.AwayPlayerCleared == source.AwayPlayerCleared &&
+            PlayerSignature(State.HomePlayer) == PlayerSignature(source.HomePlayer) &&
+            PlayerSignature(State.AwayPlayer) == PlayerSignature(source.AwayPlayer)) return false;
         State.HomeScore=source.HomeScore;State.AwayScore=source.AwayScore;
         State.HomeTeam=source.HomeTeam;State.AwayTeam=source.AwayTeam;
         State.HomeAbbreviation=source.HomeAbbreviation;State.AwayAbbreviation=source.AwayAbbreviation;
@@ -466,9 +613,17 @@ public sealed class GameEngine
         State.ShotClockSeconds=source.ShotClockSeconds;State.ShotClockRunning=source.ShotClockRunning;
         State.PlayClockSeconds=source.PlayClockSeconds;State.PlayClockRunning=source.PlayClockRunning;
         State.TimeoutClockSeconds=source.TimeoutClockSeconds;State.TimeoutClockRunning=source.TimeoutClockRunning;
+        State.HomePlayerCleared=source.HomePlayerCleared;State.AwayPlayerCleared=source.AwayPlayerCleared;
+        State.HomePlayer=CopyPlayer(source.HomePlayer);State.AwayPlayer=CopyPlayer(source.AwayPlayer);
         Changed?.Invoke();
         return true;
     }
+
+    /// <summary>A detached copy of a selected player, so the two engines never share a live object.</summary>
+    static SelectedPlayer? CopyPlayer(SelectedPlayer? player) => player is null
+        ? null
+        : JsonSerializer.Deserialize<SelectedPlayer>(JsonSerializer.Serialize(player, JsonOptions), JsonOptions)!;
+
     void SaveUndo(string label) { _undo.Push(new GameSnapshot(JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(State, JsonOptions), JsonOptions)!, label)); if (_undo.Count > 100) { var keep = _undo.Reverse().TakeLast(100).ToArray(); _undo.Clear(); foreach (var x in keep) _undo.Push(x); } }
     void Log(string type, string description) => State.Events.Add(new GameEvent(DateTimeOffset.Now, type, description, State.HomeScore, State.AwayScore));
     static string Abbreviate(string value) => string.Concat(value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(3).Select(s => char.ToUpperInvariant(s[0])));

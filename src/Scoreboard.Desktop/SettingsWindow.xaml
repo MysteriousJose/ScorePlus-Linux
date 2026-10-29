@@ -17,6 +17,14 @@
         <TextBlock Text="OPERATOR WORKFLOW" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
         <CheckBox x:Name="ShowHints" Content="Show tips next to headings (for example 'scoring, timing, actions')" Checked="Controls_Changed" Unchecked="Controls_Changed"/>
         <TextBlock Text="Off by default. Turning it on adds the small explanatory labels in the header, the media dock and the console cards." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,8"/>
+        <TextBlock Text="Value switch delay" Foreground="#93A0B2" FontSize="11" Margin="4,10,0,2"/>
+        <DockPanel Margin="4,0,4,0">
+          <TextBlock DockPanel.Dock="Right" Text="seconds · 0 is instant, 5 is the longest" VerticalAlignment="Center"
+                     Foreground="#93A0B2" FontSize="11" Margin="8,0,0,0"/>
+          <TextBox x:Name="DelayInput" Width="90" MinHeight="30" Padding="8,4" TextChanged="Delay_Changed"
+                   ToolTip="Any value from 0 to 5, for example 0.35"/>
+        </DockPanel>
+        <TextBlock Text="How long every graphic holds an old value before it switches to the new one. Type any value from 0 to 5; 0 prints instantly and is the default." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,8"/>
         <Separator/>
         <TextBlock Text="GAME SAFETY" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
         <Button x:Name="DeleteAutosavesButton" Content="Delete all autosaves" HorizontalAlignment="Left" MinHeight="32"

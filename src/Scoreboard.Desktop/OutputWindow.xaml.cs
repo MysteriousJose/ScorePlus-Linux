@@ -44,9 +44,14 @@ public partial class OutputWindow : Window
         _displayState.ShotClockSeconds=source.ShotClockSeconds;_displayState.ShotClockRunning=source.ShotClockRunning;
         _displayState.PlayClockSeconds=source.PlayClockSeconds;_displayState.PlayClockRunning=source.PlayClockRunning;
         _displayState.TimeoutClockSeconds=source.TimeoutClockSeconds;_displayState.TimeoutClockRunning=source.TimeoutClockRunning;
+        // Player data goes live with the score, so a substitution prints on air immediately.
+        _displayState.HomePlayerCleared=source.HomePlayerCleared;_displayState.AwayPlayerCleared=source.AwayPlayerCleared;
+        _displayState.HomePlayer=source.HomePlayer;_displayState.AwayPlayer=source.AwayPlayer;
         Update();_scorebugView.Refresh();
     }
     public void RefreshDisplay(){Update();_scorebugView.Refresh();}
+    /// <summary>Prints the newest values at once, used when the value switch delay changes.</summary>
+    public void RefreshGraphic(){Update();_scorebugView.ApplyNow();}
     // The audience window is intentionally never restyled by ThemeManager: a theme change must not recolor on-air graphics.
     public void SetBroadcastTheme(string theme){_broadcastTheme=theme;Update();}
     void Window_Loaded(object sender,RoutedEventArgs e){Update();_scorebugView.Refresh();}

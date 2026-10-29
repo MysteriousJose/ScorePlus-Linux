@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -791,6 +792,18 @@ internal static class Program
                 cueReset.Stage(replayClip);
                 if (cueReset.LivePosition > 0.001 || cueReset.Position > 0.001)
                     throw new Exception($"FAIL: a new cue resumed at the previous playhead ({cueReset.LivePosition:0.0}s)");
+                // The audience-view monitor is silent but on air: it keeps the live camera while a
+                // replay waits in the preview, exactly like a real audience window.
+                var monitorCue = new MediaPlayback();
+                monitorCue.Start(liveCamera);
+                monitorCue.Stage(replayClip);
+                var monitorElement = new ScorebugElement { Name = "Monitor", Kind = ScorebugElementKind.Video, MediaTag = "Camera" };
+                var airSurface = new VideoSurface(monitorElement, monitorCue, mute: true, onAir: true);
+                var previewSurface = new VideoSurface(monitorElement, monitorCue, mute: true);
+                if (airSurface.CurrentCue?.Path != liveCamera.Path)
+                    throw new Exception($"FAIL: the audience monitor followed the staged replay ({airSurface.CurrentCue?.Path})");
+                if (previewSurface.CurrentCue?.Path != replayClip.Path)
+                    throw new Exception("FAIL: the program preview stopped showing the staged replay");
                 Console.WriteLine("PASS: a replay stays in the preview until Start replay puts it on air");
 
                 // Cameras are offered by the name Windows knows them by, in device-index order, so
@@ -1280,6 +1293,17 @@ internal static class Program
                 var contextEditor = new ScorebugEditorWindow(contextCatalog, engine);
                 contextEditor.Show();
                 contextEditor.UpdateLayout();
+                // The studio must never open taller than the desktop: a window that runs past the
+                // bottom of the screen hides the lower edge of the artwork.
+                if (contextEditor.MaxHeight > SystemParameters.WorkArea.Height ||
+                    contextEditor.MaxWidth > SystemParameters.WorkArea.Width)
+                    throw new Exception($"FAIL: the studio can open past the work area ({contextEditor.MaxWidth:0}x{contextEditor.MaxHeight:0})");
+                // A maximized window reports the work area plus its resize border, which sits off
+                // the edge of the screen; anything more than that would put content below the desk.
+                if (contextEditor.Height > SystemParameters.WorkArea.Height + 40)
+                    throw new Exception($"FAIL: the studio opened {contextEditor.Height:0} tall on a {SystemParameters.WorkArea.Height:0} desktop");
+                if (contextEditor.WindowState != WindowState.Maximized)
+                    throw new Exception($"FAIL: the studio opened {contextEditor.WindowState} instead of full windowed");
                 var contextLayers = (ListBox)contextEditor.FindName("Layers")!;
                 var textIndex = contextCatalog.Layout.Elements.FindIndex(e => e.Kind == ScorebugElementKind.Text);
                 contextLayers.SelectedIndex = contextCatalog.Layout.Elements.Count - 1 - textIndex;
@@ -1308,6 +1332,51 @@ internal static class Program
                     throw new Exception($"FAIL: the element's quarter style was not saved ({chip.PeriodFormat})");
                 if (!FindAll<TextBlock>((Canvas)contextEditor.FindName("DesignCanvas")!).Any(t => t.Text == "1"))
                     throw new Exception("FAIL: the studio did not print the element's own quarter style");
+                // The artwork is scaled by a Viewbox, never by a transform the frame can outgrow, so
+                // the whole canvas fits the editing panel and every edge stays draggable.
+                var fitCanvas = (Canvas)contextEditor.FindName("DesignCanvas")!;
+                var fitFrame = (Border)contextEditor.FindName("CanvasFrame")!;
+                var inViewbox = false;
+                for (var ancestor = VisualTreeHelper.GetParent(fitCanvas); ancestor is not null; ancestor = VisualTreeHelper.GetParent(ancestor))
+                    if (ancestor is Viewbox) { inViewbox = true; break; }
+                if (!inViewbox)
+                    throw new Exception("FAIL: the studio canvas is not hosted in a Viewbox");
+                var fitBounds = fitCanvas.TransformToAncestor(fitFrame)
+                    .TransformBounds(new Rect(0, 0, fitCanvas.Width, fitCanvas.Height));
+                if (fitBounds.Width > fitFrame.ActualWidth + 1 || fitBounds.Height > fitFrame.ActualHeight + 1)
+                    throw new Exception($"FAIL: the studio canvas overflows its panel ({fitBounds.Width:0}x{fitBounds.Height:0} in {fitFrame.ActualWidth:0}x{fitFrame.ActualHeight:0})");
+                if (fitBounds.Width < fitFrame.ActualWidth * 0.5 || fitBounds.Height < fitFrame.ActualHeight * 0.5)
+                    throw new Exception("FAIL: the studio canvas is much smaller than the panel it should fill");
+
+                // Both artwork edges are reachable: an element placed flush at the top and at the
+                // bottom lands exactly on them, scaled with the canvas.
+                var edgeItem = contextCatalog.Layout.Elements[0];
+                var originalX = edgeItem.X;
+                var originalY = edgeItem.Y;
+                foreach (var y in new[] { 0d, contextCatalog.Layout.Height - edgeItem.Height })
+                {
+                    var targetY = y;
+                    contextCatalog.Update(layout =>
+                    {
+                        var item = layout.Elements.First(e => e.Id == edgeItem.Id);
+                        item.X = 0;
+                        item.Y = targetY;
+                    });
+                    contextEditor.UpdateLayout();
+                    var host = FindAll<Border>(fitCanvas).FirstOrDefault(b => ReferenceEquals(b.Tag, edgeItem))
+                        ?? throw new Exception("FAIL: the studio lost the element's canvas host");
+                    var hostBounds = host.TransformToAncestor(fitCanvas)
+                        .TransformBounds(new Rect(0, 0, host.ActualWidth, host.ActualHeight));
+                    var expected = targetY == 0 ? hostBounds.Top : fitCanvas.Height - hostBounds.Bottom;
+                    if (Math.Abs(expected) > 1)
+                        throw new Exception($"FAIL: an element flush at y={targetY:0} sits {expected:0}px from the artwork edge");
+                }
+                contextCatalog.Update(layout =>
+                {
+                    var item = layout.Elements.First(e => e.Id == edgeItem.Id);
+                    item.X = originalX;
+                    item.Y = originalY;
+                });
                 contextEditor.Close();
             }
             finally { if (File.Exists(contextPath)) File.Delete(contextPath); }
@@ -2033,6 +2102,442 @@ internal static class Program
                     throw new Exception("FAIL: Australian football shows the American down & distance card");
                 australian.Close();
                 Console.WriteLine("PASS: each sport brings its own rules and controls — American has down & distance and a touchdown button, Australian does not");
+            }
+
+            // ---------- rosters & stats: a third tab, per-side rosters, and player bindings ----------
+            var rosterFile = Path.Combine(Path.GetTempPath(), $"smoke-rosters-{Guid.NewGuid():N}.json");
+            var rosterLayoutPath = Path.Combine(Path.GetTempPath(), $"smoke-roster-layout-{Guid.NewGuid():N}.json");
+            RosterStore.UsePath(rosterFile);
+            try
+            {
+                var rosterEngine = new GameEngine();
+                rosterEngine.NewGame("football");
+                var homeRoster = RosterStore.Book.Add("Home squad");
+                var qb = homeRoster.AddPlayer(); qb.Number = 12; qb.Name = "Smith"; qb.Position = "QB";
+                var rb = homeRoster.AddPlayer(); rb.Number = 28; rb.Name = "Jones"; rb.Position = "RB";
+                foreach (var player in homeRoster.Players) player.SetStat("Yards", 0);
+                qb.SetStat("Yards", 184);
+                rb.SetStat("Yards", 96);
+                var visitorRoster = RosterStore.Book.Add("Visitors squad");
+                var wr = visitorRoster.AddPlayer(); wr.Number = 7; wr.Name = "Brown"; wr.Position = "WR"; wr.SetStat("Yards", 64);
+                RosterStore.Save();
+
+                var rosterWindow = new GameControlWindow(rosterEngine, () => { }, _ => { }, () => true);
+                rosterWindow.Show();
+                rosterWindow.UpdateLayout();
+                var rosterTab = rosterWindow.FindName("RosterTab") as Button
+                    ?? throw new Exception("FAIL: the control panel has no ROSTERS tab");
+                if ((rosterTab.Content as string) != "ROSTERS")
+                    throw new Exception($"FAIL: the third tab is labelled {rosterTab.Content}");
+                rosterWindow.ShowRosterTab(true);
+                rosterWindow.UpdateLayout();
+                if (rosterWindow.Tab != GameControlWindow.ConsoleTab.Rosters)
+                    throw new Exception($"FAIL: the roster tab did not open (showing {rosterWindow.Tab})");
+                var rosterDock = rosterWindow.FindName("RosterControl") as RosterDock
+                    ?? throw new Exception("FAIL: the control panel hosts no roster dock");
+                if (rosterDock.Visibility != Visibility.Visible || rosterWindow.Panel.IsVisible)
+                    throw new Exception("FAIL: the roster desk did not replace the console on the tab");
+
+                if (!rosterDock.ShowingHome || !rosterDock.ActivePanel.IsHome)
+                    throw new Exception("FAIL: the roster desk does not open on the home side");
+                var homePanel = rosterDock.ActivePanel;
+                var homeRosterBox = (ComboBox)homePanel.FindName("RosterBox")!;
+                if (homeRosterBox.Items.Count != 2)
+                    throw new Exception($"FAIL: the roster picker lists {homeRosterBox.Items.Count} rosters instead of 2");
+                homeRosterBox.SelectedIndex = 0;
+                rosterWindow.UpdateLayout();
+                if (rosterEngine.State.HomePlayer?.Name != "Smith")
+                    throw new Exception($"FAIL: picking the home roster left {rosterEngine.State.HomePlayer?.Name} on the graphic");
+                // The stat columns arrive with the roster, so nothing has to be named first.
+                if (homeRoster.Players[0].Stat("Passing yards") != 0 || !homeRoster.Players[0].Stats.Any(s => s.Name == "Tackles"))
+                    throw new Exception("FAIL: a player did not arrive with the sport's stat columns");
+
+                // The visitors are their own desk, reached with the side switch.
+                ((Button)rosterDock.FindName("AwaySideTab")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                rosterWindow.UpdateLayout();
+                if (rosterDock.ShowingHome || rosterDock.ActivePanel.IsHome)
+                    throw new Exception("FAIL: the visitors side tab did not switch the desk");
+                var awayPanel = rosterDock.ActivePanel;
+                ((ComboBox)awayPanel.FindName("RosterBox")!).SelectedIndex = 1;
+                rosterWindow.UpdateLayout();
+                if (rosterEngine.State.AwayPlayer?.Name != "Brown")
+                    throw new Exception($"FAIL: picking the visitors roster left {rosterEngine.State.AwayPlayer?.Name} on the graphic");
+                ((Button)rosterDock.FindName("HomeSideTab")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                rosterWindow.UpdateLayout();
+                homePanel = rosterDock.ActivePanel;
+
+                // The list feeds the editor; search filters it, and "Select player" switches the player.
+                var playerList = (ListBox)homePanel.FindName("PlayerList")!;
+                var search = (TextBox)homePanel.FindName("SearchInput")!;
+                search.Text = "Smith";
+                rosterWindow.UpdateLayout();
+                if (playerList.Items.Count != 1)
+                    throw new Exception($"FAIL: searching the roster left {playerList.Items.Count} rows");
+                search.Text = "";
+                rosterWindow.UpdateLayout();
+                playerList.SelectedIndex = 1;
+                rosterWindow.UpdateLayout();
+                FindAll<Button>(homePanel).First(b => (b.Content as string) == "Select player")
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                rosterWindow.UpdateLayout();
+                if (rosterEngine.State.HomePlayer?.Name != "Jones")
+                    throw new Exception($"FAIL: selecting a player left {rosterEngine.State.HomePlayer?.Name}");
+                if (rosterEngine.State.HomePlayer.Stat("Yards") != 96)
+                    throw new Exception("FAIL: the selected player did not carry their stats");
+                if (!FindAll<TextBlock>(homePanel).Any(t => t.Text.Contains("ON AIR")))
+                    throw new Exception("FAIL: the roster panel does not show who is on the graphic");
+                // A full stat sheet arrives with the roster, and the tab header carries the file actions.
+                if (homeRoster.Players[0].Stats.Count < 20)
+                    throw new Exception($"FAIL: a football player arrived with only {homeRoster.Players[0].Stats.Count} stat columns");
+                if (!FindAll<Button>(rosterDock).Any(b => (b.Content as string) == "Import…")
+                    || !FindAll<Button>(rosterDock).Any(b => (b.Content as string) == "Export…"))
+                    throw new Exception("FAIL: the roster tab has no Import…/Export… buttons");
+                // "No player" is a real choice: it must not quietly refill on the next roster refresh.
+                var noPlayer = FindAll<Button>(homePanel).FirstOrDefault(b => (b.Content as string) == "No player")
+                    ?? throw new Exception("FAIL: the roster desk has no No player button");
+                noPlayer.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                rosterWindow.UpdateLayout();
+                if (rosterEngine.State.HomePlayer is not null)
+                    throw new Exception($"FAIL: No player left {rosterEngine.State.HomePlayer.Name} on the graphic");
+                if (!FindAll<TextBlock>(homePanel).Any(t => t.Text.Contains("NO PLAYER ON THE GRAPHIC")))
+                    throw new Exception("FAIL: the desk does not say that nobody is on the graphic");
+                rosterEngine.ReloadSelectedPlayer(true);
+                rosterWindow.UpdateLayout();
+                if (rosterEngine.State.HomePlayer is not null)
+                    throw new Exception("FAIL: a cleared player came back on the next roster refresh");
+                FindAll<Button>(homePanel).First(b => (b.Content as string) == "Select player")
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                rosterWindow.UpdateLayout();
+                if (rosterEngine.State.HomePlayer?.Name != "Jones")
+                    throw new Exception($"FAIL: selecting a player after clearing left {rosterEngine.State.HomePlayer?.Name}");
+                // The desk paints itself in charcoal, not the older navy with white wells.
+                var listCard = FindAll<Border>(homePanel).FirstOrDefault(b => b.Background is SolidColorBrush s && s.Color == Color.FromRgb(36, 36, 36))
+                    ?? throw new Exception("FAIL: the roster desk is not painted in its charcoal palette");
+                var inputWell = FindAll<TextBox>(homePanel).FirstOrDefault() ?? throw new Exception("FAIL: the roster desk has no fields");
+                if (inputWell.Background is not SolidColorBrush well || well.Color != Color.FromRgb(25, 25, 25))
+                    throw new Exception($"FAIL: a roster field is not a dark input well ({inputWell.Background})");
+                if (listCard.ActualHeight <= 0) throw new Exception("FAIL: the roster list column did not lay out");
+
+                // The whole stat sheet is laid out as two compact columns, so it fills the desk
+                // instead of running down one long scrolling list.
+                var statCells = homePanel.FindName("StatsHost") as UniformGrid
+                    ?? throw new Exception("FAIL: the roster stat sheet is not a UniformGrid");
+                if (statCells.Columns != 2)
+                    throw new Exception($"FAIL: the roster stat sheet has {statCells.Columns} columns instead of 2");
+                if (statCells.Children.Count < 20)
+                    throw new Exception($"FAIL: the roster stat sheet only laid out {statCells.Children.Count} stats");
+
+                // The graphic itself follows the selected player, and switching players reprints it.
+                var rosterCatalog = new ScorebugCatalog(rosterLayoutPath);
+                rosterCatalog.Update(layout =>
+                {
+                    layout.Elements.Clear();
+                    layout.Elements.Add(new ScorebugElement { Name = "Player", Content = "{{PLAYER:HOME:Name}}", X = 20, Y = 20, Width = 600, Height = 90, FontSize = 40 });
+                    layout.Elements.Add(new ScorebugElement { Name = "Player yards", Content = "{{PLAYER:HOME:Yards}}", X = 20, Y = 140, Width = 300, Height = 90, FontSize = 40 });
+                });
+                var rosterView = new ScorebugCanvasView(rosterCatalog, rosterEngine);
+                rosterView.UpdateLayout();
+                if (!FindAll<TextBlock>(rosterView).Any(t => t.Text == "Jones") || !FindAll<TextBlock>(rosterView).Any(t => t.Text == "96"))
+                    throw new Exception("FAIL: the scorebug did not draw the selected player's name and stat");
+                rosterEngine.SelectPlayer(true, qb.Id);
+                rosterView.Rebuild();
+                rosterView.UpdateLayout();
+                if (FindAll<TextBlock>(rosterView).Any(t => t.Text == "Jones") || !FindAll<TextBlock>(rosterView).Any(t => t.Text == "Smith")
+                    || FindAll<TextBlock>(rosterView).Any(t => t.Text == "96") || !FindAll<TextBlock>(rosterView).Any(t => t.Text == "184"))
+                    throw new Exception("FAIL: switching the selected player did not reprint the player bindings");
+
+                // The studio offers the player data, and the main window carries the tab too.
+                var studio = new ScorebugEditorWindow(rosterCatalog, rosterEngine);
+                studio.Show();
+                studio.UpdateLayout();
+                if (!FindAll<Button>(studio).Any(b => (b.Content as string) == "Add player data"))
+                    throw new Exception("FAIL: the studio has no Add player data button");
+                studio.Close();
+                var rosterMain = new MainWindow();
+
+                rosterMain.Show();
+                rosterMain.UpdateLayout();
+                if (rosterMain.FindName("RosterTab") is not Button)
+                    throw new Exception("FAIL: the main window has no ROSTERS tab");
+                rosterMain.Close();
+
+                rosterWindow.Close();
+                Console.WriteLine("PASS: rosters are built per side in their own tab, and the selected player feeds every player binding on the graphic");
+            }
+            finally
+            {
+                RosterStore.UsePath(null);
+                RosterStore.Reload();
+                try { if (File.Exists(rosterFile)) File.Delete(rosterFile); } catch { }
+                try { if (File.Exists(rosterLayoutPath)) File.Delete(rosterLayoutPath); } catch { }
+            }
+
+            // ---------- gradient and opacity on a studio element ----------
+            var gradientStudioPath = Path.Combine(Path.GetTempPath(), $"smoke-gradient-{Guid.NewGuid():N}.json");
+            try
+            {
+                var gradientStudio = new ScorebugCatalog(gradientStudioPath);
+                gradientStudio.Update(layout =>
+                {
+                    layout.Elements.Clear();
+                    layout.Elements.Add(new ScorebugElement { Name = "Plate", X = 20, Y = 20, Width = 420, Height = 180, Background = "#FF102030" });
+                });
+                var gradientEditor = new ScorebugEditorWindow(gradientStudio, engine, null, "Dark");
+                gradientEditor.Show();
+                gradientEditor.UpdateLayout();
+                ((ListBox)gradientEditor.FindName("Layers")!).SelectedIndex = 0;
+                gradientEditor.UpdateLayout();
+                var opacityInput = (TextBox)gradientEditor.FindName("OpacityInput")!;
+                var gradientInput = (CheckBox)gradientEditor.FindName("GradientInput")!;
+                var gradientAngle = (TextBox)gradientEditor.FindName("GradientAngleInput")!;
+                var gradientColor = (TextBox)gradientEditor.FindName("GradientColorInput")!;
+                if (opacityInput is null || gradientAngle is null || gradientColor is null || !opacityInput.IsEnabled)
+                    throw new Exception("FAIL: the studio has no opacity or gradient controls for an element");
+                opacityInput.Text = "0.5";
+                gradientInput.IsChecked = true;
+                gradientAngle.Text = "90";
+                gradientColor.Text = "#FF0000FF";
+                Pump(TimeSpan.FromMilliseconds(700));
+                var plate = gradientStudio.Layout.Elements[0];
+                if (Math.Abs(plate.Opacity - 0.5) > 0.001 || !plate.BackgroundGradient
+                    || Math.Abs(plate.GradientAngle - 90) > 0.001 || plate.BackgroundColor2 != "#FF0000FF")
+                    throw new Exception($"FAIL: opacity/gradient did not reach the element ({plate.Opacity}, {plate.BackgroundGradient}, {plate.GradientAngle}, {plate.BackgroundColor2})");
+                var designCanvas = (Canvas)gradientEditor.FindName("DesignCanvas")!;
+                if (!FindAll<Border>(designCanvas).Any(b => b.Background is LinearGradientBrush))
+                    throw new Exception("FAIL: the studio canvas did not paint the gradient");
+                gradientEditor.Close();
+                Console.WriteLine("PASS: every studio item takes a gradient background and an opacity, and the canvas paints the gradient");
+            }
+            finally { try { if (File.Exists(gradientStudioPath)) File.Delete(gradientStudioPath); } catch { } }
+
+            // ---------- custom stats accept any text, straight from the console ----------
+            {
+                var textPanelEngine = new GameEngine();
+                textPanelEngine.NewGame("football");
+                var textPanel = new GameControlWindow(textPanelEngine, () => { }, _ => { }, () => true);
+                textPanel.Show();
+                textPanel.UpdateLayout();
+                var penalties = textPanelEngine.AddStat("Penalties");
+                textPanel.UpdateLayout();
+                var statHost = (WrapPanel)textPanel.Panel.FindName("StatsHost")!;
+                var statBoxes = FindAll<TextBox>(statHost).ToArray();
+                if (statBoxes.Length != 1)
+                    throw new Exception($"FAIL: the custom stat row has {statBoxes.Length} value boxes");
+                textPanelEngine.SetStatText(penalties.Id, "3rd");
+                textPanel.UpdateLayout();
+                if (statBoxes[0].Text != "3rd")
+                    throw new Exception($"FAIL: the console shows '{statBoxes[0].Text}' for a text stat");
+                // Typing free text into the middle box commits it.
+                statBoxes[0].RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, null, statBoxes[0]) { RoutedEvent = Keyboard.GotKeyboardFocusEvent });
+                statBoxes[0].Text = "N/A";
+                statBoxes[0].RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(textPanel), 0, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
+                textPanel.UpdateLayout();
+                if (textPanelEngine.State.Stats.Single().Display != "N/A")
+                    throw new Exception($"FAIL: typing text into a stat stored '{textPanelEngine.State.Stats.Single().Display}'");
+                if (statBoxes[0].Text != "N/A")
+                    throw new Exception("FAIL: the stat box did not keep the typed text");
+                textPanel.Close();
+                Console.WriteLine("PASS: custom stats on the console take any text, not only numbers");
+            }
+
+            // ---------- studio: the artwork backdrop and pinning one player ----------
+            {
+                var backdropPath = Path.Combine(Path.GetTempPath(), $"smoke-backdrop-{Guid.NewGuid():N}.json");
+                try
+                {
+                    var backdropCatalog = new ScorebugCatalog(backdropPath);
+                    var backdropEngine = new GameEngine();
+                    backdropEngine.NewGame("football");
+                    RosterStore.Book.Rosters.Clear();
+                    var studioRoster = RosterStore.Book.Add("Studio roster");
+                    backdropEngine.AssignRoster(true, studioRoster.Id);
+                    var pinned = studioRoster.AddPlayer();
+                    pinned.Number = 12; pinned.Name = "Pinned"; pinned.Position = "QB"; pinned.SetStat("Passing yards", 111);
+                    var onAir = studioRoster.AddPlayer();
+                    onAir.Number = 7; onAir.Name = "On air"; onAir.Position = "RB"; onAir.SetStat("Passing yards", 222);
+                    RosterStore.Save();
+                    backdropEngine.SelectPlayer(true, onAir.Id);
+                    backdropCatalog.Update(layout =>
+                    {
+                        layout.Elements.Clear();
+                        layout.Elements.Add(new ScorebugElement { Name = "Name", Content = "{{PLAYER:HOME:Name}}", X = 20, Y = 20, Width = 320, Height = 60 });
+                    });
+                    var backdropStudio = new ScorebugEditorWindow(backdropCatalog, backdropEngine, null, "Dark") { Width = 1500, Height = 900 };
+                    backdropStudio.Show();
+                    backdropStudio.UpdateLayout();
+                    // The backdrop is part of the layout, so it also paints the preview and the audience.
+                    var backdropInput = (TextBox)backdropStudio.FindName("CanvasBackgroundInput")!;
+                    var backdropSwatch = (Border)backdropStudio.FindName("CanvasBackgroundSwatch")!;
+                    backdropInput.Text = "#FF112233";
+                    backdropStudio.UpdateLayout();
+                    Pump(TimeSpan.FromMilliseconds(120));
+                    if (backdropCatalog.Layout.Background != "#FF112233")
+                        throw new Exception($"FAIL: typing a backdrop left the layout at '{backdropCatalog.Layout.Background}'");
+                    if (backdropSwatch.Background is not SolidColorBrush typedSwatch || typedSwatch.Color != Color.FromRgb(0x11, 0x22, 0x33))
+                        throw new Exception("FAIL: the backdrop swatch does not show the chosen colour");
+                    FindAll<Button>(backdropStudio).First(b => (b.Content as string) == "Black")
+                        .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    backdropStudio.UpdateLayout();
+                    if (backdropCatalog.Layout.Background != "#FF000000")
+                        throw new Exception($"FAIL: the Black backdrop button left '{backdropCatalog.Layout.Background}'");
+                    // Player data: pin the player who is NOT on the graphic.
+                    ((ListBox)backdropStudio.FindName("Layers")!).SelectedIndex = 0;
+                    backdropStudio.UpdateLayout();
+                    var playerPick = (ComboBox)backdropStudio.FindName("PlayerPickInput")!;
+                    var playerField = (ComboBox)backdropStudio.FindName("PlayerFieldInput")!;
+                    playerPick.SelectedItem = playerPick.Items.OfType<object>().First(item => item.ToString()!.Contains("Pinned"));
+                    playerField.SelectedItem = playerField.Items.OfType<object>().First(item => item.ToString() == "Passing yards");
+                    Pump(TimeSpan.FromMilliseconds(900));
+                    var bound = backdropCatalog.Layout.Elements[0].Content;
+                    if (!bound.Contains($"id:{pinned.Id}") || !bound.Contains("Passing yards"))
+                        throw new Exception($"FAIL: pinning a player wrote '{bound}'");
+                    if (ScoreboardTemplates.Bind(bound, backdropEngine.State) != "111")
+                        throw new Exception($"FAIL: a pinned player printed '{ScoreboardTemplates.Bind(bound, backdropEngine.State)}' instead of 111");
+                    if (ScoreboardTemplates.Bind("{{PLAYER:HOME:Passing yards}}", backdropEngine.State) != "222")
+                        throw new Exception("FAIL: the follow-the-desk binding stopped reading the selected player");
+                    // The player-data pickers belong to text only.
+                    backdropCatalog.Update(layout => layout.Elements.Add(new ScorebugElement
+                    {
+                        Name = "Box", Kind = ScorebugElementKind.Shape, X = 400, Y = 300, Width = 200, Height = 100
+                    }));
+                    backdropStudio.UpdateLayout();
+                    ((ListBox)backdropStudio.FindName("Layers")!).SelectedIndex = 0;
+                    backdropStudio.UpdateLayout();
+                    if (((StackPanel)backdropStudio.FindName("PlayerDataSection")!).Visibility != Visibility.Collapsed)
+                        throw new Exception("FAIL: a shape still shows the player-data pickers");
+                    backdropStudio.Close();
+                    Console.WriteLine("PASS: the studio sets the artwork backdrop, and a player element can pin one player from the roster");
+                }
+                finally { try { if (File.Exists(backdropPath)) File.Delete(backdropPath); } catch { } }
+            }
+
+            // ---------- sport profiles: start one from scratch ----------
+            {
+                var newSportEngine = new GameEngine();
+                var sportWindow = new SportProfileWindow(newSportEngine.Sports);
+                sportWindow.Show();
+                sportWindow.UpdateLayout();
+                var customBefore = newSportEngine.Sports.Custom.Count;
+                var newProfile = FindAll<Button>(sportWindow).FirstOrDefault(b => (b.Content as string) == "New profile")
+                    ?? throw new Exception("FAIL: sport profiles cannot be started from scratch");
+                newProfile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                sportWindow.UpdateLayout();
+                if (newSportEngine.Sports.Custom.Count != customBefore + 1)
+                    throw new Exception("FAIL: New profile did not create a custom sport");
+                var createdSport = newSportEngine.Sports.Custom[^1];
+                if (createdSport.Name != "New sport" || createdSport.HasShotClock || createdSport.ScoringOptions.Length == 0)
+                    throw new Exception($"FAIL: a from-scratch profile starts as '{createdSport.Name}' / shot clock {createdSport.HasShotClock}");
+                var shotClock = (CheckBox)sportWindow.FindName("ShotClockInput")!;
+                shotClock.IsChecked = true;
+                FindAll<Button>(sportWindow).First(b => (b.Content as string) == "Save profile")
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                sportWindow.UpdateLayout();
+                if (newSportEngine.Sports.Find(createdSport.Id)?.HasShotClock != true)
+                    throw new Exception("FAIL: the shot clock setting did not save on a custom profile");
+                sportWindow.Close();
+                Console.WriteLine("PASS: a sport profile can be created from scratch, including its shot clock");
+            }
+
+            // ---------- launch: the main window opens locked behind the launcher ----------
+            {
+                var cold = new MainWindow(waitForLaunch: true) { Width = 1280, Height = 800 };
+                cold.Show();
+                cold.UpdateLayout();
+                var coldRoot = (DockPanel)cold.FindName("Root")!;
+                if (coldRoot.IsEnabled)
+                    throw new Exception("FAIL: the workspace is usable before a game is chosen");
+                if (cold.Engine.State.HomeScore != 0 || cold.Engine.State.AwayScore != 0)
+                    throw new Exception("FAIL: a cold launch already holds a game");
+                // The theme pass used to wipe the selected tab's outline on the first load.
+                var firstTab = (Button)cold.FindName("ControlTab")!;
+                if (firstTab.BorderBrush is not SolidColorBrush tabBorder || tabBorder.Color != Color.FromRgb(0x38, 0xD7, 0xA3))
+                    throw new Exception($"FAIL: the active tab lost its outline on first load ({firstTab.BorderBrush})");
+                cold.StartFromLauncher(LaunchMode.New, null);
+                cold.UpdateLayout();
+                if (!coldRoot.IsEnabled)
+                    throw new Exception("FAIL: choosing New Game left the workspace locked");
+                if (cold.Engine.State.HomeScore != 0 || cold.Engine.State.AwayScore != 0
+                    || cold.Engine.State.Period != 1 || cold.Engine.State.Events.Count != 0)
+                    throw new Exception($"FAIL: a fresh game from the launcher is not a blank slate ({cold.Engine.State.HomeScore}-{cold.Engine.State.AwayScore}, period {cold.Engine.State.Period}, {cold.Engine.State.Events.Count} events)");
+                cold.Close();
+                Console.WriteLine("PASS: the main window opens locked behind the launch box, keeps its tab outline, and starts blank");
+            }
+
+            // ---------- program preview: the audience monitor shows what is on air ----------
+            {
+                var monitorMain = new MainWindow(LaunchMode.New) { Width = 1280, Height = 800 };
+                monitorMain.Show();
+                monitorMain.UpdateLayout();
+                var monitor = monitorMain.AudienceMonitor ?? throw new Exception("FAIL: the program preview has no audience monitor");
+                var staged = monitorMain.Scorebug.AddLayout("Staged only");
+                if (staged <= 0) throw new Exception($"FAIL: a second layout was not added (index {staged})");
+                monitorMain.Scorebug.Update(layout => layout.Elements.Add(new ScorebugElement
+                {
+                    Name = "Staged", Content = "STAGED ONLY", X = 40, Y = 40, Width = 400, Height = 80, FontSize = 40
+                }));
+                monitorMain.ShiftLayout(1);
+                monitorMain.UpdateLayout();
+                Pump(TimeSpan.FromMilliseconds(250));
+                if (FindAll<TextBlock>((DependencyObject)monitor).Any(t => t.Text == "STAGED ONLY"))
+                    throw new Exception("FAIL: the audience monitor showed a staged layout that is not on air");
+                monitorMain.PublishOutput();
+                monitorMain.UpdateLayout();
+                Pump(TimeSpan.FromMilliseconds(250));
+                if (!FindAll<TextBlock>((DependencyObject)monitor).Any(t => t.Text == "STAGED ONLY"))
+                    throw new Exception("FAIL: the audience monitor did not follow the layout after Update Output");
+                if (monitor.Layout is null || monitor.Layout.Id != monitorMain.Scorebug.PublishedLayoutOf(monitor.DisplayId).Id)
+                    throw new Exception("FAIL: the audience monitor is not drawing the published layout");
+                monitorMain.Close();
+                Console.WriteLine("PASS: the audience monitor mirrors the published display and only changes on Update Output");
+            }
+
+            // ---------- preferences: value switch delay, default 0 ----------
+            {
+                var delayPrefs = new UserPreferences();
+                if (delayPrefs.ValueSwitchDelay != 0)
+                    throw new Exception($"FAIL: the value switch delay defaults to {delayPrefs.ValueSwitchDelay}");
+                var delayWindow = new SettingsWindow(delayPrefs);
+                delayWindow.Show();
+                delayWindow.UpdateLayout();
+                var delayBox = (TextBox)delayWindow.FindName("DelayInput")!;
+                if (delayBox.Text != "0")
+                    throw new Exception($"FAIL: the delay field starts on '{delayBox.Text}'");
+                // Any value in 0–5 is accepted, not just an item from a fixed list.
+                delayBox.Text = "0.35";
+                FindAll<Button>(delayWindow).First(b => (b.Content as string) == "Save").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                if (Math.Abs(delayPrefs.ValueSwitchDelay - 0.35) > 0.001 || Math.Abs(DisplayTiming.ValueSwitchDelay - 0.35) > 0.001)
+                    throw new Exception($"FAIL: saving a 0.35 s delay left {delayPrefs.ValueSwitchDelay}/{DisplayTiming.ValueSwitchDelay}");
+
+                // A graphic holds the old value for the delay, then prints the new one in one step.
+                var delayPath = Path.Combine(Path.GetTempPath(), $"smoke-delay-{Guid.NewGuid():N}.json");
+                try
+                {
+                    var delayCatalog = new ScorebugCatalog(delayPath);
+                    delayCatalog.Update(layout =>
+                    {
+                        layout.Elements.Clear();
+                        layout.Elements.Add(new ScorebugElement { Name = "Score", Content = "{{HOME_SCORE}}", X = 0, Y = 0, Width = 240, Height = 90, FontSize = 40 });
+                    });
+                    var delayEngine = new GameEngine();
+                    delayEngine.NewGame("football");
+                    var delayView = new ScorebugCanvasView(delayCatalog, delayEngine);
+                    delayView.UpdateLayout();
+                    delayEngine.Score(true, 7);
+                    delayView.UpdateLayout();
+                    if (FindAll<TextBlock>(delayView).Any(t => t.Text == "7"))
+                        throw new Exception("FAIL: the delay printed the new value immediately");
+                    Pump(TimeSpan.FromMilliseconds(1300));
+                    if (!FindAll<TextBlock>(delayView).Any(t => t.Text == "7"))
+                        throw new Exception("FAIL: the delayed value never landed");
+                    DisplayTiming.ValueSwitchDelay = 0;
+                    delayEngine.Score(true, 8);
+                    delayView.UpdateLayout();
+                    if (!FindAll<TextBlock>(delayView).Any(t => t.Text == "15"))
+                        throw new Exception("FAIL: with the delay back at 0 the value did not print at once (score should read 15)");
+                }
+                finally { try { if (File.Exists(delayPath)) File.Delete(delayPath); } catch { } }
+                DisplayTiming.Apply(new UserPreferences());
+                Console.WriteLine("PASS: the value switch delay is a preference, defaults to 0, and holds a graphic's value for the chosen time");
             }
 
             Console.WriteLine("ALL UI SMOKE CHECKS PASSED");

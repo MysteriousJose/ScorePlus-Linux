@@ -42,7 +42,7 @@
     </Style>
   </Window.Resources>
 
-  <DockPanel>
+  <DockPanel x:Name="Root">
     <Border DockPanel.Dock="Top" Background="#171C25" Padding="14,7">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -97,6 +97,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
 
           <DockPanel Margin="0,0,0,6">
@@ -126,6 +127,12 @@
           </DockPanel>
 
           <ContentControl x:Name="PreviewHost" Grid.Row="3" VerticalAlignment="Top"/>
+
+          <!-- What the audience is actually watching: the published layout, on a display of
+               its own choice, smaller than the staged preview above it. -->
+          <Border Grid.Row="4" Background="#171C25" CornerRadius="9" Padding="10,8" Margin="0,8,0,0" Height="190">
+            <ContentControl x:Name="AudienceHost"/>
+          </Border>
         </Grid>
       </Border>
 
@@ -140,10 +147,13 @@
         <StackPanel Orientation="Horizontal">
           <Button x:Name="ControlTab" Style="{StaticResource TabButton}" Content="CONTROL PANEL" Click="ControlTab_Click"/>
           <Button x:Name="MediaTab" Style="{StaticResource TabButton}" Content="MEDIA" Click="MediaTab_Click" ToolTip="Clips, camera, replay and playlists"/>
+          <Button x:Name="RosterTab" Style="{StaticResource TabButton}" Content="ROSTERS" Click="RosterTab_Click"
+                  ToolTip="Team rosters, player stats and the player on the graphic"/>
         </StackPanel>
         <Grid Grid.Row="1">
           <ContentControl x:Name="ControlHost"/>
           <local:MediaDock x:Name="MediaControl" Visibility="Collapsed"/>
+          <local:RosterDock x:Name="RosterControl" Visibility="Collapsed"/>
         </Grid>
       </Grid>
     </Grid>

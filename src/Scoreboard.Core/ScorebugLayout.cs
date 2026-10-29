@@ -115,6 +115,18 @@ public sealed class ScorebugElement
     /// <summary>Where the background comes from. A team slot wins over <see cref="Background"/>.</summary>
     public ScorebugColorSource BackgroundSource { get; set; } = ScorebugColorSource.Custom;
 
+    /// <summary>Paint the background as a two-stop gradient instead of one flat colour.</summary>
+    public bool BackgroundGradient { get; set; }
+
+    /// <summary>The gradient's second colour, used unless <see cref="BackgroundSource2"/> names a team slot.</summary>
+    public string BackgroundColor2 { get; set; } = "#CC101820";
+
+    /// <summary>Where the gradient's second colour comes from. A team slot wins over <see cref="BackgroundColor2"/>.</summary>
+    public ScorebugColorSource BackgroundSource2 { get; set; } = ScorebugColorSource.Custom;
+
+    /// <summary>Gradient direction in degrees: 0 runs left to right, 90 top to bottom.</summary>
+    public double GradientAngle { get; set; }
+
     public bool TransparentBackground { get; set; }
     public double Opacity { get; set; } = 1;
     public bool Visible { get; set; } = true;
@@ -164,6 +176,13 @@ public sealed class ScorebugLayout
     /// <summary>Design canvas size in pixels. Elements are positioned in this space and scaled to fit any output.</summary>
     public int Width { get; set; } = 1280;
     public int Height { get; set; } = 720;
+
+    /// <summary>
+    /// The colour behind this layout's artwork — the studio canvas, the previews and the audience
+    /// output all paint it. Broadcast green (#FF00B140) turns the same layout into a chroma-key
+    /// source; black, white or any other colour is set in the studio's canvas bar.
+    /// </summary>
+    public string Background { get; set; } = "#FF091018";
 
     public static readonly (string Name, int Width, int Height)[] SizePresets =
     [
@@ -470,6 +489,7 @@ public sealed class ScorebugCatalog
                 layout.Width = (int)Math.Clamp(layout.Width, 320, 7680);
                 layout.Height = (int)Math.Clamp(layout.Height, 240, 7680);
                 if (string.IsNullOrWhiteSpace(layout.Name)) layout.Name = "Untitled layout";
+                if (!IsColor(layout.Background)) layout.Background = "#FF091018";
                 foreach (var item in layout.Elements)
                 {
                     item.X = Math.Clamp(double.IsFinite(item.X) ? item.X : 0, 0, layout.Width);
@@ -482,7 +502,9 @@ public sealed class ScorebugCatalog
                     item.BorderThickness = Math.Clamp(double.IsFinite(item.BorderThickness) ? item.BorderThickness : 0, 0, 40);
                     item.TransitionSeconds = Math.Clamp(double.IsFinite(item.TransitionSeconds) ? item.TransitionSeconds : 0.2, 0, 5);
                     item.VideoAspect = Math.Clamp(double.IsFinite(item.VideoAspect) && item.VideoAspect > 0.05 ? item.VideoAspect : 16.0 / 9.0, 0.1, 10);
+                    item.GradientAngle = Math.Clamp(double.IsFinite(item.GradientAngle) ? item.GradientAngle : 0, -360, 360);
                     if (string.IsNullOrWhiteSpace(item.BorderColor)) item.BorderColor = "#FFFFFFFF";
+                    if (string.IsNullOrWhiteSpace(item.BackgroundColor2)) item.BackgroundColor2 = "#CC101820";
                     if (item.PeriodFormat is not ("Full" or "Short" or "Number")) item.PeriodFormat = null;
                     if (string.IsNullOrWhiteSpace(item.FontFamily)) item.FontFamily = "Segoe UI";
                 }
@@ -512,6 +534,14 @@ public sealed class ScorebugCatalog
                 }
             }
         }
+    }
+
+    /// <summary>#RGB, #ARGB, #RRGGBB or #AARRGGBB, so a bad entry can never blank the canvas.</summary>
+    static bool IsColor(string? value)
+    {
+        var text = (value ?? "").Trim();
+        if (text.Length < 4 || text[0] != '#') return false;
+        return text[1..].Length is 3 or 4 or 6 or 8 && text[1..].All(Uri.IsHexDigit);
     }
 
     /// <summary>Re-sizes the layout being designed and scales every element with it, so a 720p design survives a move to 4K.</summary>

@@ -232,3 +232,171 @@ Check(playClock.State.PlayClockSeconds<=1&&playClock.State.PlayClockRunning,"the
 Thread.Sleep(1250);playClock.Tick();
 Check(playClock.State.PlayClockSeconds==0&&!playClock.State.PlayClockRunning,"the play clock reaches zero and stops there");
 Check(ScoreboardTemplates.Bind("{{PLAY_CLOCK}}",playClock.State)=="0","the graphic prints zero when the play clock expires");
+
+// ---------- rosters, player stats and the selected player on the graphic ----------
+var rosterPath=Path.Combine(Path.GetTempPath(),$"rosters-{Guid.NewGuid():N}.json");
+RosterStore.UsePath(rosterPath);
+try
+{
+    var book=RosterStore.Book;
+    var home=RosterStore.Book.Add("Home squad");
+    var away=RosterStore.Book.Add("Visitors squad");
+    var qb=home.AddPlayer(); qb.Number=12; qb.Name="Smith"; qb.Position="QB";
+    var rb=home.AddPlayer(); rb.Number=28; rb.Name="Jones"; rb.Position="RB";
+    foreach(var player in home.Players){player.SetStat("Yards",0);player.SetStat("Touchdowns",0);}
+    qb.SetStat("Yards",184); qb.SetStat("Touchdowns",2);
+    rb.SetStat("Yards",96); rb.SetStat("Touchdowns",1);
+    var wr=away.AddPlayer(); wr.Number=7; wr.Name="Brown"; wr.Position="WR"; wr.SetStat("Yards",64);
+    RosterStore.Save();
+    var savedBook=new RosterBook();
+    RosterStore.Reload();
+    Check(RosterStore.All().Count==2&&RosterStore.Book.Find(home.Id)?.Players.Count==2&&RosterStore.Book.Find(home.Id)!.Find(qb.Id)!.Stat("yards")==184,"a roster library saves players, numbers, positions and stats to disk");
+    Check(RosterStore.Book.StatNames().SequenceEqual(["Touchdowns","Yards"]),"the library collects every stat name for the studio");
+
+    var rosterEngine=new GameEngine();
+    rosterEngine.NewGame("football");
+    rosterEngine.AssignRoster(true,home.Id);
+    rosterEngine.AssignRoster(false,away.Id);
+    Check(rosterEngine.State.HomePlayer?.Number==12&&rosterEngine.State.AwayPlayer?.Name=="Brown","assigning a roster puts its first player on the graphic");
+    Check(ScoreboardTemplates.Bind("{{PLAYER:HOME:Name}} #{{PLAYER:HOME:NUMBER}} {{PLAYER:HOME:Position}}",rosterEngine.State)=="Smith #12 QB","player tokens print the selected player's name, number and position");
+    Check(ScoreboardTemplates.Bind("{{PLAYER:HOME:Yards}} yds · {{PLAYER:HOME:Touchdowns}} TD",rosterEngine.State)=="184 yds · 2 TD","player stat tokens print the selected player's stats");
+    Check(ScoreboardTemplates.Bind("{{PLAYER:AWAY:stat:yards}}",rosterEngine.State)=="64","player stat tokens accept the Stat: prefix and any case");
+    Check(ScoreboardTemplates.Bind("{{PLAYER:HOME:Missing}}",rosterEngine.State)==""&&ScoreboardTemplates.Bind("{{PLAYER:AWAY:Name}}",new GameEngine().State)=="","a missing stat or a side with no player renders empty");
+
+    var beforeSelect=GameEngine.StagedSignature(rosterEngine.State);
+    rosterEngine.SelectPlayer(true,rb.Id);
+    Check(ScoreboardTemplates.Bind("{{PLAYER:HOME:Name}} {{PLAYER:HOME:Yards}}",rosterEngine.State)=="Jones 96","selecting another player switches every selected-player binding");
+    Check(GameEngine.StagedSignature(rosterEngine.State)==beforeSelect,"a player switch does not wait for Update Output: player data publishes live");
+    var livePlayerTarget=new GameEngine();
+    livePlayerTarget.LoadFromState(rosterEngine.CloneState());
+    rosterEngine.SelectPlayer(true,qb.Id);
+    Check(livePlayerTarget.UpdateLiveScoreClock(rosterEngine.State)&&livePlayerTarget.State.HomePlayer?.Name=="Smith","live publishing carries a player switch straight to the graphic");
+    rosterEngine.SelectPlayer(true,rb.Id);
+    Check(rosterEngine.Undo()&&ScoreboardTemplates.Bind("{{PLAYER:HOME:Name}}",rosterEngine.State)=="Smith","a player switch can be undone");
+
+    var liveNamesTarget=new GameEngine();
+    liveNamesTarget.LoadFromState(rosterEngine.CloneState());
+    rosterEngine.SetTeams("Home Squad","Visitors Squad");
+    liveNamesTarget.UpdateLiveScoreClock(rosterEngine.State);
+    Check(liveNamesTarget.State.HomePlayer?.Name=="Smith","renaming teams live leaves the selected players alone");
+
+    // Editing the roster entry reaches the graphic without reselecting.
+    var savedAgain=RosterStore.Book.Find(home.Id)!.Find(qb.Id)!;
+    savedAgain.Name="Smithson"; savedAgain.SetStat("Yards",201);
+    rosterEngine.SelectPlayer(true,qb.Id);
+    rosterEngine.ReloadSelectedPlayer(true);
+    Check(ScoreboardTemplates.Bind("{{PLAYER:HOME:Name}} {{PLAYER:HOME:Yards}}",rosterEngine.State)=="Smithson 201","editing a player updates the graphic without reselecting them");
+
+    var rosterGame=Path.Combine(Path.GetTempPath(),$"roster-game-{Guid.NewGuid():N}.spg");
+    rosterEngine.Save(rosterGame);
+    var rosterLoaded=new GameEngine();
+    rosterLoaded.Load(rosterGame);
+    Check(rosterLoaded.State.HomeRosterId==home.Id&&rosterLoaded.State.AwayPlayer?.Name=="Brown"&&ScoreboardTemplates.Bind("{{PLAYER:HOME:Name}}",rosterLoaded.State)=="Smithson","a saved game keeps its rosters and selected players");
+    File.Delete(rosterGame);
+
+    rosterLoaded.NewGame("football");
+    Check(rosterLoaded.State.HomePlayer is null&&rosterLoaded.State.HomeRosterId is null&&RosterStore.All().Count==2,"a new game clears the selections but keeps the roster library");
+}
+finally { RosterStore.UsePath(null); try { if(File.Exists(rosterPath)) File.Delete(rosterPath); } catch { } }
+
+// ---------- custom stats can hold any text ----------
+var textStatEngine=new GameEngine();textStatEngine.NewGame("football");
+var textStat=textStatEngine.AddStat("Penalties");
+var textBefore=GameEngine.StagedSignature(textStatEngine.State);
+textStatEngine.SetStatText(textStat.Id,"3rd");
+Check(textStatEngine.State.Stats.Single().Display=="3rd"&&textStatEngine.State.Stats.Single().Text=="3rd","a custom stat keeps free text instead of only a number");
+Check(ScoreboardTemplates.Bind("{{STAT:Penalties}}",textStatEngine.State)=="3rd","a text stat prints on the graphic exactly as typed");
+Check(GameReport.Build(textStatEngine.State).Contains("Penalties: 3rd"),"a text stat appears in the game report");
+Check(GameEngine.StagedSignature(textStatEngine.State)!=textBefore,"a text stat waits for Update Output like any other value");
+textStatEngine.SetStatText(textStat.Id,"412");
+Check(textStatEngine.State.Stats.Single().Value==412&&textStatEngine.State.Stats.Single().Text is null&&textStatEngine.State.Stats.Single().Display=="412","numeric text becomes the stat's number again");
+textStatEngine.AdjustStat(textStat.Id,1);
+Check(textStatEngine.State.Stats.Single().Value==413&&textStatEngine.State.Stats.Single().IsNumber,"stepping a stat works after it held text");
+var textStatGame=Path.Combine(Path.GetTempPath(),$"text-stat-{Guid.NewGuid():N}.spg");
+textStatEngine.SetStatText(textStat.Id,"N/A");textStatEngine.Save(textStatGame);
+var textStatLoaded=new GameEngine();textStatLoaded.Load(textStatGame);
+Check(ScoreboardTemplates.Bind("{{STAT:Penalties}}",textStatLoaded.State)=="N/A","a text stat persists in a saved game");
+File.Delete(textStatGame);
+
+// ---------- gradient and opacity on every studio element ----------
+var gradientPath=Path.Combine(Path.GetTempPath(),$"gradient-{Guid.NewGuid():N}.json");
+try
+{
+    var gradientCatalog=new ScorebugCatalog(gradientPath);
+    gradientCatalog.Update(layout=>layout.Elements.Add(new ScorebugElement
+    {
+        Name="Gradient plate",BackgroundGradient=true,Background="#FF102030",BackgroundColor2="#FF405060",
+        BackgroundSource2=ScorebugColorSource.AwayPrimary,GradientAngle=45,Opacity=0.6
+    }));
+    var gradientReloaded=new ScorebugCatalog(gradientPath).Layout.Elements[^1];
+    Check(gradientReloaded.BackgroundGradient&&gradientReloaded.BackgroundColor2=="#FF405060"
+        &&gradientReloaded.BackgroundSource2==ScorebugColorSource.AwayPrimary
+        &&Math.Abs(gradientReloaded.GradientAngle-45)<0.001&&Math.Abs(gradientReloaded.Opacity-0.6)<0.001,
+        "a gradient background and element opacity persist in the layout");
+    gradientCatalog.Update(layout=>{layout.Elements[^1].GradientAngle=900;layout.Elements[^1].Opacity=3;});
+    var clampedGradient=new ScorebugCatalog(gradientPath).Layout.Elements[^1];
+    Check(clampedGradient.GradientAngle==360&&clampedGradient.Opacity==1,"gradient angle and opacity are clamped to safe ranges");
+}
+finally{if(File.Exists(gradientPath))File.Delete(gradientPath);}
+
+// ---------- player stat columns arrive with the player ----------
+var presetRoster=Roster.Create("Preset check");
+var presetPlayer=presetRoster.AddPlayer();
+var presetColumns=PlayerStatPresets.For("football");
+Check(presetColumns.Contains("Passing yards")&&presetColumns.Contains("Tackles"),"each sport ships with its own player stat columns");
+Check(presetRoster.EnsureColumns(presetColumns),"giving a roster its columns reports the columns it added");
+Check(presetPlayer.Stats.Select(s=>s.Name).SequenceEqual(presetColumns),"a new player starts with every stat column already in place");
+Check(!presetRoster.EnsureColumns(presetColumns),"adding the same columns twice changes nothing");
+presetPlayer.SetStat("Tackles",7);
+presetRoster.EnsureColumns(PlayerStatPresets.For("basketball"));
+Check(presetPlayer.Stat("Tackles")==7&&presetPlayer.Stat("Rebounds")==0,"switching sports adds columns without losing a value");
+
+// ---------- .spr / .spp roster and player files ----------
+var exportPath=Path.Combine(Path.GetTempPath(),$"export-{Guid.NewGuid():N}.spr");
+var playerPath=Path.Combine(Path.GetTempPath(),$"export-{Guid.NewGuid():N}.spp");
+try
+{
+    var shared=Roster.Create("Shared squad");
+    var one=shared.AddPlayer(); one.Number=9; one.Name="Ada"; one.Position="QB"; one.SetStat("Yards",250);
+    var two=shared.AddPlayer(); two.Number=4; two.Name="Bea"; two.Position="WR"; two.SetStat("Yards",80);
+    RosterFiles.SaveRoster(exportPath,shared);
+    var readBack=RosterFiles.LoadRoster(exportPath);
+    Check(readBack is not null&&readBack.Name=="Shared squad"&&readBack.Players.Count==2
+        &&readBack.Players[0].Name=="Ada"&&readBack.Players[0].Stat("Yards")==250,
+        "a .spr file round trips the roster, its players and their stats");
+    Check(readBack!.Id!=shared.Id&&readBack.Players[0].Id!=one.Id,"an imported roster and its players get fresh ids");
+    RosterFiles.SavePlayer(playerPath,two,"Shared squad");
+    var readPlayer=RosterFiles.LoadPlayer(playerPath);
+    Check(readPlayer is not null&&readPlayer.Name=="Bea"&&readPlayer.Number==4&&readPlayer.Stat("Yards")==80,
+        "a .spp file round trips one player");
+    Check(RosterFiles.LoadRoster(playerPath) is null,"a player file is not mistaken for a roster file");
+    File.WriteAllText(playerPath,"not a roster");
+    Check(RosterFiles.LoadPlayer(playerPath) is null,"a damaged file loads as nothing instead of throwing");
+}
+finally
+{
+    if(File.Exists(exportPath))File.Delete(exportPath);
+    if(File.Exists(playerPath))File.Delete(playerPath);
+}
+
+// ---------- every sport arrives with a full stat sheet ----------
+foreach(var sport in SportDefinition.BuiltIns)
+{
+    var columns=PlayerStatPresets.For(sport.Id);
+    Check(columns.Count>=20,"a sport ships with at least twenty player stat columns ("+sport.Id+" has "+columns.Count+")");
+    Check(columns.Distinct(StringComparer.OrdinalIgnoreCase).Count()==columns.Count,"a sport's stat columns are unique ("+sport.Id+")");
+}
+
+// ---------- no player on the graphic is a choice ----------
+var clearEngine=new GameEngine();clearEngine.NewGame("football");
+var clearRoster=RosterStore.Book.Add("Clear check");
+clearEngine.AssignRoster(true,clearRoster.Id);
+var someone=clearRoster.AddPlayer();someone.Number=3;someone.Name="Someone";
+clearEngine.SelectPlayer(true,someone.Id);
+Check(clearEngine.State.HomePlayer?.Name=="Someone","selecting a player puts them on the graphic");
+clearEngine.ClearSelectedPlayer(true);
+Check(clearEngine.State.HomePlayer is null&&clearEngine.State.HomePlayerCleared,"clearing takes the player off the graphic");
+clearEngine.ReloadSelectedPlayer(true);
+Check(clearEngine.State.HomePlayer is null,"a cleared player stays cleared when the roster is reloaded");
+clearEngine.SelectPlayer(true,someone.Id);
+Check(clearEngine.State.HomePlayer?.Name=="Someone"&&!clearEngine.State.HomePlayerCleared,"selecting again puts a player back");

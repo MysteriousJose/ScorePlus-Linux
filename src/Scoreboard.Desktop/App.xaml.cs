@@ -20,13 +20,11 @@ public partial class App : Application
         };
         base.OnStartup(e);
 
-        // The launcher keeps the process alive until it decides which window to open.
+        // The main window opens first and stays locked behind the launch box, so the operator can
+        // see the workspace they are about to load into before choosing a game.
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        var launcher = new LauncherWindow();
-        if (launcher.ShowDialog() != true) { Shutdown(); return; }
-
         MainWindow window;
-        try { window = new MainWindow(launcher.Mode, launcher.GamePath); }
+        try { window = new MainWindow(waitForLaunch: true); }
         catch (Exception ex)
         {
             LogCrash(ex);
@@ -36,6 +34,10 @@ public partial class App : Application
         }
         window.Closed += (_, _) => Shutdown();
         window.Show();
+
+        var launcher = new LauncherWindow { Owner = window };
+        if (launcher.ShowDialog() != true) { window.Close(); return; }
+        window.StartFromLauncher(launcher.Mode, launcher.GamePath);
     }
 
     /// <summary>Appends a timestamped error to <c>%LOCALAPPDATA%\ScorePlus\logs\errors.log</c>.</summary>

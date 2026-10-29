@@ -16,8 +16,13 @@ public partial class GameControlWindow : Window
     readonly GameEngine _engine;
     ScorebugCatalog? _catalog;
     ScorebugCanvasView? _preview;
+    AudiencePreview? _audience;
+    bool _tabHook;
     bool _displaySync;
-    bool _showingMedia;
+    ConsoleTab _tab = ConsoleTab.Control;
+
+    /// <summary>The three desks a control window carries: console, media and rosters.</summary>
+    public enum ConsoleTab { Control, Media, Rosters }
 
     public ControlPanelView Panel { get; }
 
@@ -26,6 +31,9 @@ public partial class GameControlWindow : Window
 
     /// <summary>The media dock in this window; every panel shares one session but keeps its own view.</summary>
     public MediaDock Media => MediaControl;
+
+    /// <summary>The roster desk in this window; every panel shares one roster library.</summary>
+    public RosterDock Rosters => RosterControl;
 
     public event Action? NewPanelRequested;
 
@@ -42,6 +50,7 @@ public partial class GameControlWindow : Window
         if (host is DelegateHost detached) detached.NewPanel = () => NewPanelRequested?.Invoke();
         Panel = new ControlPanelView(engine, host);
         PanelHost.Content = Panel;
+        RosterControl.Attach(engine);
         ProgramStrip.Visibility = Visibility.Collapsed;
         AttachMedia(media);
         ApplyTheme(PreferencesStore.Load().Theme);
@@ -61,16 +70,20 @@ public partial class GameControlWindow : Window
         Program = new ProgramSelection(catalog);
         _preview = new ScorebugCanvasView(catalog, previewEngine, playback: media?.Playback, layoutProvider: () => Program!.Layout);
         PreviewHost.Content = _preview;
+        // The monitor reads the published engine and layout, so it reflects a real audience window.
+        _audience = new AudiencePreview(catalog, previewEngine, media?.Playback, Program.DisplayId);
+        AudienceHost.Content = _audience;
         var host = new WindowHost(Program, publishGameState, hasStagedGame, setLiveScoreClock, getLiveScoreClock, () => NewPanelRequested?.Invoke());
         Panel = new ControlPanelView(engine, host);
         PanelHost.Content = Panel;
         Program.Changed += ProgramChanged;
         catalog.Changed += CatalogChanged;
+        RosterControl.Attach(engine);
         AttachMedia(media);
         ApplyTheme(theme);
         SyncDisplayPicker();
         ProgramChanged();
-        ShowTab(media: false);
+        ShowTab(ConsoleTab.Control);
     }
 
     void AttachMedia(MediaSession? media)
@@ -84,12 +97,29 @@ public partial class GameControlWindow : Window
     public void ApplyTheme(string theme)
     {
         ThemeManager.Apply(this, theme);
+        // The theme pass repaints buttons; the selected tab keeps its green outline on top.
+        if (ControlTab is not null) ApplyTabVisuals();
+        if (!_tabHook)
+        {
+            _tabHook = true;
+            Loaded += (_, _) => ApplyTabVisuals();
+        }
         MediaControl.ApplyTheme(theme);
+        RosterControl.ApplyTheme(theme);
         // In a tab the dock has the full panel width, so its buttons are the size of the console's.
         MediaControl.SetLargeMode(true);
     }
 
+    public void SetHintVisibility(bool show)
+    {
+        Panel.SetHintVisibility(show);
+        RosterControl.SetHintVisibility(show);
+    }
+
     public void SyncLiveState(bool live) => Panel.SyncLiveState(live);
+
+    /// <summary>Repaints the program preview with the newest values, skipping any switch delay.</summary>
+    public void RefreshPreview() => _preview?.ApplyNow();
 
     public void Execute(string actionId) => Panel.Execute(actionId);
 
@@ -148,29 +178,50 @@ public partial class GameControlWindow : Window
     // ---------- tabs ----------
 
     /// <summary>Switches this panel between the console and the media desk.</summary>
-    public void ShowMediaTab(bool media) => ShowTab(media);
+    public void ShowMediaTab(bool media) => ShowTab(media ? ConsoleTab.Media : ConsoleTab.Control);
 
-    void ControlTab_Click(object sender, RoutedEventArgs e) => ShowTab(media: false);
+    public void ShowRosterTab(bool rosters) => ShowTab(rosters ? ConsoleTab.Rosters : ConsoleTab.Control);
 
-    void MediaTab_Click(object sender, RoutedEventArgs e) => ShowTab(media: true);
+    /// <summary>Which desk this window is showing, for the checks and for restoring a view.</summary>
+    public ConsoleTab Tab => _tab;
 
-    /// <summary>Switches between the console and the media desk; both fill the same pane.</summary>
-    void ShowTab(bool media)
+    void ControlTab_Click(object sender, RoutedEventArgs e) => ShowTab(ConsoleTab.Control);
+
+    void MediaTab_Click(object sender, RoutedEventArgs e) => ShowTab(ConsoleTab.Media);
+
+    void RosterTab_Click(object sender, RoutedEventArgs e) => ShowTab(ConsoleTab.Rosters);
+
+    /// <summary>Switches between the console, the media desk and the roster desk; all fill one pane.</summary>
+    void ShowTab(ConsoleTab tab)
     {
-        _showingMedia = media;
-        PanelHost.Visibility = media ? Visibility.Collapsed : Visibility.Visible;
-        MediaControl.Visibility = media ? Visibility.Visible : Visibility.Collapsed;
+        _tab = tab;
+        PanelHost.Visibility = tab == ConsoleTab.Control ? Visibility.Visible : Visibility.Collapsed;
+        MediaControl.Visibility = tab == ConsoleTab.Media ? Visibility.Visible : Visibility.Collapsed;
+        RosterControl.Visibility = tab == ConsoleTab.Rosters ? Visibility.Visible : Visibility.Collapsed;
+        ApplyTabVisuals();
+        if (tab == ConsoleTab.Media) MediaControl.RefreshView();
+        if (tab == ConsoleTab.Rosters) RosterControl.RefreshView();
+    }
+
+    /// <summary>
+    /// Paints the selected tab. The theme pass repaints every button when the window loads, so the
+    /// outline has to be restored after it or the first tab shows no outline until it is clicked.
+    /// </summary>
+    void ApplyTabVisuals()
+    {
         var on = (Brush)new BrushConverter().ConvertFromString("#123C33")!;
         var off = (Brush)new BrushConverter().ConvertFromString("#141A23")!;
         var onBorder = (Brush)new BrushConverter().ConvertFromString("#38D7A3")!;
         var offBorder = (Brush)new BrushConverter().ConvertFromString("#28323F")!;
-        ControlTab.Background = media ? off : on;
-        ControlTab.BorderBrush = media ? offBorder : onBorder;
-        ControlTab.Foreground = media ? (Brush)new BrushConverter().ConvertFromString("#93A0B2")! : Brushes.White;
-        MediaTab.Background = media ? on : off;
-        MediaTab.BorderBrush = media ? onBorder : offBorder;
-        MediaTab.Foreground = media ? Brushes.White : (Brush)new BrushConverter().ConvertFromString("#93A0B2")!;
-        if (media) MediaControl.RefreshView();
+        var muted = (Brush)new BrushConverter().ConvertFromString("#93A0B2")!;
+        Button[] tabs = [ControlTab, MediaTab, RosterTab];
+        var active = (int)_tab;
+        for (var i = 0; i < tabs.Length; i++)
+        {
+            tabs[i].Background = i == active ? on : off;
+            tabs[i].BorderBrush = i == active ? onBorder : offBorder;
+            tabs[i].Foreground = i == active ? Brushes.White : muted;
+        }
     }
 
     void Undo_Click(object sender, RoutedEventArgs e) => Panel.Execute("global.undo");

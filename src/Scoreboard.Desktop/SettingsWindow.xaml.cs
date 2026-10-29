@@ -1,9 +1,13 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using Scoreboard.Core;
 namespace Scoreboard.Desktop;
 public partial class SettingsWindow : Window
 {
+    /// <summary>The longest switch delay the graphic accepts, in seconds.</summary>
+    const double MaxDelay = 5;
+
     readonly UserPreferences _original;
     readonly UserPreferences _draft;
     bool _loading = true;
@@ -17,6 +21,7 @@ public partial class SettingsWindow : Window
         ThemeSelector.ItemsSource = new[] { "Dark", "Light" };
         ThemeSelector.SelectedItem = _draft.Theme;
         ShowHints.IsChecked = _draft.ShowHeadingHints;
+        DelayInput.Text = _draft.ValueSwitchDelay.ToString("0.##", CultureInfo.CurrentCulture);
         _loading = false;
     }
 
@@ -29,6 +34,17 @@ public partial class SettingsWindow : Window
     {
         if (_loading || ShowHints is null) return;
         _draft.ShowHeadingHints = ShowHints.IsChecked == true;
+    }
+
+    /// <summary>
+    /// Any value the operator types is used as-is inside 0–5, so 0.35 s is a real answer rather
+    /// than the nearest item in a fixed list. Half-typed text ("", "0.") leaves the draft alone.
+    /// </summary>
+    void Delay_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading || DelayInput is null) return;
+        if (!double.TryParse(DelayInput.Text.Trim(), NumberStyles.Float, CultureInfo.CurrentCulture, out var seconds)) return;
+        _draft.ValueSwitchDelay = Math.Clamp(seconds, 0, MaxDelay);
     }
 
     /// <summary>Clears every recovery point; a second click confirms, so one tap cannot wipe them.</summary>
@@ -61,7 +77,9 @@ public partial class SettingsWindow : Window
     {
         _original.Theme = _draft.Theme;
         _original.ShowHeadingHints = _draft.ShowHeadingHints;
+        _original.ValueSwitchDelay = Math.Clamp(_draft.ValueSwitchDelay, 0, MaxDelay);
         PreferencesStore.Save(_original);
+        DisplayTiming.Apply(_original);
         // DialogResult is only valid for a modal dialog; the window may also be shown modelessly.
         if (System.Windows.Interop.ComponentDispatcher.IsThreadModal) DialogResult = true;
         Close();

@@ -430,13 +430,14 @@ public partial class ControlPanelView : UserControl
         }
         StatsEmpty.Visibility = stats.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var stat in stats)
-            if (_statValues.TryGetValue(stat.Id, out var value)) value.Value = stat.Value;
+            if (_statValues.TryGetValue(stat.Id, out var value)) value.Text = stat.Display;
     }
 
     /// <summary>Custom stats use the same add-above / value / subtract-below shape as scores, two per row.</summary>
     FrameworkElement BuildStatRow(GameStat stat)
     {
-        var stepper = new Stepper(stat.Name, 18) { Width = 104, Margin = new Thickness(0, 0, 4, 4) };
+        // A custom stat accepts any text, not just a number: "N/A", "3rd" and "TBD" are all values.
+        var stepper = new Stepper(stat.Name, 18) { Width = 104, Margin = new Thickness(0, 0, 4, 4), AcceptText = true };
         stepper.SetButtons
         (
             [new("＋ 1", 1, null, $"{stat.Name} +1")],
@@ -444,7 +445,8 @@ public partial class ControlPanelView : UserControl
         );
         stepper.Stepped += button => _engine.AdjustStat(stat.Id, button.Delta);
         stepper.Committed += value => _engine.SetStat(stat.Id, value);
-        stepper.Value = stat.Value;
+        stepper.TextCommitted += text => _engine.SetStatText(stat.Id, text);
+        stepper.Text = stat.Display;
 
         var host = new Grid { Width = 110, Margin = new Thickness(0, 0, 4, 2), ToolTip = $"Remove {stat.Name}" };
         host.Children.Add(stepper);

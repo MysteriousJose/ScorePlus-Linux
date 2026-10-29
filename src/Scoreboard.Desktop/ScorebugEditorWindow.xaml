@@ -57,6 +57,8 @@
           <Button Content="Add logo" Style="{StaticResource ToolButton}" Click="AddLogo_Click"/>
           <Button Content="Add shape" Style="{StaticResource ToolButton}" Click="AddShape_Click"/>
           <Button Content="Add sport data" Style="{StaticResource ToolButton}" Click="AddData_Click"/>
+          <Button Content="Add player data" Style="{StaticResource ToolButton}" Click="AddPlayerData_Click"
+                  ToolTip="A value from the player currently on the graphic, set in the Rosters tab"/>
           <Button Content="Add video" Style="{StaticResource ToolButton}" Click="AddVideo_Click"/>
           <Button Content="Remove" Style="{StaticResource ToolButton}" Click="Remove_Click" ToolTip="Delete the selected element"/>
         </StackPanel>
@@ -169,21 +171,47 @@
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <DockPanel Margin="4,0,0,10">
-          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-            <ComboBox x:Name="CanvasPreset" Width="170" FontSize="11" SelectedIndex="0" ToolTip="Canvas size presets" SelectionChanged="CanvasPreset_Changed"/>
-            <TextBox x:Name="CanvasWidthInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip="Canvas width in pixels"/>
-            <TextBox x:Name="CanvasHeightInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip="Canvas height in pixels"/>
-            <Button Content="Resize" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasResize_Click" ToolTip="Scale the whole layout into this canvas size"/>
-          </StackPanel>
-          <TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2" VerticalAlignment="Center"/>
-        </DockPanel>
-        <Border Grid.Row="1" x:Name="CanvasFrame" Background="#091018" ClipToBounds="True" MouseMove="Canvas_MouseMove" MouseLeftButtonUp="Canvas_MouseUp">
-          <Canvas x:Name="DesignCanvas" Width="1280" Height="720" Background="#091018" RenderTransformOrigin="0,0">
-            <Canvas.LayoutTransform>
-              <ScaleTransform x:Name="CanvasScale" ScaleX="0.55" ScaleY="0.55"/>
-            </Canvas.LayoutTransform>
-          </Canvas>
+        <StackPanel Margin="4,0,0,10">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <ComboBox x:Name="CanvasPreset" Width="170" FontSize="11" SelectedIndex="0" ToolTip="Canvas size presets" SelectionChanged="CanvasPreset_Changed"/>
+              <TextBox x:Name="CanvasWidthInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip="Canvas width in pixels"/>
+              <TextBox x:Name="CanvasHeightInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip="Canvas height in pixels"/>
+              <Button Content="Resize" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasResize_Click" ToolTip="Scale the whole layout into this canvas size"/>
+            </StackPanel>
+            <TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2" VerticalAlignment="Center"/>
+          </DockPanel>
+          <!-- The artwork backdrop: it shows in the studio, the previews and the audience output. -->
+          <DockPanel Margin="0,8,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button Content="Green screen" FontSize="11" Padding="8,4" Click="CanvasBackgroundGreen_Click"
+                      ToolTip="Set the artwork backdrop to broadcast green"/>
+              <Button Content="Black" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasBackgroundBlack_Click"/>
+              <Button Content="Choose…" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasBackground_Click"
+                      ToolTip="Pick any colour for the artwork backdrop"/>
+              <Border x:Name="CanvasBackgroundSwatch" Width="26" Height="26" CornerRadius="4" Margin="6,0,0,0"
+                      BorderBrush="#3A4552" BorderThickness="1" VerticalAlignment="Center"
+                      local:ThemeManager.SkipTheme="True" ToolTip="The colour behind this layout's artwork"/>
+            </StackPanel>
+            <TextBlock Text="CANVAS BACKGROUND" FontSize="10" FontWeight="Bold" Foreground="#5C6B7E"
+                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="CanvasBackgroundInput" Width="110" FontSize="11" ToolTip="#AARRGGBB or #RRGGBB"
+                     TextChanged="CanvasBackgroundInput_Changed"/>
+            <TextBlock Text="Applies to this layout on every screen." FontSize="10" Foreground="#5C6B7E"
+                       VerticalAlignment="Center" Margin="10,0,0,0"/>
+          </DockPanel>
+        </StackPanel>
+        <Border Grid.Row="1" x:Name="CanvasFrame" Background="#171C25" ClipToBounds="True" MouseMove="Canvas_MouseMove" MouseLeftButtonUp="Canvas_MouseUp">
+          <!-- The artwork keeps its real pixel size and the Viewbox scales it to the panel. A
+               layout transform used to fight the frame, so the canvas grew on the first drag. The
+               edge border shows exactly where the artwork ends, so the letterbox never reads as
+               more canvas that refuses to accept a drag. -->
+          <Viewbox Stretch="Uniform" StretchDirection="Both" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Border x:Name="ArtworkEdge" BorderBrush="#4A586A" BorderThickness="1" ClipToBounds="True"
+                    SnapsToDevicePixels="True">
+              <Canvas x:Name="DesignCanvas" Width="1280" Height="720" Background="#091018" RenderTransformOrigin="0,0"/>
+            </Border>
+          </Viewbox>
         </Border>
       </Grid>
     </Border>
@@ -227,6 +255,19 @@
         <StackPanel x:Name="TextSection">
           <TextBlock Text="TEXT" Style="{StaticResource SectionTitle}"/>
           <TextBox x:Name="ContentInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"/>
+          <!-- Which player and stat this element prints, whatever is selected on the desk. -->
+          <StackPanel x:Name="PlayerDataSection">
+            <TextBlock Text="PLAYER DATA" Style="{StaticResource SectionTitle}"/>
+            <TextBlock Text="This element can follow the selected player, or pin one player from a roster so it never changes when somebody else goes on the graphic."
+                       Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,4"/>
+            <TextBlock Text="Team" Style="{StaticResource FieldLabel}"/>
+            <ComboBox x:Name="PlayerSideInput" Margin="10,0,10,3" SelectionChanged="PlayerBinding_Changed"/>
+            <TextBlock Text="Player" Style="{StaticResource FieldLabel}"/>
+            <ComboBox x:Name="PlayerPickInput" Margin="10,0,10,3" SelectionChanged="PlayerBinding_Changed"/>
+            <TextBlock Text="Value" Style="{StaticResource FieldLabel}"/>
+            <ComboBox x:Name="PlayerFieldInput" Margin="10,0,10,4" SelectionChanged="PlayerBinding_Changed"/>
+            <TextBlock x:Name="PlayerBindingHint" Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+          </StackPanel>
           <StackPanel x:Name="PeriodSection">
             <TextBlock Text="Quarter style for this element" Style="{StaticResource FieldLabel}"/>
             <ComboBox x:Name="PeriodFormatInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
@@ -324,6 +365,22 @@
                     local:ThemeManager.SkipTheme="True" ToolTip="The colour painted behind this element"/>
             <TextBox x:Name="BackgroundInput" Margin="0" TextChanged="Property_Changed"/>
           </DockPanel>
+          <CheckBox x:Name="GradientInput" Content="Gradient background" Margin="10,2,10,2"
+                    Checked="Property_Changed" Unchecked="Property_Changed"
+                    ToolTip="Blend the background from the colour above into a second colour"/>
+          <TextBlock Text="Second colour" Style="{StaticResource FieldLabel}"/>
+          <ComboBox x:Name="GradientSourceInput" Margin="10,0,10,3" SelectionChanged="Property_Changed"
+                    ToolTip="Use a fixed colour or one of the team palette colours"/>
+          <DockPanel Margin="0,0,10,4">
+            <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Click="GradientColor2_Click" ToolTip="Open the color palette"/>
+            <Border x:Name="GradientColorSwatch" Width="24" Height="24" CornerRadius="4" Margin="10,0,6,0"
+                    BorderBrush="#3A4552" BorderThickness="1" VerticalAlignment="Center"
+                    local:ThemeManager.SkipTheme="True" ToolTip="The second colour this element's gradient ends on"/>
+            <TextBox x:Name="GradientColorInput" Margin="0" TextChanged="Property_Changed"/>
+          </DockPanel>
+          <TextBlock Text="Gradient angle (degrees)" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="GradientAngleInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                   ToolTip="0 runs left to right, 90 top to bottom"/>
           <CheckBox x:Name="TransparentBackgroundInput" Content="No background box (transparent)" Margin="10,4,10,6"
                     Checked="Property_Changed" Unchecked="Property_Changed"/>
           <TextBlock Text="Border width (0 = none)" Style="{StaticResource FieldLabel}"/>
@@ -350,9 +407,13 @@
                  ToolTip="0 is an instant swap, 5 a very slow dissolve. The value leaves slightly faster than it arrives."/>
         <TextBlock Text="Motion" Style="{StaticResource FieldLabel}"/>
         <ComboBox x:Name="AnimationInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"/>
+        <TextBlock Text="Opacity (0–1)" Style="{StaticResource FieldLabel}"/>
+        <TextBox x:Name="OpacityInput" Style="{StaticResource FieldBox}" TextChanged="Property_Changed"
+                 ToolTip="1 is solid, 0.5 half see-through, 0 invisible"/>
         <CheckBox x:Name="VisibleInput" Content="Visible on output" Margin="10,4,10,8" Checked="Property_Changed" Unchecked="Property_Changed"/>
 
-        <Button Content="Zoom to fit" Margin="10,6,10,4" Padding="10,7" Click="Fit_Click"/>
+        <TextBlock Text="The artwork always fits this panel; the framed edge is the canvas, so every side is reachable."
+                   Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,10,10,2"/>
         <TextBlock Text="Resize: select an element, then drag the blue corner handle on the canvas."
                    Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,4,10,12"/>
       </StackPanel>
@@ -360,7 +421,7 @@
 
     <DockPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,12,0,0">
       <Button DockPanel.Dock="Right" Content="Done" Padding="16,8" Click="Done_Click" ToolTip="Close the studio (Enter only commits the value you are editing)"/>
-      <TextBlock Text="Every value can go on the graphic: team names and abbreviations, scores, period, game clock, play clock, timeout clock, timeouts left, possession, down, to go, down &amp; distance, ball on, sport, yards, turnovers, fouls, shot clock, baseball count and outs, hits, cards, shots, corners, date, time, and custom stats such as {{STAT:Turnovers}}. Use Add sport data for the full list."
+      <TextBlock Text="Every value can go on the graphic: team names and abbreviations, scores, period, game clock, play clock, timeout clock, timeouts left, possession, down, to go, down &amp; distance, ball on, sport, yards, turnovers, fouls, shot clock, baseball count and outs, hits, cards, shots, corners, date, time, and custom stats such as {{STAT:Turnovers}}. Use Add sport data for the full list. Player values such as {{PLAYER:HOME:Yards}} come from whoever is on the graphic — switch the selected player in the Rosters tab and every one of them follows."
                  Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
     </DockPanel>
   </Grid>

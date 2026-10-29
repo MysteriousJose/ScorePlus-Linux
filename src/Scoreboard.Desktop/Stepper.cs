@@ -26,6 +26,18 @@ public sealed class Stepper : Grid
     /// <summary>Raised when the middle value is typed over and committed.</summary>
     public event Action<int>? Committed;
 
+    /// <summary>Raised instead of <see cref="Committed"/> when <see cref="AcceptText"/> is on.</summary>
+    public event Action<string>? TextCommitted;
+
+    /// <summary>
+    /// Let the middle box hold any text, not just a number — a custom stat can be "N/A" or "3rd".
+    /// Off by default, so every other stepper keeps its numeric behaviour.
+    /// </summary>
+    public bool AcceptText { get; set; }
+
+    // The last value written from the game, so Escape can put a typed-over text box back.
+    string? _text;
+
     public Stepper(string? caption = null, double fontSize = 40)
     {
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -76,16 +88,24 @@ public sealed class Stepper : Grid
     public int Value
     {
         get => int.TryParse(_value.Text, out var parsed) ? parsed : 0;
-        set { if (!_typing) _value.Text = value.ToString(); }
+        set { if (!_typing && !AcceptText) _value.Text = value.ToString(); }
     }
 
     public string Text
     {
         get => _value.Text;
-        set { if (!_typing) _value.Text = value; }
+        set
+        {
+            _text = value;
+            if (!_typing) _value.Text = value;
+        }
     }
 
-    public void ShowValue() => _value.Text = int.TryParse(_value.Text, out var parsed) ? parsed.ToString() : "0";
+    public void ShowValue()
+    {
+        if (AcceptText) { _value.Text = _text ?? ""; return; }
+        _value.Text = int.TryParse(_value.Text, out var parsed) ? parsed.ToString() : "0";
+    }
 
     public void SetButtons(IEnumerable<StepButton> plus, IEnumerable<StepButton> minus)
     {
@@ -140,9 +160,16 @@ public sealed class Stepper : Grid
         if (!_typing) return;
         _typing = false;
         var text = _value.Text.Trim();
+        if (AcceptText)
+        {
+            // Any text is a legal value: the box keeps exactly what was typed.
+            TextCommitted?.Invoke(text);
+            return;
+        }
         if (!int.TryParse(text, out var parsed)) { ShowValue(); return; }
         parsed = Math.Max(0, parsed);
         _value.Text = parsed.ToString();
+        _text = _value.Text;
         Committed?.Invoke(parsed);
     }
 }

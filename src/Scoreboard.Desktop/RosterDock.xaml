@@ -1,0 +1,76 @@
+<UserControl x:Class="Scoreboard.Desktop.RosterDock"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Scoreboard.Desktop"
+             FontFamily="Segoe UI" FontSize="12" Background="{DynamicResource RosterPanelBrush}">
+  <UserControl.Resources>
+    <Style x:Key="HeaderPill" TargetType="Button">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Padding" Value="14,7"/>
+      <Setter Property="MinHeight" Value="32"/>
+      <Setter Property="Margin" Value="6,0,0,0"/>
+      <Setter Property="Background" Value="#26FFFFFF"/>
+      <Setter Property="BorderBrush" Value="#40FFFFFF"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Foreground" Value="{DynamicResource RosterHeaderTextBrush}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style x:Key="SideTab" TargetType="Button">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Padding" Value="20,7"/>
+      <Setter Property="MinHeight" Value="32"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+      <Setter Property="Background" Value="#22000000"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Foreground" Value="{DynamicResource RosterHeaderTextBrush}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel>
+    <!-- Green title bar: the desk's identity, the side switch, and the library action. -->
+    <Border DockPanel.Dock="Top" Background="{DynamicResource RosterHeaderBrush}" Padding="14,10" CornerRadius="9,9,0,0">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock x:Name="LibraryText" Text="" FontSize="11" Foreground="{DynamicResource RosterHeaderTextBrush}"
+                     Opacity="0.8" VerticalAlignment="Center" Margin="0,0,4,0"/>
+          <Button Style="{StaticResource HeaderPill}" Content="Import…" Click="Import_Click"
+                  ToolTip="Add a ScorePlus Roster (.spr) to the library, or a ScorePlus Player (.spp) to this side's roster"/>
+          <Button Style="{StaticResource HeaderPill}" Content="Export…" Click="Export_Click"
+                  ToolTip="Save this side's roster as a .spr file, or the highlighted player as a .spp file"/>
+          <Button Style="{StaticResource HeaderPill}" Content="New roster…" Click="NewRoster_Click"
+                  ToolTip="Create a roster in the library for this team"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Border Width="26" Height="26" CornerRadius="13" Background="#33000000" Margin="0,0,10,0">
+            <TextBlock Text="👥" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <TextBlock Text="Players" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"
+                     Foreground="{DynamicResource RosterHeaderTextBrush}" Margin="0,0,16,0"/>
+          <Button x:Name="AwaySideTab" Style="{StaticResource SideTab}" Content="VISITORS" Click="SideTab_Click" Tag="away"
+                  ToolTip="Edit the visitors' roster"/>
+          <Button x:Name="HomeSideTab" Style="{StaticResource SideTab}" Content="HOME" Click="SideTab_Click" Tag="home"
+                  ToolTip="Edit the home roster"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <!-- Which staff action the desk belongs to, worded the way the rest of the app says it. -->
+    <Border DockPanel.Dock="Top" Background="{DynamicResource RosterSurfaceAltBrush}" Padding="14,6">
+      <DockPanel>
+        <TextBlock x:Name="HintText" DockPanel.Dock="Right" FontSize="10" Foreground="{DynamicResource RosterMutedBrush}"
+                   TextWrapping="Wrap" MaxWidth="520" TextAlignment="Right" VerticalAlignment="Center"
+                   Text="Rosters live with the app, so a new game keeps them. Pick this side's roster in the left column, then select a player for the graphic — or press No player to print nobody. Import… and Export… move rosters (.spr) and players (.spp) between computers."/>
+        <TextBlock x:Name="DeskText" Text="ROSTER" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
+                   Foreground="{DynamicResource RosterMutedBrush}"/>
+      </DockPanel>
+    </Border>
+
+    <Grid Margin="12">
+      <local:RosterPanel x:Name="AwayPanel" Grid.Column="0"/>
+      <local:RosterPanel x:Name="HomePanel" Grid.Column="0" Visibility="Collapsed"/>
+    </Grid>
+  </DockPanel>
+</UserControl>
