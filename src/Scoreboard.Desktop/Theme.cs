@@ -17,6 +17,21 @@ public sealed class UserPreferences
     public string Theme { get; set; } = "System";
     public bool ShowHeadingHints { get; set; }
 
+    /// <summary>The operator interface's accent: tab outlines, selected rows, live badges.</summary>
+    public string AccentColor { get; set; } = "#FF38D7A3";
+
+    /// <summary>The filled actions — Update Output, confirm buttons, an on toggle.</summary>
+    public string AccentColor2 { get; set; } = "#FF0B6B50";
+
+    /// <summary>Off until the operator turns the phone remote on and gives it a password.</summary>
+    public bool RemoteEnabled { get; set; }
+    public int RemotePort { get; set; } = 8080;
+    public string RemotePassword { get; set; } = "";
+
+    /// <summary>Where the installed app looks for a release manifest. Empty turns checking off.</summary>
+    public string UpdateFeedUrl { get; set; } = "";
+    public bool CheckForUpdates { get; set; } = true;
+
     /// <summary>
     /// How long the graphic holds an old value before printing the new one, in seconds. 0 is
     /// instant. This is a show-wide timing choice, not a property of one element.
@@ -42,6 +57,13 @@ public sealed class UserPreferences
         Schema = Schema,
         Theme = Theme,
         ShowHeadingHints = ShowHeadingHints,
+        AccentColor = AccentColor,
+        AccentColor2 = AccentColor2,
+        RemoteEnabled = RemoteEnabled,
+        RemotePort = RemotePort,
+        RemotePassword = RemotePassword,
+        UpdateFeedUrl = UpdateFeedUrl,
+        CheckForUpdates = CheckForUpdates,
         ValueSwitchDelay = ValueSwitchDelay,
         LastSport = LastSport,
         Media = [.. Media],
@@ -158,7 +180,20 @@ public static class ThemeManager
         window.Resources["OperatorTextBrush"] = Brush(foreground);
         window.Resources["OperatorBorderBrush"] = Brush(border);
 
-        void ApplyTheme() => SetDescendants(window.Content as DependencyObject, panel, surface, foreground, input, border);
+        // The operator's own accent pair: the outline colour and the filled-action colour.
+        UserPreferences preferences;
+        try { preferences = PreferencesStore.Load(); } catch { preferences = new UserPreferences(); }
+        var accent = UiPalette.Accent(preferences);
+        var secondary = UiPalette.Secondary(preferences);
+        window.Resources["Accent"] = UiPalette.Frozen(accent);
+        window.Resources["AccentFillBrush"] = UiPalette.Frozen(UiPalette.Soft(accent));
+        window.Resources["AccentActionBrush"] = UiPalette.Frozen(secondary);
+
+        void ApplyTheme()
+        {
+            SetDescendants(window.Content as DependencyObject, panel, surface, foreground, input, border);
+            ApplyAccent(window, accent, secondary);
+        }
         window.Loaded += (_, _) => ApplyTheme();
         if (window.IsLoaded) window.Dispatcher.BeginInvoke(ApplyTheme);
     }
@@ -200,4 +235,99 @@ public static class ThemeManager
 
     static bool PreserveTextColor(SolidColorBrush brush) =>
         brush.Color == Color.FromRgb(56, 215, 163) || brush.Color == Color.FromRgb(255, 209, 102) || brush.Color == Color.FromRgb(255, 107, 107);
+
+    /// <summary>
+    /// Repaints the accent shades after the theme pass. Every operator window is built with the
+    /// shipped green, so a chosen colour is applied by swapping those exact shades — outlines and
+    /// active-tab borders to the accent, filled actions to the secondary. Designed artwork (the
+    /// scorebug canvas, the studio artboard) is never touched.
+    /// </summary>
+    static void ApplyAccent(DependencyObject? root, Color accent, Color secondary)
+    {
+        if (root is null) return;
+        if (root is ScorebugCanvasView) return;
+        if (root is FrameworkElement { Name: "DesignCanvas" }) return;
+
+        Color? Map(Color color)
+        {
+            if (color.R == 56 && color.G == 215 && color.B == 163) return accent;
+            if (color.R == 18 && color.G == 60 && color.B == 51) return UiPalette.Soft(accent);
+            if (color.R == 13 && color.G == 42 && color.B == 34) return UiPalette.Soft(accent);
+            if (color.R == 11 && color.G == 107 && color.B == 80) return secondary;
+            if (color.R == 20 && color.G == 166 && color.B == 124) return UiPalette.Lift(secondary);
+            return null;
+        }
+
+        switch (root)
+        {
+            case Border border when border.Background is SolidColorBrush background && Map(background.Color) is Color bordered:
+                border.Background = UiPalette.Frozen(bordered);
+                break;
+            case Panel panelElement when panelElement.Background is SolidColorBrush panelBackground && Map(panelBackground.Color) is Color filled:
+                panelElement.Background = UiPalette.Frozen(filled);
+                break;
+            case System.Windows.Shapes.Shape shape when shape.Fill is SolidColorBrush fill && Map(fill.Color) is Color shapeColor:
+                shape.Fill = UiPalette.Frozen(shapeColor);
+                break;
+            case TextBlock text when text.Foreground is SolidColorBrush textColor && Map(textColor.Color) is Color mappedText:
+                text.Foreground = UiPalette.Frozen(mappedText);
+                break;
+        }
+        if (root is Control control)
+        {
+            if (control.Background is SolidColorBrush controlBackground && Map(controlBackground.Color) is Color controlFill)
+                control.Background = UiPalette.Frozen(controlFill);
+            if (control.BorderBrush is SolidColorBrush controlBorder && Map(controlBorder.Color) is Color controlEdge)
+                control.BorderBrush = UiPalette.Frozen(controlEdge);
+        }
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            ApplyAccent(VisualTreeHelper.GetChild(root, i), accent, secondary);
+    }
+}
+
+/// <summary>
+/// The operator's two interface colours, with the shades derived from them that the chrome needs.
+/// A colour pasted into Preferences is validated here, so a typo can never leave a window grey.
+/// </summary>
+public static class UiPalette
+{
+    public static Color Accent(UserPreferences preferences) => Parse(preferences.AccentColor, Color.FromRgb(0x38, 0xD7, 0xA3));
+    public static Color Secondary(UserPreferences preferences) => Parse(preferences.AccentColor2, Color.FromRgb(0x0B, 0x6B, 0x50));
+
+    public static Color Parse(string? value, Color fallback)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(value) && value[0] == '#')
+            {
+                var parsed = (Color)ColorConverter.ConvertFromString(value)!;
+                // A fully transparent accent would erase the outline it is meant to draw.
+                return parsed.A < 0x40 ? Color.FromArgb(0xFF, parsed.R, parsed.G, parsed.B) : parsed;
+            }
+        }
+        catch { }
+        return fallback;
+    }
+
+    /// <summary>A deep shade of the accent, for an active tab or a badge behind it.</summary>
+    public static Color Soft(Color color) => Mix(color, Color.FromRgb(0, 0, 0), 0.82);
+
+    /// <summary>A brighter edge around a filled action.</summary>
+    public static Color Lift(Color color) => Mix(color, Color.FromRgb(255, 255, 255), 0.22);
+
+    public static Color Mix(Color a, Color b, double amount)
+    {
+        amount = Math.Clamp(amount, 0, 1);
+        return Color.FromRgb(
+            (byte)Math.Round(a.R * (1 - amount) + b.R * amount),
+            (byte)Math.Round(a.G * (1 - amount) + b.G * amount),
+            (byte)Math.Round(a.B * (1 - amount) + b.B * amount));
+    }
+
+    public static SolidColorBrush Frozen(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
 }

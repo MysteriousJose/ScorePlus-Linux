@@ -13,8 +13,18 @@ public static class ScoreboardTemplates
     /// </summary>
     static readonly Regex PlayerToken = new(@"\{\{PLAYER:(?<side>HOME|AWAY):(?<field>[^}]+)\}\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    /// <summary>
+    /// A sport's own value, e.g. <c>{{SPORT:baseball.balls}}</c>, <c>{{SPORT:hockey.powerplay}}</c> or
+    /// <c>{{SPORT:cricket.overs}}</c>. A flag prints its words (PP, BOTTOM, BONUS) instead of 1 or 0.
+    /// </summary>
+    static readonly Regex SportToken = new(@"\{\{SPORT:(?<id>[^}]+)\}\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     public static string Bind(string content, GameState state, string? periodFormat = null) =>
-        PlayerToken.Replace(StatToken.Replace(ReplaceFixed(content, state, periodFormat), match =>
+        PlayerToken.Replace(StatToken.Replace(SportToken.Replace(ReplaceFixed(content, state, periodFormat), match =>
+        {
+            var control = SportValues.FindControl(state, match.Groups["id"].Value.Trim());
+            return control is null ? string.Empty : SportValues.Display(state, control);
+        }), match =>
         {
             var name = match.Groups["name"].Value.Trim();
             var stat = state.Stats.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
@@ -77,6 +87,16 @@ public static class ScoreboardTemplates
         .Replace("{{CARDS}}", $"Y{state.HomeYellowCards}/{state.AwayYellowCards} R{state.HomeRedCards}/{state.AwayRedCards}")
         .Replace("{{SHOTS}}", $"{state.HomeShots}–{state.AwayShots}")
         .Replace("{{CORNERS}}", $"{state.HomeCorners}–{state.AwayCorners}")
+        // The classics by name, so a hand-typed binding works as well as the studio's picker.
+        .Replace("{{BALLS}}", state.Balls.ToString())
+        .Replace("{{STRIKES}}", state.Strikes.ToString())
+        .Replace("{{OUTS}}", state.Outs.ToString())
+        .Replace("{{BASES}}", string.Concat(
+            SportValues.Read(state, "baseball.first") != 0 ? "1B " : string.Empty,
+            SportValues.Read(state, "baseball.second") != 0 ? "2B " : string.Empty,
+            SportValues.Read(state, "baseball.third") != 0 ? "3B" : string.Empty).Trim())
+        .Replace("{{INNING_HALF}}", SportValues.Read(state, "baseball.half") != 0 ? "BOTTOM" : "TOP")
+        .Replace("{{POWERPLAY}}", SportValues.Read(state, "hockey.powerplay") != 0 ? "PP" : string.Empty)
         .Replace("{{DATE}}", DateTime.Now.ToString("yyyy-MM-dd"))
         .Replace("{{TIME}}", DateTime.Now.ToString("HH:mm:ss"));
 

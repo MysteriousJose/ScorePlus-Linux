@@ -504,14 +504,23 @@ public sealed class ScorebugIconView : Grid
     readonly ScorebugTextBlock? _text;
     readonly Ellipse? _dot;
     readonly StackPanel? _bars;
+    readonly Canvas? _bases;
     string _appliedForeground = "";
+    string _baseSignature = "";
 
     public ScorebugIconView(ScorebugElement item, Func<GameState>? state, string? text = null)
     {
         _item = item;
         _state = state;
         ClipToBounds = true;
-        if (item.Icon == ScorebugIcon.TimeoutBars)
+        if (item.Icon == ScorebugIcon.Bases)
+        {
+            // Three bases in a diamond: a base a runner is standing on is filled, an empty one is
+            // only a faint outline, so the graphic reads at a glance like the field does.
+            _bases = new Canvas { ClipToBounds = true };
+            Children.Add(_bases);
+        }
+        else if (item.Icon == ScorebugIcon.TimeoutBars)
         {
             // One short horizontal line per timeout, in a row from left to right.
             _bars = new StackPanel
@@ -542,6 +551,49 @@ public sealed class ScorebugIconView : Grid
         var state = _state?.Invoke();
         _text?.ApplyStyle(_item, state);
         var foreground = ScorebugRender.ResolveForeground(_item, state);
+        if (_bases is not null)
+        {
+            var first = state is not null && SportValues.Read(state, "baseball.first") != 0;
+            var second = state is not null && SportValues.Read(state, "baseball.second") != 0;
+            var third = state is not null && SportValues.Read(state, "baseball.third") != 0;
+            var signature = $"{_item.Width:0.#}x{_item.Height:0.#}|{foreground}|{first}{second}{third}";
+            if (signature != _baseSignature)
+            {
+                _baseSignature = signature;
+                _bases.Children.Clear();
+                var width = Math.Max(24, _item.Width);
+                var height = Math.Max(24, _item.Height);
+                var size = Math.Clamp(Math.Min(width, height) * 0.34, 9, 70);
+                var brush = ScorebugRender.ParseBrush(foreground);
+                var faint = (Brush)brush.Clone();
+                faint.Opacity = 0.32;
+                (double X, double Y, bool On)[] spots =
+                [
+                    (width * 0.30, height * 0.70, third),
+                    (width * 0.50, height * 0.24, second),
+                    (width * 0.70, height * 0.70, first)
+                ];
+                foreach (var (x, y, on) in spots)
+                {
+                    var square = new Rectangle
+                    {
+                        Width = size,
+                        Height = size,
+                        RadiusX = Math.Max(1, size * 0.10),
+                        RadiusY = Math.Max(1, size * 0.10),
+                        RenderTransformOrigin = new Point(0.5, 0.5),
+                        RenderTransform = new RotateTransform(45),
+                        Fill = on ? brush : Brushes.Transparent,
+                        Stroke = on ? brush : faint,
+                        StrokeThickness = Math.Max(1.5, size * 0.12)
+                    };
+                    Canvas.SetLeft(square, x - size / 2);
+                    Canvas.SetTop(square, y - size / 2);
+                    _bases.Children.Add(square);
+                }
+            }
+            return;
+        }
         if (_bars is not null)
         {
             var count = 0;

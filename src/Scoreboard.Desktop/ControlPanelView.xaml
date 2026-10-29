@@ -168,6 +168,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
           <DockPanel>
             <TextBlock x:Name="DetailCardHint" DockPanel.Dock="Right" Style="{StaticResource Caption}" HorizontalAlignment="Right"/>
@@ -189,10 +190,11 @@
             <ContentControl x:Name="BallOnHost" Grid.Column="2"/>
           </Grid>
 
-          <!-- Other sports: compact action grid -->
-          <UniformGrid x:Name="OtherDetail" Grid.Row="1" Columns="4" Margin="0,6,0,0" VerticalAlignment="Top"/>
+          <!-- Every sport's own values — balls, bases, power play, overs, sets — as compact
+               steppers and switches. Built in code from the game's sport controls. -->
+          <WrapPanel x:Name="OtherDetail" Grid.Row="2" Margin="0,4,0,0" VerticalAlignment="Top"/>
 
-          <Grid Grid.Row="2" Margin="0,6,0,0">
+          <Grid Grid.Row="3" Margin="0,6,0,0">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto"/>
               <ColumnDefinition Width="*"/>
@@ -368,7 +370,6 @@
               <TextBlock Text="CUSTOM STATS" Style="{StaticResource CardTitle}"/>
             </StackPanel>
           </DockPanel>
-          <TextBlock x:Name="StatsEmpty" Grid.Row="1" Text="No custom stats yet — add Turnovers, Penalties, or your own." TextWrapping="Wrap" Foreground="#4E5D70" FontSize="11" Margin="2,4,2,0"/>
           <!-- The stat list is the one thing that can outgrow its card, so it scrolls in place and never pushes the page. -->
           <ScrollViewer x:Name="StatsScroller" Grid.Row="1" Margin="0,3,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <WrapPanel x:Name="StatsHost"/>

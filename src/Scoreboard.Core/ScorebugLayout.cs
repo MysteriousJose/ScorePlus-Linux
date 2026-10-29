@@ -51,7 +51,9 @@ public enum ScorebugIcon
     /// <summary>One little bar per timeout the team has left.</summary>
     TimeoutBars,
     /// <summary>A dot on the left or right edge, on the side of the team with the ball.</summary>
-    PossessionDot
+    PossessionDot,
+    /// <summary>The three baseball bases: filled when a runner is on, a faint outline when empty.</summary>
+    Bases
 }
 
 public sealed class ScorebugElement
@@ -62,6 +64,12 @@ public sealed class ScorebugElement
     public ScorebugShape Shape { get; set; } = ScorebugShape.Rectangle;
     public string Content { get; set; } = "TEXT";
     public string? ImagePath { get; set; }
+
+    /// <summary>
+    /// Set on a part copied out of another layout: every element sharing this id is the same
+    /// part, so moving or restyling one updates all of them. Null on an independent element.
+    /// </summary>
+    public string? LinkId { get; set; }
 
     /// <summary>For video elements: only media assigned to this tag plays inside the element.</summary>
     public string MediaTag { get; set; } = "";
@@ -461,6 +469,39 @@ public sealed class ScorebugCatalog
     {
         edit(Layout); Validate();
         Save(); Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Copies a linked part's artwork onto every copy of it, in every layout of every display.
+    /// Called from inside <see cref="Update"/> so one edit is still one save and one repaint.
+    /// </summary>
+    public void PropagateLink(ScorebugElement source)
+    {
+        if (string.IsNullOrWhiteSpace(source.LinkId)) return;
+        foreach (var display in Displays)
+            foreach (var layout in display.Layouts)
+                foreach (var target in layout.Elements)
+                    if (!ReferenceEquals(target, source)
+                        && !string.Equals(target.Id, source.Id, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(target.LinkId, source.LinkId, StringComparison.OrdinalIgnoreCase))
+                        CopyArtwork(source, target);
+    }
+
+    /// <summary>Every visual property of one element onto another, keeping the target's identity.</summary>
+    static void CopyArtwork(ScorebugElement source, ScorebugElement target)
+    {
+        var id = target.Id;
+        var link = target.LinkId;
+        var copy = JsonSerializer.Deserialize<ScorebugElement>(JsonSerializer.Serialize(source));
+        if (copy is null) return;
+        foreach (var property in typeof(ScorebugElement).GetProperties())
+        {
+            if (!property.CanRead || !property.CanWrite) continue;
+            if (property.Name is nameof(ScorebugElement.Id) or nameof(ScorebugElement.LinkId)) continue;
+            property.SetValue(target, property.GetValue(copy));
+        }
+        target.Id = id;
+        target.LinkId = link;
     }
 
     void Validate()

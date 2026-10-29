@@ -1,4 +1,4 @@
-<Window x:Class="Scoreboard.Desktop.SportProfileWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ScorePlus — Sport Profiles" Width="720" Height="660" MinWidth="640" MinHeight="560" WindowStartupLocation="CenterOwner" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI">
+<Window x:Class="Scoreboard.Desktop.SportProfileWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ScorePlus — Sport Profiles" Width="760" Height="700" MinWidth="660" MinHeight="560" WindowStartupLocation="CenterOwner" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI" PreviewKeyDown="Window_PreviewKeyDown">
   <Grid Margin="18">
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="220"/>
@@ -45,6 +45,18 @@
           </UniformGrid>
           <CheckBox x:Name="CountUpInput" Content="Clock counts up instead of down" Foreground="White" Margin="6,10,0,0"/>
           <CheckBox x:Name="ShotClockInput" Content="Has a shot clock" Foreground="White" Margin="6,4,0,0"/>
+
+          <!-- The sport's own console values and their starting numbers. -->
+          <Separator Margin="2,12,2,0"/>
+          <DockPanel Margin="2,8,2,0">
+            <Button x:Name="AddValueButton" DockPanel.Dock="Right" Content="＋ Add value" FontSize="11"
+                    Padding="9,5" MinHeight="28" Margin="6,0,0,0" Click="AddValue_Click"
+                    ToolTip="Add another value or on/off switch to this sport's console"/>
+            <TextBlock Text="SPORT VALUES" FontSize="11" FontWeight="Bold" Foreground="#93A0B2" VerticalAlignment="Center"/>
+          </DockPanel>
+          <TextBlock Text="What the console shows for this sport — balls, strikes and bases, power play, overs and wickets, sets. The number is the starting value of a new game, and every one of these can be printed on the scorebug as a sport data element."
+                     TextWrapping="Wrap" FontSize="11" Foreground="#93A0B2" Margin="4,2,4,4"/>
+          <StackPanel x:Name="ControlsHost"/>
           <TextBlock x:Name="BuiltInNote" Text="Built-in preset — saving stores your version as an override." TextWrapping="Wrap" Foreground="#93A0B2" Margin="4,10,4,0"/>
           <TextBlock x:Name="ErrorText" Foreground="#FF7272" TextWrapping="Wrap" Margin="4,8,4,0"/>
           <WrapPanel Margin="0,8,0,0">
