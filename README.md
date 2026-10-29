@@ -55,7 +55,7 @@ Preferences start on the **dark** theme, and the little heading tips ("scoring, 
 
 | What | Location |
 | --- | --- |
-| Game files | Anywhere you choose — portable `.spg` (ScorePlus Game) files; older `.scoreboard` / `.json` games still open |
+| Game files | Anywhere you choose — portable `.spg` (ScorePlus Game) files |
 | Autosaves | `%LOCALAPPDATA%\ScorePlus\autosaves` — the newest eight points, listed on the launch screen |
 | Preferences | `%LOCALAPPDATA%\ScorePlus\preferences.json` |
 | Sport profiles | `%LOCALAPPDATA%\ScorePlus\sports.json` |
