@@ -13,10 +13,10 @@ namespace Scoreboard.Core;
 /// </summary>
 public static class RosterFiles
 {
-    /// <summary>ScorePlus Roster: one team, every player and stat.</summary>
+    /// <summary>ScorePlus Roster: one team and its players. Stat values never travel.</summary>
     public const string RosterExtension = ".spr";
 
-    /// <summary>ScorePlus Player: one player with their stats.</summary>
+    /// <summary>ScorePlus Player: one player, with their stat columns left blank.</summary>
     public const string PlayerExtension = ".spp";
 
     const string RosterKind = "ScorePlusRoster";
@@ -116,6 +116,11 @@ public static class RosterFiles
         Players = (roster.Players ?? []).Select(Clean).ToList()
     };
 
+    /// <summary>
+    /// A player as a shareable file carries them: number, name, position and the stat columns the
+    /// team tracks, but never a value. A roster file says who is on the team, not what they have
+    /// done, so a shared or imported team starts with blank numbers and nobody's totals travel.
+    /// </summary>
     static RosterPlayer Clean(RosterPlayer player)
     {
         var stats = new List<GameStat>();
@@ -124,7 +129,7 @@ public static class RosterFiles
         {
             var name = Trimmed(stat.Name);
             if (name is null || !seen.Add(name)) continue;
-            stats.Add(new GameStat(NewId(), name, Math.Max(0, stat.Value), Trimmed(stat.Text)));
+            stats.Add(new GameStat(NewId(), name));
         }
         return new RosterPlayer
         {

@@ -381,13 +381,17 @@ try
     RosterFiles.SaveRoster(exportPath,shared);
     var readBack=RosterFiles.LoadRoster(exportPath);
     Check(readBack is not null&&readBack.Name=="Shared squad"&&readBack.Players.Count==2
-        &&readBack.Players[0].Name=="Ada"&&readBack.Players[0].Stat("Yards")==250,
-        "a .spr file round trips the roster, its players and their stats");
+        &&readBack.Players[0].Name=="Ada"&&readBack.Players[0].Position=="QB"&&readBack.Players[0].Number==9,
+        "a .spr file round trips the roster and its players");
     Check(readBack!.Id!=shared.Id&&readBack.Players[0].Id!=one.Id,"an imported roster and its players get fresh ids");
+    // A shared roster says who is on the team, not what they have done: columns travel, values do not.
+    Check(readBack.Players.All(p=>p.Stats.All(s=>s.Value==0&&s.Text is null)),
+        "a .spr file carries no stat values");
+    Check(readBack.Players[0].Stats.Any(s=>s.Name=="Yards"),"a .spr file keeps the team's stat columns");
     RosterFiles.SavePlayer(playerPath,two,"Shared squad");
     var readPlayer=RosterFiles.LoadPlayer(playerPath);
-    Check(readPlayer is not null&&readPlayer.Name=="Bea"&&readPlayer.Number==4&&readPlayer.Stat("Yards")==80,
-        "a .spp file round trips one player");
+    Check(readPlayer is not null&&readPlayer.Name=="Bea"&&readPlayer.Number==4&&readPlayer.Stat("Yards")==0,
+        "a .spp file round trips one player with a blank stat sheet");
     Check(RosterFiles.LoadRoster(playerPath) is null,"a player file is not mistaken for a roster file");
     File.WriteAllText(playerPath,"not a roster");
     Check(RosterFiles.LoadPlayer(playerPath) is null,"a damaged file loads as nothing instead of throwing");
