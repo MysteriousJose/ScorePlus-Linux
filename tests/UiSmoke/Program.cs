@@ -2479,6 +2479,8 @@ internal static class Program
                     // Player data: pin the player who is NOT on the graphic.
                     ((ListBox)backdropStudio.FindName("Layers")!).SelectedIndex = 0;
                     backdropStudio.UpdateLayout();
+                    if (((StackPanel)backdropStudio.FindName("PlayerDataSection")!).Visibility != Visibility.Visible)
+                        throw new Exception("FAIL: a player element hides its player-data pickers");
                     var playerPick = (ComboBox)backdropStudio.FindName("PlayerPickInput")!;
                     var playerField = (ComboBox)backdropStudio.FindName("PlayerFieldInput")!;
                     playerPick.SelectedItem = playerPick.Items.OfType<object>().First(item => item.ToString()!.Contains("Pinned"));
@@ -2509,6 +2511,19 @@ internal static class Program
                     if (((StackPanel)backdropStudio.FindName("BackgroundSection")!).Visibility != Visibility.Visible ||
                         ((StackPanel)backdropStudio.FindName("BorderSection")!).Visibility != Visibility.Visible)
                         throw new Exception("FAIL: a shape lost its background or outline controls");
+                    // Sport data is text too, but it prints a stat, not a player: offering the player
+                    // pickers there replaced {{YARDS}} with a player binding on the first touch.
+                    backdropCatalog.Update(layout => layout.Elements.Add(new ScorebugElement
+                    {
+                        Name = "Yards", Content = "{{YARDS}}", X = 60, Y = 500, Width = 240, Height = 60
+                    }));
+                    backdropStudio.UpdateLayout();
+                    ((ListBox)backdropStudio.FindName("Layers")!).SelectedIndex = 0;
+                    backdropStudio.UpdateLayout();
+                    if (((StackPanel)backdropStudio.FindName("PlayerDataSection")!).Visibility != Visibility.Collapsed)
+                        throw new Exception("FAIL: a stats element still shows the player-data pickers");
+                    if (((StackPanel)backdropStudio.FindName("TextSection")!).Visibility != Visibility.Visible)
+                        throw new Exception("FAIL: a stats element lost its text properties");
                     // A video is not text either, but it can still be outlined.
                     backdropCatalog.Update(layout => layout.Elements.Add(new ScorebugElement
                     {

@@ -692,9 +692,11 @@ public partial class ScorebugEditorWindow : Window
         BackgroundSection.Visibility=any?Visibility.Visible:Visibility.Collapsed;
         BorderSection.Visibility=any?Visibility.Visible:Visibility.Collapsed;
         PeriodSection.Visibility=text&&e!.Content.Contains("{{PERIOD}}",StringComparison.OrdinalIgnoreCase)?Visibility.Visible:Visibility.Collapsed;
-        // Player data only means something on a text element: it decides which player's value that
-        // text prints, so a shape or a logo has no business showing the pickers.
-        PlayerDataSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
+        // Player data only means something on text that actually prints a player value. On a stats
+        // element the pickers would overwrite {{YARDS}} with a player binding, and on a plain label
+        // they change nothing at all; unbound text becomes a player element through the studio's
+        // "Add player data" button instead, so the pickers stay off every other element.
+        PlayerDataSection.Visibility=text&&PlayerToken.IsMatch(e!.Content)?Visibility.Visible:Visibility.Collapsed;
         IconSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
         // A value transition needs a printed value to cross to.
         TransitionSection.Visibility=text?Visibility.Visible:Visibility.Collapsed;
