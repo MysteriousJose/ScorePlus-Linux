@@ -9,8 +9,41 @@ public sealed record ControlActionDefinition(string Id, string Group, string Lab
 
 public static class ControlActions
 {
-    public static IReadOnlyList<ControlActionDefinition> All { get; } = new List<ControlActionDefinition>
+    public static IReadOnlyList<ControlActionDefinition> All { get; } = Build();
+
+    /// <summary>
+    /// The fixed console actions plus every sport value's +, − and switch, so the keybind list offers
+    /// "Visitors hits +1" or "Power play on / off" alongside the football controls.
+    /// </summary>
+    static List<ControlActionDefinition> Build()
     {
+        var list = CoreActions().ToList();
+        foreach (var control in SportControls.All)
+        {
+            var group = GroupFor(control.Id);
+            var label = $"{control.Label}";
+            if (control.Kind == SportControlKind.Flag)
+                list.Add(new($"sport.{control.Id}.toggle", group, $"{label} on / off"));
+            else
+            {
+                list.Add(new($"sport.{control.Id}.plus", group, $"{label} +1"));
+                list.Add(new($"sport.{control.Id}.minus", group, $"{label} −1"));
+            }
+        }
+        return list;
+    }
+
+    /// <summary>The sport a control id belongs to, as a readable group name for the keybind list.</summary>
+    static string GroupFor(string id)
+    {
+        var dot = id.IndexOf('.');
+        var key = dot > 0 ? id[..dot] : id;
+        return SportDefinition.BuiltIns.FirstOrDefault(s => string.Equals(s.Id, key, StringComparison.OrdinalIgnoreCase))?.Name
+            ?? char.ToUpperInvariant(key[0]) + key[1..];
+    }
+
+    static IEnumerable<ControlActionDefinition> CoreActions() =>
+    [
         new("home.score.plus1","Score","Home score +1"),
         new("home.score.plus2","Score","Home score +2"),
         new("home.score.plus3","Score","Home score +3"),
@@ -87,7 +120,7 @@ public static class ControlActions
         new("soccer.corner.home","Soccer","Home corner"),
         new("soccer.corner.away","Soccer","Away corner"),
         new("global.undo","General","Undo last action")
-    };
+    ];
 
     public static string LabelFor(string id) => All.FirstOrDefault(a => a.Id == id)?.Label ?? ScoreLabel(id) ?? id;
 

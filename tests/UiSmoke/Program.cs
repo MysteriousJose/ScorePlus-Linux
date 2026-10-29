@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -96,7 +96,8 @@ internal static class Program
             dock.UpdateLayout();
             if (shell.FindName("EventList") is not null)
                 throw new Exception("FAIL: the event log still lives in the dock");
-            if (!FindAll<Button>(shell).Any(b => (b.Content as string) == "Event Log"))
+            // The top row is icon-only now; the name lives in the tooltip.
+            if (!FindAll<Button>(shell).Any(b => (b.ToolTip as string ?? string.Empty).StartsWith("Event log", StringComparison.OrdinalIgnoreCase)))
                 throw new Exception("FAIL: the event log button is missing from the top row");
             shell.Close();
             Console.WriteLine("PASS: dock holds one media library with tiles, transport and tags; event log moved to the top row");
@@ -230,7 +231,7 @@ internal static class Program
             var multiOutput = new MainWindow(LaunchMode.New) { Width = 1280, Height = 800 };
             multiOutput.Show();
             multiOutput.UpdateLayout();
-            var outputClick = FindAll<Button>(multiOutput).First(b => (b.Content as string) == "Audience Output");
+            var outputClick = FindAll<Button>(multiOutput).First(b => (b.ToolTip as string ?? string.Empty).StartsWith("Audience output", StringComparison.OrdinalIgnoreCase));
             var outputsBefore = Application.Current.Windows.OfType<OutputWindow>().Count(w => w.IsVisible);
             outputClick.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             outputClick.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -1707,10 +1708,16 @@ internal static class Program
                 var layoutStudio = new ScorebugEditorWindow(layoutMain.Scorebug, layoutMain.Engine);
                 layoutStudio.Show();
                 layoutStudio.UpdateLayout();
-                var layoutBox = (ComboBox)layoutStudio.FindName("LayoutBox")!;
-                if (layoutBox.Items.Count != 2)
-                    throw new Exception($"FAIL: the studio lists {layoutBox.Items.Count} layouts for 2");
-                layoutBox.SelectedIndex = 1;
+                // Layouts are pictures with their names under them, not names in a drop-down.
+                var layoutStrip = (StackPanel)layoutStudio.FindName("LayoutStrip")!;
+                if (layoutStrip.Children.Count != 2)
+                    throw new Exception($"FAIL: the studio lists {layoutStrip.Children.Count} layouts for 2");
+                var secondTile = (Button)layoutStrip.Children[1];
+                if (!FindAll<TextBlock>(secondTile).Any(t => t.Text.Contains("Slideshow")))
+                    throw new Exception("FAIL: a layout picture has no name underneath it");
+                if (!FindAll<Image>(secondTile).Any(i => i.Source is not null))
+                    throw new Exception("FAIL: a layout picture was never rendered");
+                secondTile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 layoutStudio.UpdateLayout();
                 if (layoutMain.Scorebug.ActiveIndex != 1)
                     throw new Exception("FAIL: the studio layout picker did not switch the design");
@@ -2738,6 +2745,212 @@ internal static class Program
                 finally { try { if (File.Exists(delayPath)) File.Delete(delayPath); } catch { } }
                 DisplayTiming.Apply(new UserPreferences());
                 Console.WriteLine("PASS: the value switch delay is a preference, defaults to 0, and holds a graphic's value for the chosen time");
+
+                // ---------- sport values across every sport ----------
+                var baseball = new GameEngine();
+                baseball.NewGame("baseball");
+                if (baseball.State.Controls.Count < 8 || baseball.State.Controls.All(c => c.Id != "baseball.first"))
+                    throw new Exception($"FAIL: baseball did not start with its bases and count ({baseball.State.Controls.Count} controls)");
+                baseball.SetSportValue("baseball.balls", 3);
+                baseball.SetSportValue("baseball.strikes", 2);
+                baseball.SetSportValue("baseball.first", 1);
+                baseball.SetSportValue("baseball.third", 1);
+                if (baseball.State.Balls != 3 || ScoreboardTemplates.Bind("{{SPORT:baseball.balls}}-{{SPORT:baseball.strikes}} {{BASES}}", baseball.State) != "3-2 1B 3B")
+                    throw new Exception("FAIL: baseball count and bases do not reach the graphic");
+                baseball.SetSportValue("baseball.balls", 9);
+                if (baseball.State.Balls != 3)
+                    throw new Exception($"FAIL: a sport value ignored its ceiling (balls = {baseball.State.Balls})");
+
+                var hockey = new GameEngine();
+                hockey.NewGame("hockey");
+                hockey.ToggleSportFlag("hockey.powerplay");
+                if (ScoreboardTemplates.Bind("{{SPORT:hockey.powerplay}}", hockey.State) != "PP")
+                    throw new Exception("FAIL: hockey's power play did not print");
+                hockey.ToggleSportFlag("hockey.powerplay");
+                if (ScoreboardTemplates.Bind("[{{SPORT:hockey.powerplay}}]", hockey.State) != "[]")
+                    throw new Exception("FAIL: switching the power play off left it printed");
+
+                var cricket = new GameEngine();
+                cricket.NewGame("cricket");
+                cricket.SetSportValue("cricket.overs", 12);
+                cricket.SetSportValue("cricket.wickets", 4);
+                if (cricket.State.SportValues["cricket.overs"] != 12 || ScoreboardTemplates.Bind("{{SPORT:cricket.wickets}}", cricket.State) != "4")
+                    throw new Exception("FAIL: cricket's overs and wickets were not stored");
+
+                // A profile decides what a new game starts with, and every sport ships a control set.
+                var sportsProfilePath = Path.Combine(Path.GetTempPath(), $"smoke-sports-profile-{Guid.NewGuid():N}.json");
+                try
+                {
+                    var sports = new SportCatalog(sportsProfilePath);
+                    var tennis = sports.Find("tennis")!;
+                    sports.SaveProfile(tennis with { Controls = [.. tennis.Controls, new SportControl("tennis.aces.home", "Home aces", Max: 99, Default: 2)] });
+                    var tennisEngine = new GameEngine(sports);
+                    tennisEngine.NewGame("tennis");
+                    if (SportValues.Read(tennisEngine.State, "tennis.aces.home") != 2)
+                        throw new Exception("FAIL: a profile's starting value did not reach a new game");
+                    if (SportDefinition.BuiltIns.Any(sport => SportControls.For(sport.Id).Count == 0 && sport.Id != "generic"))
+                        throw new Exception("FAIL: a built-in sport has no console values");
+                }
+                finally { try { if (File.Exists(sportsProfilePath)) File.Delete(sportsProfilePath); } catch { } }
+                Console.WriteLine("PASS: every sport carries its own values (count, bases, power play, overs) with profile defaults and graphic bindings");
+
+                // ---------- interface accents and update version comparison ----------
+                var accentPrefs = new UserPreferences { AccentColor = "#FFFF8800", AccentColor2 = "#FF224466" };
+                if (UiPalette.Accent(accentPrefs) != Color.FromRgb(0xFF, 0x88, 0x00) || UiPalette.Secondary(accentPrefs) != Color.FromRgb(0x22, 0x44, 0x66))
+                    throw new Exception("FAIL: the chosen interface colours were not read");
+                if (UiPalette.Accent(new UserPreferences { AccentColor = "nonsense" }) != Color.FromRgb(0x38, 0xD7, 0xA3))
+                    throw new Exception("FAIL: a bad accent value did not fall back to the shipped green");
+                if (!UpdateChecker.IsNewer("1.2.0", "1.0.0") || UpdateChecker.IsNewer("1.0.0", "1.0.0") || UpdateChecker.IsNewer("0.9.9", "1.0.0"))
+                    throw new Exception("FAIL: the update version comparison is wrong");
+                Console.WriteLine("PASS: interface accents are stored and validated, and updates only offer a genuinely newer version");
+
+                // ---------- linked parts: one edit reaches every copy, and the link can be broken ----------
+                {
+                    var linkMain = new MainWindow(LaunchMode.New) { Width = 1280, Height = 800 };
+                    linkMain.Show();
+                    linkMain.UpdateLayout();
+                    linkMain.Scorebug.AddLayout("Second");
+                    linkMain.Scorebug.SelectLayout(1);
+                    linkMain.Scorebug.Update(layout =>
+                    {
+                        layout.Elements.Clear();
+                        layout.Elements.Add(new ScorebugElement { Name = "Linked bar", Content = "BAR", LinkId = "group-1", X = 40, Y = 40, Width = 300, Height = 80 });
+                    });
+                    linkMain.Scorebug.SelectLayout(0);
+                    linkMain.Scorebug.Update(layout =>
+                    {
+                        layout.Elements.Clear();
+                        layout.Elements.Add(new ScorebugElement { Name = "Linked bar", Content = "BAR", LinkId = "group-1", X = 40, Y = 40, Width = 300, Height = 80 });
+                    });
+                    var linkStudio = new ScorebugEditorWindow(linkMain.Scorebug, linkMain.Engine);
+                    linkStudio.Show();
+                    linkStudio.UpdateLayout();
+                    var layerList = (ListBox)linkStudio.FindName("Layers")!;
+                    layerList.SelectedIndex = 0;
+                    linkStudio.UpdateLayout();
+                    var xBox = (TextBox)linkStudio.FindName("XInput")!;
+                    xBox.Text = "321";
+                    var source = PresentationSource.FromVisual(linkStudio);
+                    if (source is null) throw new Exception("FAIL: the studio window has no presentation source");
+                    xBox.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
+                    Pump(TimeSpan.FromMilliseconds(500));
+                    var otherCopy = linkMain.Scorebug.Displays[0].Layouts[1].Elements[0];
+                    var firstCopy = linkMain.Scorebug.Displays[0].Layouts[0].Elements[0];
+                    if (Math.Abs(firstCopy.X - 321) > 0.5)
+                        throw new Exception($"FAIL: Enter did not commit the typed X position (x = {firstCopy.X})");
+                    if (Math.Abs(otherCopy.X - 321) > 0.5)
+                        throw new Exception($"FAIL: a linked part did not follow the move on the other layout (x = {otherCopy.X})");
+                    var breakLink = FindAll<Button>(linkStudio).First(b => (b.Content as string) == "Break link");
+                    if (breakLink.Visibility != Visibility.Visible)
+                        throw new Exception("FAIL: a linked part has no Break link control in its properties");
+                    breakLink.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    linkStudio.UpdateLayout();
+                    xBox.Text = "410";
+                    xBox.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
+                    Pump(TimeSpan.FromMilliseconds(500));
+                    if (Math.Abs(linkMain.Scorebug.Displays[0].Layouts[1].Elements[0].X - 321) > 0.5)
+                        throw new Exception("FAIL: a broken link still follows the other copy");
+                    if (Math.Abs(linkMain.Scorebug.Displays[0].Layouts[0].Elements[0].X - 410) > 0.5)
+                        throw new Exception("FAIL: the copy that broke its link no longer accepts its own edits");
+                    // Escape drops the selection, leaving the property panel empty.
+                    RaiseKey(linkStudio, source, Key.Escape);
+                    linkStudio.UpdateLayout();
+                    if (((FrameworkElement)linkStudio.FindName("LinkSection")!).Visibility != Visibility.Collapsed)
+                        throw new Exception("FAIL: Escape did not deselect the element");
+                    // The layout strip must show each layout's whole name, not the top of it.
+                    var strip = (StackPanel)linkStudio.FindName("LayoutStrip")!;
+                    // The strip sits inside the scroll content presenter, so walk up to the scroller.
+                    DependencyObject? ancestor = strip;
+                    while (ancestor is not null && ancestor is not ScrollViewer) ancestor = VisualTreeHelper.GetParent(ancestor);
+                    var stripHost = ancestor as ScrollViewer;
+                    if (stripHost is null || stripHost.ScrollableHeight > 0.5)
+                        throw new Exception($"FAIL: the layout strip clips the layout names (scrollable {stripHost?.ScrollableHeight:0.#}, extent {stripHost?.ExtentHeight:0.#}, viewport {stripHost?.ViewportHeight:0.#})");
+                    if (!FindAll<TextBlock>(strip).Any(t => t.Text.Contains("Second") && t.ActualHeight >= 11))
+                        throw new Exception("FAIL: the layout strip does not show a full name under its picture");
+                    linkStudio.Close();
+                    linkMain.Close();
+                    Console.WriteLine("PASS: a part copied between layouts stays linked (move, Enter and Break link all work)");
+                    Console.WriteLine("PASS: Escape deselects a studio element, and the layout strip shows whole names");
+                }
+
+                // ---------- baseball bases: the icon element and the console's lit base squares ----------
+                {
+                    var basesEngine = new GameEngine();
+                    basesEngine.NewGame("baseball");
+                    if (basesEngine.Sports.All.Last().Id != "generic")
+                        throw new Exception("FAIL: the Custom sport is not at the bottom of the sport list");
+                    var basesItem = new ScorebugElement { Name = "Bases", Content = "", Icon = ScorebugIcon.Bases, Width = 220, Height = 150, Foreground = "#FFFF8800" };
+                    var basesView = new ScorebugIconView(basesItem, () => basesEngine.State);
+                    basesView.Measure(new Size(220, 150));
+                    basesView.Arrange(new Rect(0, 0, 220, 150));
+                    var diamonds = FindAll<System.Windows.Shapes.Rectangle>(basesView).ToArray();
+                    if (diamonds.Length != 3)
+                        throw new Exception($"FAIL: the bases element draws {diamonds.Length} bases for 3");
+                    if (diamonds.Any(d => d.Fill is not SolidColorBrush)) throw new Exception("FAIL: an empty base is not a faint outline");
+                    basesEngine.SetSportValue("baseball.first", 1);
+                    basesEngine.SetSportValue("baseball.third", 1);
+                    basesView.Update();
+                    var lit = FindAll<System.Windows.Shapes.Rectangle>(basesView).Count(d => d.Fill is SolidColorBrush brush && brush.Color.A > 200);
+                    if (lit != 2) throw new Exception($"FAIL: {lit} of 3 bases lit for two runners");
+                    var panel = new ControlPanelView(basesEngine, new RemoteHostProbe());
+                    panel.Width = 900;
+                    panel.Measure(new Size(900, 700));
+                    panel.Arrange(new Rect(0, 0, 900, 700));
+                    panel.UpdateLayout();
+                    var firstBase = FindAll<ToggleButton>(panel).FirstOrDefault(t => (t.Tag as string) == "sport.baseball.first.toggle");
+                    if (firstBase?.Content is not StackPanel baseContent)
+                        throw new Exception("FAIL: a baseball runner control is still a word, not a square base");
+                    var square = baseContent.Children.OfType<Border>().FirstOrDefault();
+                    if (square is null) throw new Exception("FAIL: the base control has no square");
+                    if (square.Background is not SolidColorBrush onBrush || onBrush.Color.A < 200)
+                        throw new Exception("FAIL: an occupied base did not light up");
+                    Console.WriteLine("PASS: baseball draws three bases (lit for runners) and the console flags are square bases");
+                }
+
+                // ---------- phone remote: password, state and actions ----------
+                var remoteEngine = new GameEngine();
+                remoteEngine.NewGame("basketball");
+                var remoteHost = new RemoteHostProbe();
+                var remotePanel = new ControlPanelView(remoteEngine, remoteHost);
+                remotePanel.UpdateLayout();
+                var remotePort = FreePort();
+                using (var remote = new RemoteControlServer(remoteEngine, remoteHost, id => { remotePanel.Execute(id); return true; }, Dispatcher.CurrentDispatcher, remotePort, "hunter2"))
+                {
+                    remote.Start();
+                    if (!remote.Running) throw new Exception("FAIL: the remote did not start");
+                    var cookies = new System.Net.CookieContainer();
+                    using var http = new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler { CookieContainer = cookies, AllowAutoRedirect = false });
+                    var baseUrl = $"http://127.0.0.1:{remotePort}";
+                    var anonymous = WaitWithPump(http.GetAsync(baseUrl + "/api/state"));
+                    if ((int)anonymous.StatusCode != 401)
+                        throw new Exception($"FAIL: the remote served state without a password ({(int)anonymous.StatusCode})");
+                    var wrong = WaitWithPump(http.PostAsync(baseUrl + "/login", new System.Net.Http.StringContent("password=nope", System.Text.Encoding.UTF8, "application/x-www-form-urlencoded")));
+                    if ((int)wrong.StatusCode != 200 || cookies.Count != 0)
+                        throw new Exception("FAIL: a wrong remote password was accepted");
+                    var signIn = WaitWithPump(http.PostAsync(baseUrl + "/login", new System.Net.Http.StringContent("password=hunter2", System.Text.Encoding.UTF8, "application/x-www-form-urlencoded")));
+                    if ((int)signIn.StatusCode != 303)
+                        throw new Exception($"FAIL: the right remote password did not sign in ({(int)signIn.StatusCode})");
+                    var stateJson = WaitWithPump(http.GetStringAsync(baseUrl + "/api/state"));
+                    if (!stateJson.Contains("basketball", StringComparison.Ordinal) || !stateJson.Contains("basketball.fouls.home", StringComparison.Ordinal))
+                        throw new Exception("FAIL: the remote state is missing the sport or its values");
+                    // The remote page carries the app's own brand mark, served by the remote itself.
+                    var logo = WaitWithPump(http.GetAsync(baseUrl + "/logo.png"));
+                    if ((int)logo.StatusCode != 200 || logo.Content.Headers.ContentType?.MediaType != "image/png")
+                        throw new Exception($"FAIL: the remote logo is missing ({(int)logo.StatusCode})");
+                    var panelHtml = WaitWithPump(http.GetStringAsync(baseUrl + "/"));
+                    if (!panelHtml.Contains("src=\"/logo.png\"", StringComparison.Ordinal))
+                        throw new Exception("FAIL: the remote page does not show the brand mark");
+                    var action = WaitWithPump(http.PostAsync(baseUrl + "/api/action", new System.Net.Http.StringContent("a=away.score.plus2", System.Text.Encoding.UTF8, "application/x-www-form-urlencoded")));
+                    if ((int)action.StatusCode != 200 || remoteEngine.State.AwayScore != 2)
+                        throw new Exception($"FAIL: a remote score button did not reach the game ({(int)action.StatusCode}, {remoteEngine.State.AwayScore})");
+                    var sportAction = WaitWithPump(http.PostAsync(baseUrl + "/api/action", new System.Net.Http.StringContent("a=sport.set&control=basketball.fouls.home&value=4", System.Text.Encoding.UTF8, "application/x-www-form-urlencoded")));
+                    if ((int)sportAction.StatusCode != 200 || remoteEngine.State.HomeFouls != 4)
+                        throw new Exception("FAIL: a remote sport value did not reach the game");
+                    var liveOff = WaitWithPump(http.PostAsync(baseUrl + "/api/action", new System.Net.Http.StringContent("a=live.off", System.Text.Encoding.UTF8, "application/x-www-form-urlencoded")));
+                    if ((int)liveOff.StatusCode != 200 || remoteHost.LiveScoreClock)
+                        throw new Exception("FAIL: the remote could not switch the live score off");
+                    Console.WriteLine("PASS: the phone remote needs its password, serves the console state and drives score, sport values and live output");
+                }
             }
 
             Console.WriteLine("ALL UI SMOKE CHECKS PASSED");
@@ -2765,6 +2978,35 @@ internal static class Program
         }
     }
 
+
+    /// <summary>Waits for an HTTP call while keeping the UI dispatcher pumping, so the remote can marshal its actions.</summary>
+    static T WaitWithPump<T>(Task<T> task)
+    {
+        while (!task.IsCompleted) Pump(TimeSpan.FromMilliseconds(20));
+        return task.GetAwaiter().GetResult();
+    }
+
+    static int FreePort()
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    /// <summary>A host for a standalone console: enough for the remote to publish and switch live values.</summary>
+    sealed class RemoteHostProbe : IControlPanelHost
+    {
+        public int Published { get; private set; }
+        public int Shifted { get; private set; }
+        public void PublishOutput() => Published++;
+        public bool LiveScoreClock { get; set; } = true;
+        public bool HasStagedChanges => false;
+        public void OpenNewPanel() { }
+        public string LayoutLabel => "1 · Test";
+        public void ShiftLayout(int delta) => Shifted += delta;
+    }
 
     static IEnumerable<T> FindAll<T>(DependencyObject root) where T : DependencyObject
     {

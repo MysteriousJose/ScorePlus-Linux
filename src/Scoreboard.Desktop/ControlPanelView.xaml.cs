@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -40,10 +41,18 @@ public partial class ControlPanelView : UserControl
     readonly TextBox _quarterValue = new();
     readonly Button _ballSide;
     readonly Dictionary<string, Stepper> _statValues = [];
+    // The sport's own values: a typed-over number per counter, a switch per flag.
+    readonly Dictionary<string, TextBox> _sportValueBoxes = [];
+    readonly Dictionary<string, ToggleButton> _sportFlagButtons = [];
+    // Baseball's three runner flags are drawn as square bases that light up rather than as words.
+    readonly Dictionary<string, Border> _baseSquares = [];
+    readonly Dictionary<string, TextBlock> _baseLabels = [];
+    static readonly Brush BaseLit = Freeze(Color.FromRgb(0x38, 0xD7, 0xA3));
+    static readonly Brush BaseEmpty = Freeze(Color.FromArgb(0x66, 0x38, 0xD7, 0xA3));
+    string _sportControlsSignature = "";
     string? _awayLogoLoaded;
     string? _homeLogoLoaded;
     string _scoreSignature = "";
-    string _sportSignature = "";
     string _statsSignature = "";
     bool _syncingLive;
     bool _loadingNames;
@@ -108,6 +117,10 @@ public partial class ControlPanelView : UserControl
         HomeName.KeyDown += Name_KeyDown;
         AwayName.LostKeyboardFocus += Name_LostFocus;
         HomeName.LostKeyboardFocus += Name_LostFocus;
+
+        // Update Output keeps its designed fill instead of the generic panel surface, so the
+        // operator's secondary interface colour is what the main action actually wears.
+        ThemeManager.SetSkipTheme(UpdateButton, true);
 
         _engine.Changed += Refresh;
         Loaded += (_, _) => { ApplyKeybindHints(); Refresh(); };
@@ -257,7 +270,7 @@ public partial class ControlPanelView : UserControl
         PlayClockRow.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
         // Football has a play clock; showing a shot clock there as well only crowded the page.
         ShotClockRow.Visibility = _engine.Sport.HasShotClock && !football ? Visibility.Visible : Visibility.Collapsed;
-        RebuildSportButtons(s);
+        BuildSportControls(s);
 
         var staged = _host.HasStagedChanges;
         StagedText.Text = staged ? "●  NOT ON AIR YET — press Update Output" : "EVERYTHING ON AIR";
@@ -373,41 +386,199 @@ public partial class ControlPanelView : UserControl
             options.Select(o => new Stepper.StepButton($"−{o}", -o, $"home.score.minus{o}")));
     }
 
-    void RebuildSportButtons(GameState state)
+    /// <summary>
+    /// Draws the sport's own values — bases, count, power play, overs, sets — as one compact control
+    /// each, so a baseball or hockey game has everything it needs without ever scrolling the page.
+    /// </summary>
+    void BuildSportControls(GameState state)
     {
-        var signature = state.SportId;
-        if (signature == _sportSignature) return;
-        _sportSignature = signature;
-        OtherDetail.Children.Clear();
-        foreach (var (label, actionId) in SportActions(state.SportId))
+        var signature = state.SportId + "|" + string.Join("|", state.Controls.Select(c => $"{c.Id}:{c.Label}:{c.Kind}:{c.Min}:{c.Max}:{c.OnText}"));
+        if (signature != _sportControlsSignature)
         {
-            var button = new Button { Content = label, Tag = actionId, FontSize = 11, Padding = new Thickness(6, 6, 6, 6), Margin = new Thickness(2) };
-            button.Click += Action_Click;
-            OtherDetail.Children.Add(button);
+            _sportControlsSignature = signature;
+            OtherDetail.Children.Clear();
+            _sportValueBoxes.Clear();
+            _sportFlagButtons.Clear();
+            _baseSquares.Clear();
+            _baseLabels.Clear();
+            foreach (var control in state.Controls)
+                OtherDetail.Children.Add(control.Kind == SportControlKind.Flag ? BuildFlagControl(control) : BuildCounterControl(control));
         }
+        RefreshSportControlValues(state);
     }
 
-    static IEnumerable<(string Label, string ActionId)> SportActions(string sportId) => sportId switch
+    /// <summary>A compact − / value / + control: label on the left, typed-over value in the middle.</summary>
+    FrameworkElement BuildCounterControl(SportControl control)
     {
-        "basketball" =>
-        [
-            ("Visitors foul", "basketball.foul.away"), ("Home foul", "basketball.foul.home"),
-            ("Shot clock ±", "basketball.shotclock.toggle"), ("Reset 24", "basketball.shotclock.reset")
-        ],
-        "baseball" =>
-        [
-            ("Ball", "baseball.ball"), ("Strike", "baseball.strike"), ("Foul ball", "baseball.foul"), ("Out", "baseball.out"),
-            ("Visitors hit", "baseball.hit.away"), ("Home hit", "baseball.hit.home")
-        ],
-        "soccer" =>
-        [
-            ("Visitors 🟨", "soccer.yellow.away"), ("Home 🟨", "soccer.yellow.home"),
-            ("Visitors 🟥", "soccer.red.away"), ("Home 🟥", "soccer.red.home"),
-            ("Visitors shot", "soccer.shot.away"), ("Home shot", "soccer.shot.home"),
-            ("Visitors corner", "soccer.corner.away"), ("Home corner", "soccer.corner.home")
-        ],
-        _ => []
-    };
+        var grid = new Grid { Width = 186, Height = 34, Margin = new Thickness(0, 0, 6, 5) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var i = 0; i < 3; i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var label = new TextBlock
+        {
+            Text = control.Label.ToUpperInvariant(),
+            FontSize = 10,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x93, 0xA0, 0xB2)),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(4, 0, 4, 0),
+            ToolTip = control.Label
+        };
+        grid.Children.Add(label);
+
+        var minus = CompactButton("−", $"sport.{control.Id}.minus", $"{control.Label} −1");
+        Grid.SetColumn(minus, 1);
+        grid.Children.Add(minus);
+
+        var value = new TextBox
+        {
+            Text = "0",
+            Width = 38,
+            Height = 30,
+            FontSize = 15,
+            FontWeight = FontWeights.Bold,
+            TextAlignment = TextAlignment.Center,
+            Padding = new Thickness(0),
+            Margin = new Thickness(2, 0, 2, 0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            ToolTip = $"{control.Label} — click to type a value, then press Enter"
+        };
+        value.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                CommitSportValue(control);
+                // Stay in the box: Enter only settles the value, it never leaves the console.
+                value.SelectAll();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                value.Text = SportValues.Read(_engine.State, control.Id).ToString();
+                Keyboard.ClearFocus();
+                e.Handled = true;
+            }
+        };
+        value.LostKeyboardFocus += (_, _) => CommitSportValue(control);
+        Grid.SetColumn(value, 2);
+        grid.Children.Add(value);
+
+        var plus = CompactButton("+", $"sport.{control.Id}.plus", $"{control.Label} +1");
+        Grid.SetColumn(plus, 3);
+        grid.Children.Add(plus);
+
+        _sportValueBoxes[control.Id] = value;
+        return grid;
+    }
+
+    /// <summary>An on/off sport value — power play, a runner on base, top or bottom of the inning.</summary>
+    FrameworkElement BuildFlagControl(SportControl control)
+    {
+        var toggle = new ToggleButton
+        {
+            Height = 34,
+            MinWidth = 150,
+            Padding = new Thickness(9, 4, 9, 4),
+            Margin = new Thickness(0, 0, 6, 5),
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Tag = $"sport.{control.Id}.toggle",
+            Content = control.Label.ToUpperInvariant()
+        };
+        // A runner on base is a base, not an abbreviation: a square that fills in when occupied.
+        if (IsBaseControl(control.Id))
+        {
+            var baseLabel = new TextBlock
+            {
+                Text = control.Id switch
+                {
+                    "baseball.first" => "1ST",
+                    "baseball.second" => "2ND",
+                    _ => "3RD"
+                },
+                FontSize = 10,
+                FontWeight = FontWeights.Bold,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var square = new Border
+            {
+                Width = 16,
+                Height = 16,
+                CornerRadius = new CornerRadius(3),
+                BorderThickness = new Thickness(1.5),
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var content = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+            content.Children.Add(square);
+            content.Children.Add(baseLabel);
+            toggle.Content = content;
+            toggle.ToolTip = $"{control.Label} — click to set or clear the runner";
+            _baseSquares[control.Id] = square;
+            _baseLabels[control.Id] = baseLabel;
+        }
+        toggle.Click += Action_Click;
+        _sportFlagButtons[control.Id] = toggle;
+        return toggle;
+    }
+
+    static bool IsBaseControl(string id) =>
+        id is "baseball.first" or "baseball.second" or "baseball.third";
+
+    Button CompactButton(string text, string actionId, string tip)
+    {
+        var button = new Button
+        {
+            Content = text,
+            Tag = actionId,
+            Width = 30,
+            Height = 30,
+            MinWidth = 0,
+            MinHeight = 0,
+            Padding = new Thickness(0),
+            Margin = new Thickness(1, 0, 1, 0),
+            FontSize = 14,
+            ToolTip = tip
+        };
+        button.Click += Action_Click;
+        return button;
+    }
+
+    void CommitSportValue(SportControl control)
+    {
+        if (!_sportValueBoxes.TryGetValue(control.Id, out var box)) return;
+        if (int.TryParse(box.Text.Trim(), out var value)) _engine.SetSportValue(control.Id, value);
+        box.Text = SportValues.Read(_engine.State, control.Id).ToString();
+    }
+
+    void RefreshSportControlValues(GameState state)
+    {
+        foreach (var control in state.Controls)
+        {
+            if (control.Kind == SportControlKind.Flag)
+            {
+                if (!_sportFlagButtons.TryGetValue(control.Id, out var toggle)) continue;
+                var on = SportValues.Read(state, control.Id) != 0;
+                toggle.IsChecked = on;
+                if (_baseSquares.TryGetValue(control.Id, out var square))
+                {
+                    square.Background = on ? BaseLit : Brushes.Transparent;
+                    square.BorderBrush = on ? BaseLit : BaseEmpty;
+                    if (_baseLabels.TryGetValue(control.Id, out var label)) label.Foreground = on ? BaseLit : null;
+                    continue;
+                }
+                toggle.Content = on ? $"{control.Label.ToUpperInvariant()} · {control.FlagOnLabel}" : $"{control.Label.ToUpperInvariant()} · {control.FlagOffLabel}";
+            }
+            else if (_sportValueBoxes.TryGetValue(control.Id, out var box) && !box.IsKeyboardFocused)
+            {
+                box.Text = SportValues.Read(state, control.Id).ToString();
+            }
+        }
+    }
 
     void RefreshStats()
     {
@@ -420,7 +591,6 @@ public partial class ControlPanelView : UserControl
             _statValues.Clear();
             foreach (var stat in stats) StatsHost.Children.Add(BuildStatRow(stat));
         }
-        StatsEmpty.Visibility = stats.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var stat in stats)
             if (_statValues.TryGetValue(stat.Id, out var value)) value.Text = stat.Display;
     }
@@ -604,8 +774,29 @@ public partial class ControlPanelView : UserControl
             case "soccer.corner.away": _engine.AddSoccerCorner(false); break;
             case "global.undo": _engine.Undo(); break;
             default:
+                if (TrySportAction(actionId)) break;
                 if (TryScoreAction(actionId, out var home, out var amount)) _engine.Score(home, amount);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Sport values share one naming scheme — <c>sport.&lt;control id&gt;.plus</c>, <c>.minus</c> and
+    /// <c>.toggle</c> — so every sport's buttons, keybinds and the remote control use the same path.
+    /// </summary>
+    bool TrySportAction(string actionId)
+    {
+        if (!actionId.StartsWith("sport.", StringComparison.Ordinal)) return false;
+        var rest = actionId["sport.".Length..];
+        var cut = rest.LastIndexOf('.');
+        if (cut <= 0) return false;
+        var id = rest[..cut];
+        switch (rest[(cut + 1)..])
+        {
+            case "plus": _engine.AdjustSportValue(id, 1); return true;
+            case "minus": _engine.AdjustSportValue(id, -1); return true;
+            case "toggle": _engine.ToggleSportFlag(id); return true;
+            default: return false;
         }
     }
 

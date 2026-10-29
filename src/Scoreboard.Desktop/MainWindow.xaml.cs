@@ -30,6 +30,7 @@ public partial class MainWindow : Window, IControlPanelHost
     // instead of focusing the old window, so a show can spread the graphic over several displays.
     readonly List<OutputWindow> _outputs = [];
     EventLogWindow? _log;
+    RemoteControlServer? _remote;
     ScorebugCanvasView? _preview;
     AudiencePreview? _audience;
     int _eventCount = -1;
@@ -93,7 +94,12 @@ public partial class MainWindow : Window, IControlPanelHost
         ShowTab(GameControlWindow.ConsoleTab.Control);
         // The theme pass repaints every button when the window loads, which used to wipe the green
         // outline off the already-selected tab until another tab was clicked.
-        Loaded += (_, _) => ApplyTabVisuals();
+        Loaded += (_, _) =>
+        {
+            ApplyTabVisuals();
+            // The remote and the update check belong to a live window, not to the launch sequence.
+            if (!waitForLaunch) { StartRemote(); _ = CheckForUpdatesAsync(); }
+        };
 
         _panel = new ControlPanelView(_engine, this);
         ControlHost.Content = _panel;
@@ -161,6 +167,8 @@ public partial class MainWindow : Window, IControlPanelHost
         _savedStateJson = _engine.ExportJson();
         SetWorkspaceEnabled(true);
         Activate();
+        StartRemote();
+        _ = CheckForUpdatesAsync();
     }
 
     /// <summary>Locks or unlocks everything inside the window while the launch box is up.</summary>
@@ -306,9 +314,11 @@ public partial class MainWindow : Window, IControlPanelHost
     /// </summary>
     void ApplyTabVisuals()
     {
-        var on = (Brush)new BrushConverter().ConvertFromString("#123C33")!;
+        // Active-tab colours follow the operator's accent from Preferences.
+        var accent = UiPalette.Accent(_preferences);
+        var on = UiPalette.Frozen(UiPalette.Soft(accent));
         var off = (Brush)new BrushConverter().ConvertFromString("#141A23")!;
-        var onBorder = (Brush)new BrushConverter().ConvertFromString("#38D7A3")!;
+        var onBorder = UiPalette.Frozen(accent);
         var offBorder = (Brush)new BrushConverter().ConvertFromString("#28323F")!;
         var muted = (Brush)new BrushConverter().ConvertFromString("#93A0B2")!;
         Button[] tabs = [ControlTab, MediaTab, RosterTab];
@@ -392,6 +402,54 @@ public partial class MainWindow : Window, IControlPanelHost
         _preview?.ApplyNow();
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.RefreshPreview();
         foreach (var output in _outputs) output.RefreshGraphic();
+        ApplyTabVisuals();
+        // Turning the remote on or changing its password takes effect without a restart.
+        StartRemote();
+    }
+
+    /// <summary>
+    /// Starts (or restarts) the phone remote from the saved preferences. It is off unless enabled and
+    /// protected by a password, so an unattended install never exposes a control surface.
+    /// </summary>
+    void StartRemote()
+    {
+        _remote?.Dispose();
+        _remote = null;
+        if (!_preferences.RemoteEnabled || string.IsNullOrWhiteSpace(_preferences.RemotePassword)) return;
+        var server = new RemoteControlServer(_engine, this, id => { _panel.Execute(id); return true; }, Dispatcher, _preferences.RemotePort, _preferences.RemotePassword);
+        server.Status += message => Dispatcher.BeginInvoke(new Action(() => StatusText.Text = message));
+        server.Start();
+        _remote = server;
+    }
+
+    /// <summary>
+    /// Looks for a newer installed build, then downloads, verifies and starts its installer. Only an
+    /// installed copy checks; a folder build stays exactly as it is.
+    /// </summary>
+    async Task CheckForUpdatesAsync()
+    {
+        if (!_preferences.CheckForUpdates || string.IsNullOrWhiteSpace(_preferences.UpdateFeedUrl) || !AppInfo.IsInstalled) return;
+        var manifest = await UpdateChecker.CheckAsync(_preferences.UpdateFeedUrl);
+        if (manifest is null) return;
+        var detail = $"Version {manifest.Version} is ready (this build is {AppInfo.Version}). " +
+                     (string.IsNullOrWhiteSpace(manifest.Notes) ? "Download and install it now?" : $"{manifest.Notes}\n\nDownload and install it now?");
+        if (!ConfirmWindow.Ask(this, _preferences.Theme, "UPDATE AVAILABLE", detail, "Download and install")) return;
+        StatusText.Text = $"UPDATING · downloading {manifest.Version}";
+        var (path, error) = await UpdateChecker.DownloadAsync(manifest);
+        if (path is null)
+        {
+            StatusText.Text = "UPDATE FAILED";
+            NoticeWindow.Tell(this, "UPDATE FAILED", error ?? "The update could not be downloaded.", warning: true);
+            return;
+        }
+        if (!UpdateChecker.Run(path))
+        {
+            StatusText.Text = "UPDATE COULD NOT START";
+            NoticeWindow.Tell(this, "UPDATE COULD NOT START", $"The new version was downloaded to {path}, but Windows did not start the installer.", warning: true);
+            return;
+        }
+        _closingAfterPrompt = true;
+        Close();
     }
 
     void NewPanel_Click(object sender, RoutedEventArgs e) => OpenControlPanel();
@@ -673,6 +731,14 @@ public partial class MainWindow : Window, IControlPanelHost
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        // Enter settles whatever is being typed and leaves the window open. There is no default
+        // button on this window, so without this an Enter in a field would do nothing at all.
+        if (key == Key.Enter && Keyboard.FocusedElement is TextBox box && !box.AcceptsReturn)
+        {
+            Keyboard.ClearFocus();
+            e.Handled = true;
+            return;
+        }
         if (_panel.TryHandleKey(key, Keyboard.Modifiers)) { e.Handled = true; return; }
         base.OnPreviewKeyDown(e);
     }
@@ -681,6 +747,7 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         _engine.Changed -= Refresh;
         _engine.Changed -= EngineChanged;
+        _remote?.Dispose();
         _program.Dispose();
         _preview?.Dispose();
         _session.Dispose();
