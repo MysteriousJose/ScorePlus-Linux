@@ -62,6 +62,9 @@ public partial class MainWindow : Window, IControlPanelHost
     public MainWindow(LaunchMode? mode = null, string? gamePath = null, bool waitForLaunch = false)
     {
         InitializeComponent();
+        // Follow the window onto portrait monitors and laptops at 150% scaling instead of hanging
+        // the console off the screen; the console itself is reflowable down to its minimum width.
+        ScreenFit.Track(this);
         _session = new MediaSession(_preferences);
         _playback = _session.Playback;
         ThemeManager.Apply(this, _preferences.Theme);
@@ -441,7 +444,9 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void NewGame_Click(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show("Start a new game? This resets everything about the game — score, clocks, down, possession, stats and the on-air graphic. Your scorebug design is kept.", "New game", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (!ConfirmWindow.Ask(this, _preferences.Theme, "START A NEW GAME",
+                "This resets everything about the game — score, clocks, down, possession, stats and the on-air graphic. Your scorebug design and rosters are kept.",
+                "Start new game", destructive: true)) return;
         StartNewGame(SportSelector.SelectedValue as string ?? "basketball");
     }
 

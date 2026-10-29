@@ -46,6 +46,7 @@ public partial class GameControlWindow : Window
     public GameControlWindow(GameEngine engine, IControlPanelHost host, MediaSession? media = null)
     {
         InitializeComponent();
+        ScreenFit.Track(this);
         _engine = engine;
         if (host is DelegateHost detached) detached.NewPanel = () => NewPanelRequested?.Invoke();
         Panel = new ControlPanelView(engine, host);
@@ -65,6 +66,7 @@ public partial class GameControlWindow : Window
         MediaSession? media, string theme)
     {
         InitializeComponent();
+        ScreenFit.Track(this);
         _engine = engine;
         _catalog = catalog;
         Program = new ProgramSelection(catalog);

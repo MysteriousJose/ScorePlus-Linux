@@ -91,8 +91,8 @@ public partial class MediaDock : UserControl
     /// <summary>Matches the dock to the operator theme (Dark is near-black, Light is white).</summary>
     public void ApplyTheme(string theme)
     {
-        _theme = theme;
-        var light = theme == "Light";
+        _theme = ThemeManager.Resolve(theme);
+        var light = _theme == "Light";
         Set("DockPanel", light ? "#FFFFFF" : "#080808");
         Set("DockSurface", light ? "#E5EAF0" : "#141414");
         Set("DockBorder", light ? "#B9C3CE" : "#383838");

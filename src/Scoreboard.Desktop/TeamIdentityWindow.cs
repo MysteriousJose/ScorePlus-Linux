@@ -220,7 +220,7 @@ public sealed class TeamIdentityWindow : Window
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Could not import that logo: {ex.Message}", "Team details", MessageBoxButton.OK, MessageBoxImage.Warning);
+                NoticeWindow.Tell(this, "That logo could not be imported", ex.Message, warning: true);
                 return;
             }
         }

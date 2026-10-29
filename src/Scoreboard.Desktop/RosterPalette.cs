@@ -13,7 +13,7 @@ internal static class RosterPalette
 {
     public static void Apply(string theme, ResourceDictionary resources)
     {
-        var light = theme == "Light";
+        var light = ThemeManager.Resolve(theme) == "Light";
         Set(resources, "RosterPanelBrush", light ? "#E9EDF2" : "#141414");
         Set(resources, "RosterSurfaceBrush", light ? "#FFFFFF" : "#242424");
         Set(resources, "RosterSurfaceAltBrush", light ? "#E2E7ED" : "#2E2E2E");

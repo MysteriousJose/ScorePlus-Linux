@@ -13,7 +13,8 @@ public sealed class UserPreferences
     /// <summary>Bumped when the shipped defaults change, so older files take the new defaults once.</summary>
     public int Schema { get; set; }
 
-    public string Theme { get; set; } = "Dark";
+    /// <summary>"System" follows Windows' app theme; "Dark" and "Light" pin one.</summary>
+    public string Theme { get; set; } = "System";
     public bool ShowHeadingHints { get; set; }
 
     /// <summary>
@@ -81,15 +82,17 @@ public static class PreferencesStore
             preferences.Media = preferences.MediaFiles.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => new MediaEntry(p)).ToList();
         preferences.MediaFiles.Clear();
 
-        // Files written before the schema existed carried the old light default. Take the shipped
-        // defaults once (black theme, detached panel, no heading tips); later choices are respected.
-        if (preferences.Schema < 1)
+        // Files written before the schema existed carried the old light default, and schema 1 files
+        // pinned the old dark default. Take the shipped defaults once — follow Windows, no heading
+        // tips — then leave later choices alone.
+        if (preferences.Schema < 2)
         {
-            preferences.Theme = "Dark";
+            preferences.Theme = "System";
             preferences.ShowHeadingHints = false;
-            preferences.Schema = 1;
+            preferences.Schema = 2;
             try { Save(preferences); } catch { }
         }
+        if (preferences.Theme is not ("System" or "Dark" or "Light")) preferences.Theme = "System";
     }
 
     public static void Save(UserPreferences preferences)
@@ -114,11 +117,28 @@ public static class ThemeManager
     public static void SetSkipTheme(DependencyObject element, bool value) => element.SetValue(SkipThemeProperty, value);
     public static bool GetSkipTheme(DependencyObject element) => (bool)element.GetValue(SkipThemeProperty);
 
-    public static Color PanelColor(string theme) => theme == "Light" ? Color.FromRgb(255, 255, 255) : Color.FromRgb(23, 28, 37);
+    public static Color PanelColor(string theme) => Resolve(theme) == "Light" ? Color.FromRgb(255, 255, 255) : Color.FromRgb(23, 28, 37);
+
+    /// <summary>
+    /// Turns the stored choice into the theme to paint with. "System" reads Windows' app theme
+    /// (Settings → Personalisation → Colours), so the operator surface can follow the desktop.
+    /// </summary>
+    public static string Resolve(string? theme)
+    {
+        if (string.Equals(theme, "Light", StringComparison.OrdinalIgnoreCase)) return "Light";
+        if (!string.Equals(theme, "System", StringComparison.OrdinalIgnoreCase)) return "Dark";
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return key?.GetValue("AppsUseLightTheme") is int light && light != 0 ? "Light" : "Dark";
+        }
+        catch { return "Dark"; }
+    }
 
     public static void Apply(Window window, string theme)
     {
-        var light = theme == "Light";
+        var light = Resolve(theme) == "Light";
         var background = light ? "#FFF3F5F8" : "#FF000000";
         var panel = light ? "#FFFFFFFF" : "#FF080808";
         var surface = light ? "#FFE5EAF0" : "#FF141414";

@@ -141,7 +141,8 @@ public partial class SportProfileWindow : Window
     void Reset_Click(object sender, RoutedEventArgs e)
     {
         if (_selected is null || !_catalog.IsOverridden(_selected.Id)) return;
-        if (MessageBox.Show($"Discard your saved changes to ‘{_selected.Name}’ and restore the original preset?", "Reset to preset", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if (!ConfirmWindow.Ask(this, PreferencesStore.Load().Theme, "RESET TO PRESET",
+                $"Discard your saved changes to ‘{_selected.Name}’ and restore the original preset?", "Reset to preset")) return;
         _catalog.ResetOverride(_selected.Id);
         Changed = true;
         RefreshList(_selected.Id);
@@ -152,7 +153,8 @@ public partial class SportProfileWindow : Window
     void Delete_Click(object sender, RoutedEventArgs e)
     {
         if (_selected is null || _catalog.IsBuiltIn(_selected.Id)) return;
-        if (MessageBox.Show($"Delete the custom sport ‘{_selected.Name}’? Existing games keep their saved settings.", "Delete custom sport", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (!ConfirmWindow.Ask(this, PreferencesStore.Load().Theme, "DELETE CUSTOM SPORT",
+                $"Delete the custom sport ‘{_selected.Name}’? Existing games keep their saved settings.", "Delete sport", destructive: true)) return;
         _catalog.Delete(_selected.Id);
         Changed = true;
         _selected = null;

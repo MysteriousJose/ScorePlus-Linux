@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 
@@ -34,10 +35,29 @@ public sealed class RosterPlayer
 }
 
 /// <summary>A team roster: an ordered list of players that can be shared by every game.</summary>
-public sealed class Roster
+public sealed class Roster : INotifyPropertyChanged
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
-    public string Name { get; set; } = "New roster";
+
+    string _name = "New roster";
+
+    /// <summary>
+    /// The roster's name. It notifies, because the name is bound wherever the roster is picked or
+    /// listed: without this a rename changed the library but every open list kept the old text.
+    /// </summary>
+    public string Name
+    {
+        get => _name;
+        set
+        {
+            if (_name == value) return;
+            _name = value ?? "";
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Name)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public List<RosterPlayer> Players { get; set; } = [];
 
     public static Roster Create(string name) => new() { Name = name.Trim() is { Length: > 0 } trimmed ? trimmed : "New roster" };

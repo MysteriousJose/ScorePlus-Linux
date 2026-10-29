@@ -59,7 +59,7 @@ public sealed class Stepper : Grid
             Children.Add(label);
         }
 
-        _plusRow.Margin = new Thickness(0, 0, 0, 4);
+        _plusRow.Margin = new Thickness(0, 0, 0, 3);
         SetRow(_plusRow, 1);
         Children.Add(_plusRow);
 
@@ -80,7 +80,7 @@ public sealed class Stepper : Grid
         SetRow(_value, 2);
         Children.Add(_value);
 
-        _minusRow.Margin = new Thickness(0, 4, 0, 0);
+        _minusRow.Margin = new Thickness(0, 3, 0, 0);
         SetRow(_minusRow, 3);
         Children.Add(_minusRow);
     }
@@ -126,10 +126,10 @@ public sealed class Stepper : Grid
             {
                 Content = item.Text,
                 FontSize = 13,
-                Padding = new Thickness(2, 9, 2, 9),
+                Padding = new Thickness(2, 6, 2, 6),
                 Margin = new Thickness(2, 0, 2, 0),
                 MinWidth = 0,
-                MinHeight = 34,
+                MinHeight = 30,
                 Tag = item.ActionId,
                 ToolTip = item.Tip
             };
