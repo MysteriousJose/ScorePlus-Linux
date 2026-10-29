@@ -840,7 +840,7 @@ public partial class ScorebugEditorWindow : Window
         }
         catch(Exception ex)
         {
-            MessageBox.Show(this,$"Could not import that font: {ex.Message}","Scorebug Studio",MessageBoxButton.OK,MessageBoxImage.Warning);
+            NoticeWindow.Tell(this,"That font could not be imported",ex.Message,warning:true);
         }
     }
 
@@ -876,10 +876,10 @@ public partial class ScorebugEditorWindow : Window
     {
         if(_catalog.Displays.Count<=1)
         {
-            MessageBox.Show(this,"A game needs at least one display.","Scorebug Studio",MessageBoxButton.OK,MessageBoxImage.Information);
+            NoticeWindow.Tell(this,"A game needs one display","A game needs at least one display, so the last one cannot be deleted.");
             return;
         }
-        if(MessageBox.Show(this,$"Delete the display \"{_catalog.ActiveDisplay.Name}\" and its {_catalog.Layouts.Count} layout(s)?","Scorebug Studio",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;
+        if(!ConfirmWindow.Ask(this,_theme,"DELETE DISPLAY",$"Delete the display \"{_catalog.ActiveDisplay.Name}\" and its {_catalog.Layouts.Count} layout(s)?","Delete display",destructive:true))return;
         ClearSelection();
         _catalog.RemoveDisplay(_catalog.ActiveDisplayIndex);
         Render();
@@ -1003,10 +1003,10 @@ public partial class ScorebugEditorWindow : Window
     {
         if(_catalog.Layouts.Count<=1)
         {
-            MessageBox.Show(this,"A game needs at least one scorebug layout.","Scorebug Studio",MessageBoxButton.OK,MessageBoxImage.Information);
+            NoticeWindow.Tell(this,"A game needs one layout","A game needs at least one scorebug layout, so the last one cannot be deleted.");
             return;
         }
-        if(MessageBox.Show(this,$"Delete the layout \"{_catalog.Layout.Name}\"?","Scorebug Studio",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;
+        if(!ConfirmWindow.Ask(this,_theme,"DELETE LAYOUT",$"Delete the layout \"{_catalog.Layout.Name}\"?","Delete layout",destructive:true))return;
         ClearSelection();
         _catalog.RemoveLayout(_catalog.ActiveIndex);
         Render();

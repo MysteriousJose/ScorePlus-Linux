@@ -630,7 +630,9 @@ public partial class ControlPanelView : UserControl
     {
         if (_engine.State.SportId != "football") return;
         var owner = Window.GetWindow(this);
-        if (_engine.State.Down == 4 && MessageBox.Show(owner, "Fourth down: start a new series and reset distance?", "New series", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (_engine.State.Down == 4
+            && !ConfirmWindow.Ask(owner, PreferencesStore.Load().Theme, "NEW SERIES",
+                "Fourth down: start a new series and reset distance?", "Start new series"))
             return;
         _engine.AdvanceDown();
     }

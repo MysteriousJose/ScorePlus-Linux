@@ -381,6 +381,74 @@ internal static class Program
             enterPrefsWindow.Close();
             Console.WriteLine("PASS: Enter in a preference field saves and leaves the page open");
 
+            // Export… asks what to write. Players used to be reachable only through the save dialog's
+            // "file type" list, which read as though a player could not be exported at all.
+            {
+                RosterStore.Book.Rosters.Clear();
+                var exportRoster = RosterStore.Book.Add("Export test");
+                var exportPlayer = exportRoster.AddPlayer();
+                exportPlayer.Number = 9; exportPlayer.Name = "Ada"; exportPlayer.Position = "QB";
+                RosterStore.Save();
+                var exportEngine = new GameEngine();
+                exportEngine.NewGame("football");
+                exportEngine.AssignRoster(true, exportRoster.Id);
+                var exportPanel = new RosterPanel();
+                exportPanel.Attach(exportEngine, true);
+                exportPanel.UpdateLayout();
+                RosterPanel.ExportTarget? picked = null;
+                var exportBox = exportPanel.BuildExportWindow(null, target => picked = target);
+                exportBox.Show();
+                exportBox.UpdateLayout();
+                var exportButtons = FindAll<Button>(exportBox);
+                if (exportButtons.All(b => (b.Content as string) != "Whole roster (.spr)"))
+                    throw new Exception("FAIL: the export box cannot write a roster");
+                var playerExport = exportButtons.FirstOrDefault(b => (b.Content as string)?.StartsWith("Player ·") == true)
+                    ?? throw new Exception("FAIL: the export box cannot write a player");
+                if (!playerExport.IsEnabled)
+                    throw new Exception("FAIL: the player export button is disabled while a player is highlighted");
+                if ((playerExport.Content as string)?.Contains("Ada") != true)
+                    throw new Exception($"FAIL: the export box does not name the player it would write ('{playerExport.Content}')");
+                // Clicking closes the box itself, so the choice is all that is left to check.
+                playerExport.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                if (picked != RosterPanel.ExportTarget.Player)
+                    throw new Exception($"FAIL: the player export button reported '{picked}'");
+                // The library is shared with every later check, so put it back as it was.
+                RosterStore.Book.Rosters.Remove(exportRoster);
+                RosterStore.Save();
+                Console.WriteLine("PASS: Export offers the whole roster or the highlighted player by name");
+
+                // A renamed roster repaints wherever its name is bound, not just in the library.
+                var renamedRoster = RosterStore.Book.Add("Home roster");
+                var boundLabel = new TextBlock();
+                boundLabel.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(Roster.Name)) { Source = renamedRoster });
+                renamedRoster.Name = "Tigers";
+                if (boundLabel.Text != "Tigers")
+                    throw new Exception($"FAIL: a bound roster name still reads '{boundLabel.Text}' after renaming");
+                RosterStore.Book.Rosters.Remove(renamedRoster);
+                RosterStore.Save();
+                Console.WriteLine("PASS: renaming a roster updates every place its name is shown");
+
+                // Messages are the app's own window, never a system message box.
+                var notice = new NoticeWindow("Dark", "No roster to export", "Load or create a roster before exporting.", warning: true);
+                notice.Show();
+                notice.UpdateLayout();
+                var noticeButtons = FindAll<Button>(notice).ToArray();
+                if (noticeButtons.Length != 1 || (noticeButtons[0].Content as string) != "OK")
+                    throw new Exception("FAIL: a notice does not open with a single OK button");
+                if (!FindAll<TextBlock>(notice).Any(t => t.Text.Contains("No roster to export")))
+                    throw new Exception("FAIL: a notice does not show its heading");
+                if (notice.Background is not SolidColorBrush darkNotice || darkNotice.Color != Colors.Black)
+                    throw new Exception($"FAIL: a notice is not painted in the dark theme ({notice.Background})");
+                noticeButtons[0].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var lightNotice = new NoticeWindow("Light", "No roster to export", "Load or create a roster before exporting.");
+                lightNotice.Show();
+                lightNotice.UpdateLayout();
+                if (lightNotice.Background is not SolidColorBrush lightNoticeBackground || lightNoticeBackground.Color != Color.FromRgb(0xF3, 0xF5, 0xF8))
+                    throw new Exception($"FAIL: a notice does not follow the light theme ({lightNotice.Background})");
+                FindAll<Button>(lightNotice).First().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Console.WriteLine("PASS: messages open in the app's own themed window, not a system box");
+            }
+
             var enterEditor = new ScorebugEditorWindow(catalog, engine);
             enterEditor.Show();
             enterEditor.UpdateLayout();

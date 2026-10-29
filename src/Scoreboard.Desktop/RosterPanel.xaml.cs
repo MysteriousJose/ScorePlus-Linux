@@ -390,9 +390,9 @@ public partial class RosterPanel : UserControl
         var imported = RosterFiles.LoadRoster(path);
         if (imported is null)
         {
-            MessageBox.Show(Window.GetWindow(this)!,
-                "That file is not a ScorePlus Roster (.spr) file, or it is damaged.",
-                "Import roster", MessageBoxButton.OK, MessageBoxImage.Warning);
+            NoticeWindow.Tell(Window.GetWindow(this),
+                "That file is not a roster",
+                "The file you picked is not a ScorePlus Roster (.spr) file, or it is damaged.", warning: true);
             return;
         }
         imported.EnsureColumns(PlayerStatPresets.For(_engine.State.SportId));
@@ -411,17 +411,17 @@ public partial class RosterPanel : UserControl
         if (_engine is null) return;
         if (_roster is null)
         {
-            MessageBox.Show(Window.GetWindow(this)!,
-                "Choose or create a roster first, then import the player into it.",
-                "Import player", MessageBoxButton.OK, MessageBoxImage.Information);
+            NoticeWindow.Tell(Window.GetWindow(this),
+                "No roster to import into",
+                "Choose or create a roster first, then import the player into it.");
             return;
         }
         var imported = RosterFiles.LoadPlayer(path);
         if (imported is null)
         {
-            MessageBox.Show(Window.GetWindow(this)!,
-                "That file is not a ScorePlus Player (.spp) file, or it is damaged.",
-                "Import player", MessageBoxButton.OK, MessageBoxImage.Warning);
+            NoticeWindow.Tell(Window.GetWindow(this),
+                "That file is not a player",
+                "The file you picked is not a ScorePlus Player (.spp) file, or it is damaged.", warning: true);
             return;
         }
         _roster.Players.Add(imported);
@@ -434,33 +434,42 @@ public partial class RosterPanel : UserControl
         RosterSummary.Text = $"imported {System.IO.Path.GetFileName(path)}";
     }
 
-    /// <summary>Writes this roster as a .spr file, or the highlighted player as a .spp file.</summary>
+    /// <summary>What the Export… button writes: the whole roster, or just the highlighted player.</summary>
+    public enum ExportTarget { Roster, Player }
+
+    /// <summary>
+    /// Writes this roster as a .spr file, or the highlighted player as a .spp file. The target is a
+    /// question up front: the save dialog's "file type" list used to be the only way to reach a
+    /// player, which read as though players could not be exported at all.
+    /// </summary>
     void Export_Click(object sender, RoutedEventArgs e)
     {
         if (_engine is null || _roster is null)
         {
-            MessageBox.Show(Window.GetWindow(this)!,
-                "Load or create a roster before exporting.",
-                "Export", MessageBoxButton.OK, MessageBoxImage.Information);
+            NoticeWindow.Tell(Window.GetWindow(this),
+                "No roster to export",
+                "Load or create a roster before exporting. New roster… in the header makes one.");
+            return;
+        }
+        var choice = AskExportTarget(Window.GetWindow(this));
+        if (choice is null) return;
+        var asPlayer = choice == ExportTarget.Player;
+        if (asPlayer && _player is null)
+        {
+            NoticeWindow.Tell(Window.GetWindow(this),
+                "No player highlighted",
+                "Click the player you want in the list first, then export again.");
             return;
         }
         var dialog = new SaveFileDialog
         {
-            Title = "Export roster or player",
-            Filter = "ScorePlus Roster (*.spr)|*.spr|ScorePlus Player (*.spp)|*.spp",
-            DefaultExt = "spr",
+            Title = asPlayer ? "Export player" : "Export roster",
+            Filter = asPlayer ? "ScorePlus Player (*.spp)|*.spp" : "ScorePlus Roster (*.spr)|*.spr",
+            DefaultExt = asPlayer ? "spp" : "spr",
             AddExtension = true,
-            FileName = SafeFileName(_roster.Name)
+            FileName = asPlayer && _player is not null ? SafeFileName(_player.Name) : SafeFileName(_roster.Name)
         };
         if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
-        var asPlayer = dialog.FilterIndex == 2;
-        if (asPlayer && _player is null)
-        {
-            MessageBox.Show(Window.GetWindow(this)!,
-                "Highlight the player you want to export in the list first.",
-                "Export player", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
         try
         {
             if (asPlayer) RosterFiles.SavePlayer(dialog.FileName, _player!, _roster.Name);
@@ -468,13 +477,82 @@ public partial class RosterPanel : UserControl
         }
         catch (Exception error)
         {
-            MessageBox.Show(Window.GetWindow(this)!,
-                $"The file could not be written.\n\n{error.Message}",
-                "Export", MessageBoxButton.OK, MessageBoxImage.Warning);
+            NoticeWindow.Tell(Window.GetWindow(this),
+                "The file could not be written",
+                error.Message, warning: true);
             return;
         }
-        RosterSummary.Text = $"exported {System.IO.Path.GetFileName(dialog.FileName)}";
+        RosterSummary.Text = $"exported {(asPlayer ? "player" : "roster")} · {System.IO.Path.GetFileName(dialog.FileName)}";
         RosterSummary.ToolTip = dialog.FileName;
+    }
+
+    /// <summary>
+    /// Asks whether to write the roster or the highlighted player, in the desk's own theme. The
+    /// player button names exactly who would be written, so nobody has to guess what is highlighted.
+    /// </summary>
+    ExportTarget? AskExportTarget(Window? owner)
+    {
+        ExportTarget? chosen = null;
+        var window = BuildExportWindow(owner, target => chosen = target);
+        return window.ShowDialog() == true ? chosen : null;
+    }
+
+    /// <summary>
+    /// The export box itself: one button per target, each naming what it writes. Built separately
+    /// from the ask so the choices can be inspected without a modal dialog.
+    /// </summary>
+    public Window BuildExportWindow(Window? owner, Action<ExportTarget> choose)
+    {
+        var window = new Window
+        {
+            Title = "Export",
+            Width = 620,
+            SizeToContent = SizeToContent.Height,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+            FontFamily = new FontFamily("Segoe UI")
+        };
+        if (owner is not null) window.Owner = owner;
+        var root = new StackPanel { Margin = new Thickness(26, 24, 26, 20) };
+        root.Children.Add(new TextBlock
+        {
+            Text = $"Export the whole {(_roster!.Name.Length > 0 ? _roster.Name : "roster")} with every player, or just the player highlighted in the list.",
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12)
+        });
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+        var playerLabel = _player is null
+            ? "Player (highlight one first)"
+            : $"Player · {(_player.Number > 0 ? $"#{_player.Number} " : "")}{_player.Name} (.spp)";
+        var rosterButton = new Button { Content = "Whole roster (.spr)", IsDefault = true, MinHeight = 34, Padding = new Thickness(13, 6, 13, 6), Margin = new Thickness(4, 0, 0, 0) };
+        var playerButton = new Button
+        {
+            Content = playerLabel,
+            IsEnabled = _player is not null,
+            MinHeight = 34,
+            Padding = new Thickness(13, 6, 13, 6),
+            Margin = new Thickness(4, 0, 0, 0)
+        };
+        var cancel = new Button { Content = "Cancel", IsCancel = true, MinHeight = 34, Padding = new Thickness(13, 6, 13, 6), Margin = new Thickness(4, 0, 0, 0) };
+        // A dialog closes by setting DialogResult; a modeless copy of the box has to be closed instead.
+        void Finish(ExportTarget? target)
+        {
+            if (target is { } value) choose(value);
+            if (System.Windows.Interop.ComponentDispatcher.IsThreadModal) window.DialogResult = true;
+            else window.Close();
+        }
+        rosterButton.Click += (_, _) => Finish(ExportTarget.Roster);
+        playerButton.Click += (_, _) => Finish(ExportTarget.Player);
+        cancel.Click += (_, _) => Finish(null);
+        buttons.Children.Add(rosterButton);
+        buttons.Children.Add(playerButton);
+        buttons.Children.Add(cancel);
+        root.Children.Add(buttons);
+        window.Content = root;
+        ThemeManager.Apply(window, _theme);
+        return window;
     }
 
     static string SafeFileName(string name)

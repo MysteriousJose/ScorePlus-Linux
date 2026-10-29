@@ -444,7 +444,9 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void NewGame_Click(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show("Start a new game? This resets everything about the game — score, clocks, down, possession, stats and the on-air graphic. Your scorebug design is kept.", "New game", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (!ConfirmWindow.Ask(this, _preferences.Theme, "START A NEW GAME",
+                "This resets everything about the game — score, clocks, down, possession, stats and the on-air graphic. Your scorebug design and rosters are kept.",
+                "Start new game", destructive: true)) return;
         StartNewGame(SportSelector.SelectedValue as string ?? "basketball");
     }
 

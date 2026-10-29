@@ -14,8 +14,8 @@ public partial class App : Application
         DispatcherUnhandledException += (_, args) =>
         {
             LogCrash(args.Exception);
-            MessageBox.Show("ScorePlus hit an unexpected error and kept your game autosave.\n\n" + args.Exception.Message,
-                "ScorePlus", MessageBoxButton.OK, MessageBoxImage.Error);
+            NoticeWindow.Tell(MainWindow, "ScorePlus hit an unexpected error",
+                "Your game autosave was kept.\n\n" + args.Exception.Message, warning: true);
             args.Handled = true;
         };
         base.OnStartup(e);
@@ -28,7 +28,7 @@ public partial class App : Application
         catch (Exception ex)
         {
             LogCrash(ex);
-            MessageBox.Show($"ScorePlus could not start: {ex.Message}", "ScorePlus", MessageBoxButton.OK, MessageBoxImage.Error);
+            NoticeWindow.Tell(null, "ScorePlus could not start", ex.Message, warning: true);
             Shutdown();
             return;
         }
