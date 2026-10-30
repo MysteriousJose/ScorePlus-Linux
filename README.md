@@ -42,6 +42,14 @@ ScorePlus builds to a **single executable** — there are no loose DLLs to sort 
 
 The script publishes the app into `dist/ScorePlus-win-x64-v1`, packs it into the installer, and leaves both `ScorePlus.exe` (run it straight from the folder) and `ScorePlusSetup.exe` (install it) in that folder. Each major version gets its own folder, so an earlier build stays available for comparison. The desktop project is configured for single-file publishing (`PublishSingleFile`, `IncludeNativeLibrariesForSelfExtract`, embedded PDBs), so no .NET runtime needs to be installed on the machine that runs it.
 
+To ship an update, use the publish script instead — it builds, hashes the setup exe, writes the update manifest beside it, and (with `--release`) creates the GitHub release with both assets through the GitHub CLI:
+
+```sh
+./scripts/publish-release.sh 1.1.0 --release --notes "Adds X, fixes Y"
+```
+
+Installed copies then offer it on their next launch. See [docs/updates.md](docs/updates.md) for the feed address and the manifest format.
+
 `ScorePlusSetup.exe` installs for the current user, so it needs no administrator rights: the app goes to `%LOCALAPPDATA%\Programs\ScorePlus`, with a Start Menu shortcut, an optional desktop shortcut, and an entry in Windows' installed-apps list. `Uninstall.exe` in that folder removes it again. The setup also accepts `/SILENT`, `/DIR=<path>`, `/NOICONS` and `/NOREG` for scripted installs.
 
 ## A typical game
@@ -81,6 +89,7 @@ src/Scoreboard.Core     Game state, engine, sport catalog and values, scorebug m
 src/Scoreboard.Desktop  WPF application: main window, control panel, audience, studio, remote
 src/ScorePlus.Setup     The installer: app payload, shortcuts, registry entry, uninstall
 scripts/build-release.sh  Publishes the app and builds the setup exe into dist/
+scripts/publish-release.sh  Builds, writes the update manifest, and publishes a GitHub release
 docs/updates.md         How the update feed works, with the manifest format
 tests/Scoreboard.Core.Tests   Headless checks for scoring, clocks, stats, profiles, reports
 tests/UiSmoke                 Loads every window and exercises the operator flows
