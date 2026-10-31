@@ -1,4 +1,5 @@
 # ScorePlus
+# Disclaimer!! The linux release for this will often be behind or skip versions, the current linux way to run it just wine until I rebuild it.
 
 **Currently in alpha. The project is updated frequently and extremely buggy. I would not recommend building unless for experimental purposes.**
 
@@ -29,7 +30,7 @@ Everything runs locally on one PC. Scores and clocks publish to the audience out
 - **Custom stats.** Add any stat — Turnovers, Penalties, Shots, Saves, or something unique. A stat can be a count (the steppers work on it) or **any text at all**: type `3rd`, `N/A`, `TBD` or a name into its box and the graphic prints exactly that. Show it on the scorebug with `{{STAT:Turnovers}}` and in the exported game report.
 - **Keybinds for everything, none by default.** Assign a key combination to any control-panel button — including **Update Output**, the **live score & clocks** switch and the ball spot's side; bindings persist between sessions, and nothing is bound until you choose it.
 - **Themes and your own accent.** The operator surface follows the **System** theme by default, so the panels match Windows' light or dark setting, with **Dark** and **Light** available to pin one in Preferences. Preferences also carries the **interface colours**: the accent that draws selected tabs, live badges and outlines, and the secondary that fills the main actions. Type a hex value or pick one, and Reset brings back the ScorePlus green. Themes and accents restyle the operator windows only; scorebug and audience artwork keep their designed colors.
-- **A phone remote, off by default.** Preferences can serve the control panel to a phone or tablet on the same network: enable it, set a password and a port, and open the address it prints (for example `http://0.0.0.1:8080`) — **Open remote** now takes you to that network address, not to localhost, so the URL in the address bar is the one a phone can use. The remote carries the whole panel: both teams (name, abbreviation, score, colour, timeouts and the timeout clock), the game clock, period, play clock, shot clock, down & distance, the ball spot and its side, possession, the sport's own values, custom stats, layout switching, Update Output, Live, Undo and **New panel**. Values are typed straight into the page and commit on **Enter**, so nothing needs a pop-up dialog, and on a phone the two teams stack above and below the clock so nothing clips. Every action runs the same code the on-screen button does. It is protected by the password (hashed, constant-time compared, with login throttling), serves nothing without a signed-in session, and never runs at all until it is switched on. Windows may ask once whether ScorePlus can accept connections; allow it on private networks for phones on the same Wi-Fi, and leave it blocked for public ones.
+- **A phone remote, off by default.** Preferences can serve the control panel to a phone or tablet on the same network: enable it, set a password and a port, and open the address it prints (for example `http://192.168.1.5:8080`) — **Open remote** now takes you to that network address, not to localhost, so the URL in the address bar is the one a phone can use. The remote carries the whole panel: both teams (name, abbreviation, score, colour, timeouts and the timeout clock), the game clock, period, play clock, shot clock, down & distance, the ball spot and its side, possession, the sport's own values, custom stats, layout switching, Update Output, Live, Undo and **New panel**. Values are typed straight into the page and commit on **Enter**, so nothing needs a pop-up dialog, and on a phone the two teams stack above and below the clock so nothing clips. Every action runs the same code the on-screen button does. It is protected by the password (hashed, constant-time compared, with login throttling), serves nothing without a signed-in session, and never runs at all until it is switched on. Windows may ask once whether ScorePlus can accept connections; allow it on private networks for phones on the same Wi-Fi, and leave it blocked for public ones.
 - **Game safety.** 100-step undo, event history, portable save/load (`.spg` ScorePlus Game files), and rolling autosaves every five seconds. The newest **eight** recoverable points are kept, one per minute of play; older ones are deleted automatically, including when the app starts. Closing a game that has not been written to a file brings up the app's own **Keep editing / Exit without saving / Save & exit** prompt, not a system message — and neither is anything else: every notice and confirmation in ScorePlus is the app's own themed window, never a Windows message box. **Delete all** on the launch screen (and in Preferences) clears every recovery point, asking for a second click first; saved `.spg` games are never touched. **New Game** starts a true blank slate — teams, logo, score, clocks, stats, folders, playlists and extra layouts all clear, leaving one factory scorebug layout — while imported media files, sport profiles, keybinds and preferences stay.
 
 ## Getting started
@@ -41,14 +42,6 @@ ScorePlus builds to a **single executable** — there are no loose DLLs to sort 
 ```
 
 The script publishes the app into `dist/ScorePlus-win-x64-v1`, packs it into the installer, and leaves both `ScorePlus.exe` (run it straight from the folder) and `ScorePlusSetup.exe` (install it) in that folder. Each major version gets its own folder, so an earlier build stays available for comparison. The desktop project is configured for single-file publishing (`PublishSingleFile`, `IncludeNativeLibrariesForSelfExtract`, embedded PDBs), so no .NET runtime needs to be installed on the machine that runs it.
-
-To ship an update, use the publish script instead — it builds, hashes the setup exe, writes the update manifest beside it, and (with `--release`) creates the GitHub release with both assets through the GitHub CLI:
-
-```sh
-./scripts/publish-release.sh 1.1.0 --release --notes "Adds X, fixes Y"
-```
-
-Installed copies then offer it on their next launch. See [docs/updates.md](docs/updates.md) for the feed address and the manifest format.
 
 `ScorePlusSetup.exe` installs for the current user, so it needs no administrator rights: the app goes to `%LOCALAPPDATA%\Programs\ScorePlus`, with a Start Menu shortcut, an optional desktop shortcut, and an entry in Windows' installed-apps list. `Uninstall.exe` in that folder removes it again. The setup also accepts `/SILENT`, `/DIR=<path>`, `/NOICONS` and `/NOREG` for scripted installs.
 
@@ -89,7 +82,6 @@ src/Scoreboard.Core     Game state, engine, sport catalog and values, scorebug m
 src/Scoreboard.Desktop  WPF application: main window, control panel, audience, studio, remote
 src/ScorePlus.Setup     The installer: app payload, shortcuts, registry entry, uninstall
 scripts/build-release.sh  Publishes the app and builds the setup exe into dist/
-scripts/publish-release.sh  Builds, writes the update manifest, and publishes a GitHub release
 docs/updates.md         How the update feed works, with the manifest format
 tests/Scoreboard.Core.Tests   Headless checks for scoring, clocks, stats, profiles, reports
 tests/UiSmoke                 Loads every window and exercises the operator flows

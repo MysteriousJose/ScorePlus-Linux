@@ -41,39 +41,17 @@ is installed.
 
 ## Publishing a release
 
-`scripts/publish-release.sh` does the whole ritual: build, checksum, manifest, upload.
-
 ```sh
-./scripts/publish-release.sh 1.4.0 --release                        # build + publish to GitHub
-./scripts/publish-release.sh 1.4.0 --release --notes "Adds X, fixes Y"
-./scripts/publish-release.sh 1.4.0                                  # build + manifest only
-./scripts/publish-release.sh 1.4.0 --release --draft                # upload, stay unpublished
+./scripts/build-release.sh 1.4.0
 ```
 
-It runs `build-release.sh`, hashes the setup exe, writes `win.json` beside the build with that
-checksum (JSON-escaped, so quotes and line breaks in the notes are safe), and — with `--release` —
-creates the tag `v1.4.0` and uploads **`ScorePlusSetup.exe`** and **`win.json`** as release assets
-through the GitHub CLI. Without `--notes` it lets `gh --generate-notes` write them from the commits.
-If the tag already exists, its two assets are replaced instead of failing. The repository is read
-from `origin`, so a fork publishes to itself.
+This writes `dist/ScorePlus-win-x64-v1/ScorePlus.exe` and `ScorePlusSetup.exe`, both stamped
+`1.4.0`. Upload the setup exe somewhere HTTPS and publish the manifest above next to it (for example
+as `win.json` in the same folder). Keep the previous setup exe available for one release so anyone
+mid-update can retry.
 
-The manifest points at the stable `latest` asset URLs, which is what makes one feed address last
-forever:
-
-```
-https://github.com/lhultimate/ScorePlus/releases/latest/download/win.json
-```
-
-Set that once in **Preferences → Updates**, and every later release only needs `--release`. Drafts
-and prereleases do not move `latest`, so a `--draft` upload stays invisible to installed copies
-until you publish it. Asset names must not change between releases; `latest` resolves by name.
-GitHub's CDN caches `latest` for a few minutes after publishing.
-
-On another host (Cloudflare Pages, S3, your own web server) the same two files work: upload
-`ScorePlusSetup.exe` and `win.json`, and set the feed to wherever `win.json` landed. The feed address
-is stored per user in `preferences.json`; it is not baked into the build, so a test install can point
-at a staging manifest without a rebuild. Keep the previous setup exe available for one release so
-anyone mid-update can retry.
+The feed address is stored per user in `preferences.json`; it is not baked into the build, so a test
+install can point at a staging manifest without a rebuild.
 
 ## Security notes
 
