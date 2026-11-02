@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Scoreboard.Core;
 // Keep the suite's default paths (sports.json, scorebug.json, autosaves) in a throwaway folder.
 var appDataPath=Path.Combine(Path.GetTempPath(),$"core-appdata-{Guid.NewGuid():N}");
@@ -276,7 +276,10 @@ try
     rosterEngine.NewGame("football");
     rosterEngine.AssignRoster(true,home.Id);
     rosterEngine.AssignRoster(false,away.Id);
-    Check(rosterEngine.State.HomePlayer?.Number==12&&rosterEngine.State.AwayPlayer?.Name=="Brown","assigning a roster puts its first player on the graphic");
+    Check(rosterEngine.State.HomePlayer is null&&rosterEngine.State.AwayPlayer is null,"assigning a roster leaves the graphic empty until a player is selected");
+    rosterEngine.SelectPlayer(true,qb.Id);
+    rosterEngine.SelectPlayer(false,wr.Id);
+    Check(rosterEngine.State.HomePlayer?.Number==12&&rosterEngine.State.AwayPlayer?.Name=="Brown","selecting a player puts them on the graphic");
     Check(ScoreboardTemplates.Bind("{{PLAYER:HOME:Name}} #{{PLAYER:HOME:NUMBER}} {{PLAYER:HOME:Position}}",rosterEngine.State)=="Smith #12 QB","player tokens print the selected player's name, number and position");
     Check(ScoreboardTemplates.Bind("{{PLAYER:HOME:Yards}} yds · {{PLAYER:HOME:Touchdowns}} TD",rosterEngine.State)=="184 yds · 2 TD","player stat tokens print the selected player's stats");
     Check(ScoreboardTemplates.Bind("{{PLAYER:AWAY:stat:yards}}",rosterEngine.State)=="64","player stat tokens accept the Stat: prefix and any case");
@@ -410,6 +413,40 @@ foreach(var sport in SportDefinition.BuiltIns)
     Check(columns.Distinct(StringComparer.OrdinalIgnoreCase).Count()==columns.Count,"a sport's stat columns are unique ("+sport.Id+")");
 }
 
+// ---------- sport-specific data, and a game that carries its screens ----------
+var sportData=new GameEngine();sportData.NewGame("baseball");
+Check(!sportData.HasSportSpecificData(),"a fresh game carries no sport-specific data");
+sportData.BaseballBall();
+Check(sportData.HasSportSpecificData(),"a ball in the count counts as sport-specific data worth warning about");
+
+var designPath=Path.Combine(Path.GetTempPath(),$"design-{Guid.NewGuid():N}.json");
+var reopenedPath=Path.Combine(Path.GetTempPath(),$"design-{Guid.NewGuid():N}.json");
+var gamePath=Path.Combine(Path.GetTempPath(),$"design-game-{Guid.NewGuid():N}.spg");
+var legacyPath=Path.Combine(Path.GetTempPath(),$"legacy-{Guid.NewGuid():N}.spg");
+try
+{
+    var designCatalog=new ScorebugCatalog(designPath);
+    designCatalog.AddDisplay("Lower thirds");
+    designCatalog.SetTransition(LayoutTransition.Zoom,1.5);
+    var designEngine=new GameEngine();designEngine.NewGame("football");
+    designEngine.Save(gamePath,designCatalog.ExportDocument());
+    var reopened=new GameEngine();var design=reopened.Load(gamePath);
+    Check(design is {Displays.Count:2},"a saved game carries every display and its layouts");
+    var reopenedCatalog=new ScorebugCatalog(reopenedPath);
+    reopenedCatalog.ApplyDocument(design);
+    Check(reopenedCatalog.Displays.Count==2&&reopenedCatalog.Displays[1].Name=="Lower thirds"
+        &&reopenedCatalog.Displays[1].Layouts[0].Transition==LayoutTransition.Zoom,"opening a game restores its layouts and their hand-over");
+    designEngine.Save(legacyPath);
+    Check(new GameEngine().Load(legacyPath) is null,"a game written without a design still loads, with no design to apply");
+}
+finally
+{
+    foreach(var path in new[]{gamePath,designPath,reopenedPath,legacyPath})
+    {
+        try{if(File.Exists(path))File.Delete(path);}catch{}
+    }
+}
+
 // ---------- no player on the graphic is a choice ----------
 var clearEngine=new GameEngine();clearEngine.NewGame("football");
 var clearRoster=RosterStore.Book.Add("Clear check");
@@ -423,3 +460,71 @@ clearEngine.ReloadSelectedPlayer(true);
 Check(clearEngine.State.HomePlayer is null,"a cleared player stays cleared when the roster is reloaded");
 clearEngine.SelectPlayer(true,someone.Id);
 Check(clearEngine.State.HomePlayer?.Name=="Someone"&&!clearEngine.State.HomePlayerCleared,"selecting again puts a player back");
+
+// ---------- layout hand-over between layouts, .spl / .spd files, and the web export ----------
+var transitionPath=Path.Combine(Path.GetTempPath(),$"transition-{Guid.NewGuid():N}.json");
+try
+{
+    var transitions=new ScorebugCatalog(transitionPath);
+    Check(transitions.Layout.Transition==LayoutTransition.Fade&&transitions.Layout.TransitionSeconds>0,"a layout starts with a dissolve onto air");
+    transitions.SetTransition(LayoutTransition.Zoom,9);
+    Check(transitions.Layout.Transition==LayoutTransition.Zoom&&Math.Abs(transitions.Layout.TransitionSeconds-5)<0.001,"a layout hand-over is capped at five seconds");
+    var second=transitions.AddLayout("Lower third");
+    transitions.SetTransition(LayoutTransition.SlideLeft,1.2);
+    Check(transitions.Layouts[second].Transition==LayoutTransition.SlideLeft,"each layout carries its own hand-over");
+    Check(transitions.Layouts[0].Transition==LayoutTransition.Zoom&&Math.Abs(transitions.Layouts[0].TransitionSeconds-5)<0.001,"setting one layout's hand-over leaves the others alone");
+    var reloadedTransitions=new ScorebugCatalog(transitionPath);
+    Check(reloadedTransitions.Layouts[0].Transition==LayoutTransition.Zoom&&Math.Abs(reloadedTransitions.Layouts[0].TransitionSeconds-5)<0.001&&reloadedTransitions.Layouts[second].Transition==LayoutTransition.SlideLeft,"every layout keeps its own hand-over in the saved game");
+    Check(Enum.GetValues<LayoutTransition>().Length>=5,"at least five layout hand-overs are offered");
+}
+finally { if(File.Exists(transitionPath))File.Delete(transitionPath); }
+
+var exportLayoutPath=Path.Combine(Path.GetTempPath(),$"layout-{Guid.NewGuid():N}.spl");
+var displayPath=Path.Combine(Path.GetTempPath(),$"display-{Guid.NewGuid():N}.spd");
+try
+{
+    var source=new ScorebugLayout{Name="Lower third"};
+    source.Elements.Add(new ScorebugElement{Name="Widget",Kind=ScorebugElementKind.Html,Content="<b>Hi</b>",Rotation=12,BackgroundGradient=true,BackgroundColor2="#FF102030",TransitionSeconds=1.4,TransparentBackground=true});
+    ScorebugFiles.SaveLayout(exportLayoutPath,source);
+    var loadedLayout=ScorebugFiles.LoadLayout(exportLayoutPath)!;
+    Check(loadedLayout.Name=="Lower third"&&loadedLayout.Elements.Single().BackgroundGradient&&loadedLayout.Elements.Single().Kind==ScorebugElementKind.Html&&loadedLayout.Elements[0].Content=="<b>Hi</b>"&&Math.Abs(loadedLayout.Elements[0].Rotation-12)<0.001,"a ScorePlus Layout file carries the artwork exactly");
+    var freshLayout=ScorebugFiles.FreshCopy(loadedLayout);
+    Check(freshLayout.Id!=loadedLayout.Id&&freshLayout.Elements[0].Id!=loadedLayout.Elements[0].Id,"an imported layout gets its own identity");
+
+    var importPath=Path.Combine(Path.GetTempPath(),$"import-{Guid.NewGuid():N}.json");
+    try
+    {
+        var importCatalog=new ScorebugCatalog(importPath);
+        var before=importCatalog.ActiveDisplay.Layouts.Count;
+        importCatalog.ImportLayout(loadedLayout);
+        Check(importCatalog.ActiveDisplay.Layouts.Count==before+1&&importCatalog.ActiveDisplay.ActiveIndex==before,"an imported layout is added to the display and opened");
+        importCatalog.ImportLayout(loadedLayout);
+        Check(importCatalog.ActiveDisplay.Layouts.Select(l=>l.Id).Distinct().Count()==before+2,"importing the same layout twice leaves two independent layouts");
+    }
+    finally { if(File.Exists(importPath))File.Delete(importPath); }
+
+    var display=new ScorebugDisplay{Name="Lower thirds"};
+    display.Layouts.Add(source);
+    display.Layouts.Add(new ScorebugLayout{Name="Ticker"});
+    display.PublishedIndex=1;
+    ScorebugFiles.SaveDisplay(displayPath,display);
+    var loadedDisplay=ScorebugFiles.LoadDisplay(displayPath)!;
+    Check(loadedDisplay.Name=="Lower thirds"&&loadedDisplay.Layouts.Count==2&&loadedDisplay.PublishedIndex==1,"a ScorePlus Display file carries every layout and its order");
+    var freshDisplay=ScorebugFiles.FreshDisplay(loadedDisplay);
+    Check(freshDisplay.Id!=loadedDisplay.Id&&freshDisplay.Layouts.All(l=>loadedDisplay.Layouts.All(o=>o.Id!=l.Id)),"an imported display gets fresh ids");
+
+    var webGame=new GameEngine();webGame.NewGame("football");webGame.Score(true,7);
+    var page=ScorebugHtml.Build(ScorebugLayout.Default(),webGame.State,"Broadcast");
+    Check(page.Contains("data-token")&&page.Contains("ScorePlus")&&page.Contains("<html"),"the web export keeps the tokens a site can update");
+    Check(page.Contains(">7<")||page.Contains("7"),"the web export prints the bound values onto the page");
+
+    var reportRoster=Roster.Create("Home Roster");
+    var bench=reportRoster.AddPlayer();bench.Name="Bench";bench.SetStat("Yards",0);
+    var fullReport=GameReport.Build(webGame.State,[reportRoster]);
+    Check(fullReport.Contains("Home Roster")&&fullReport.Contains("Bench"),"the game report lists every player, including a zero stat line");
+}
+finally
+{
+    if(File.Exists(exportLayoutPath))File.Delete(exportLayoutPath);
+    if(File.Exists(displayPath))File.Delete(displayPath);
+}

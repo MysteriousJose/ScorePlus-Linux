@@ -19,18 +19,25 @@ public sealed record MediaEntry(
     double Volume = 1,
     string? AudioDevice = null,
     string? Name = null,
-    int? CameraDevice = null)
+    int? CameraDevice = null,
+    int? MicrophoneDevice = null)
 {
-    /// <summary>A camera with no name of its own is labelled with the camera it uses, so the dock
-    /// says "icspring camera" rather than "Live camera 1".</summary>
+    /// <summary>A camera or microphone with no name of its own is labelled with the device it uses,
+    /// so the dock says "icspring camera" rather than "Live camera 1".</summary>
     public string Label => !string.IsNullOrWhiteSpace(Name)
         ? Name.Trim()
-        : IsCamera ? CameraFeed.CameraName(CameraIndex) : System.IO.Path.GetFileName(Path);
+        : IsCamera ? CameraFeed.CameraName(CameraIndex)
+        : IsMicrophone ? MicrophoneFeed.MicrophoneName(MicrophoneIndex)
+        : System.IO.Path.GetFileName(Path);
     public bool IsCamera => MediaLibrary.CameraIndex(Path) is not null;
+    /// <summary>A live microphone item: captured from a device, with no file and no picture.</summary>
+    public bool IsMicrophone => MediaLibrary.MicrophoneIndex(Path) is not null;
     /// <summary>Which capture device this camera item routes to; an override beats the path's index.</summary>
     public int CameraIndex => CameraDevice ?? MediaLibrary.CameraIndex(Path) ?? 0;
-    public bool IsVideo => IsCamera || MediaLibrary.IsVideoFile(Path);
-    public string KindLabel => IsCamera ? "LIVE" : IsVideo ? "VIDEO" : "AUDIO";
+    /// <summary>Which microphone this item listens to.</summary>
+    public int MicrophoneIndex => MicrophoneDevice ?? MediaLibrary.MicrophoneIndex(Path) ?? 0;
+    public bool IsVideo => IsCamera || (!IsMicrophone && MediaLibrary.IsVideoFile(Path));
+    public string KindLabel => IsCamera ? "LIVE" : IsMicrophone ? "MIC" : IsVideo ? "VIDEO" : "AUDIO";
     public string FolderLabel => string.IsNullOrWhiteSpace(Folder) ? MediaLibrary.RootFolderLabel : Folder;
     public string TagAndFolder => string.IsNullOrWhiteSpace(Folder) ? Tag : $"{Tag} · {Folder}";
 
@@ -65,7 +72,10 @@ public static class MediaLibrary
     /// <summary>Where a camera source's path lives. <c>camera:0</c> is the first capture device.</summary>
     public const string CameraPrefix = "camera:";
 
-    public static readonly string[] SuggestedTags = [AnyTag, "General", "Ads", "Highlights", "Music", "Anthem", "Sponsors", "Camera"];
+    /// <summary>Where a microphone source's path lives. <c>mic:0</c> is the first capture device.</summary>
+    public const string MicrophonePrefix = "mic:";
+
+    public static readonly string[] SuggestedTags = [AnyTag, "General", "Ads", "Highlights", "Music", "Anthem", "Sponsors", "Camera", "Microphone"];
 
     public static bool IsVideoFile(string path) => Path.GetExtension(path).ToLowerInvariant() is ".mp4" or ".mov" or ".mkv" or ".webm" or ".avi" or ".m4v";
 
@@ -76,6 +86,15 @@ public static class MediaLibrary
     {
         if (string.IsNullOrWhiteSpace(path) || !path.StartsWith(CameraPrefix, StringComparison.OrdinalIgnoreCase)) return null;
         return int.TryParse(path[CameraPrefix.Length..], out var index) ? index : 0;
+    }
+
+    public static string MicrophonePath(int index) => $"{MicrophonePrefix}{Math.Max(0, index)}";
+
+    /// <summary>The capture device number behind a microphone path, or null for a real file.</summary>
+    public static int? MicrophoneIndex(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !path.StartsWith(MicrophonePrefix, StringComparison.OrdinalIgnoreCase)) return null;
+        return int.TryParse(path[MicrophonePrefix.Length..], out var index) ? index : 0;
     }
 
     public static string NormalizeTag(string? tag)
@@ -124,6 +143,15 @@ public static class MediaLibrary
     }
 
     /// <summary>Points a camera item at a different capture device.</summary>
+    public static MediaEntry? SetMicrophoneDevice(IList<MediaEntry> library, MediaEntry selected, int device)
+    {
+        var index = library.IndexOf(selected);
+        if (index < 0) return null;
+        var updated = selected with { MicrophoneDevice = Math.Max(0, device) };
+        library[index] = updated;
+        return updated;
+    }
+
     public static MediaEntry? SetCameraDevice(IList<MediaEntry> library, MediaEntry selected, int device)
     {
         var index = library.IndexOf(selected);
@@ -316,4 +344,41 @@ public sealed class MediaPlayback
         if (entry is null || !entry.IsVideo) return null;
         return Matches(entry, elementTag) ? entry : null;
     }
+}
+
+/// <summary>
+/// The manifest inside a ScorePlus Media Folder (.spf). A folder and everything under it leaves the
+/// library as one zip: this manifest plus the clips themselves, so the folder can be handed to
+/// another machine and come back exactly as it was — nested folders, tags, loops, levels, speakers
+/// and camera items included.
+/// </summary>
+public sealed class MediaFolderManifest
+{
+    public const string FileName = "folder.json";
+
+    public int Version { get; set; } = 1;
+
+    /// <summary>The folder that was exported; empty for the unfiled bucket.</summary>
+    public string Folder { get; set; } = "";
+
+    /// <summary>Every folder in the export, parents included, so empty folders survive the trip.</summary>
+    public List<string> Folders { get; set; } = [];
+
+    public List<MediaFolderClip> Clips { get; set; } = [];
+}
+
+/// <summary>One clip in a folder export. <see cref="File"/> is its name inside the zip; a camera
+/// item carries its <c>camera:N</c> path and no file at all.</summary>
+public sealed class MediaFolderClip
+{
+    public string File { get; set; } = "";
+    public string Path { get; set; } = "";
+    public string Tag { get; set; } = MediaLibrary.DefaultTag;
+    public string Folder { get; set; } = "";
+    public bool Loop { get; set; }
+    public double Volume { get; set; } = 1;
+    public string? AudioDevice { get; set; }
+    public string? Name { get; set; }
+    public int? CameraDevice { get; set; }
+    public int? MicrophoneDevice { get; set; }
 }

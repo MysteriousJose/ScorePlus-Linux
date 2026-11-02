@@ -18,6 +18,10 @@ public partial class MainWindow : Window, IControlPanelHost
     readonly ScorebugCatalog _scorebug = new();
     readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(40) };
     readonly DispatcherTimer _autosave = new() { Interval = TimeSpan.FromSeconds(5) };
+    // The rail's peak meter, redrawn a few times a second; the level itself is shared by every window.
+    readonly DispatcherTimer _meterTimer = new() { Interval = TimeSpan.FromMilliseconds(60) };
+    readonly Border[] _meterBars = new Border[22];
+    int _meterLit = -1;
     readonly List<GameControlWindow> _controlPanels = [];
     readonly ControlPanelView _panel;
     // This window's own display choice and staged layouts. Another panel can stage a different
@@ -44,8 +48,10 @@ public partial class MainWindow : Window, IControlPanelHost
     // The next autosave starts a fresh recoverable point instead of updating the newest one. Set
     // when a new game starts or a game is loaded, so the previous game keeps its own autosave.
     bool _startNewAutosavePoint = true;
-    // The game state as it was the last time it went into a .spg file (or started fresh).
+    // The game state and the design as they were the last time they went into a .spg file (or
+    // started fresh), so a changed layout counts as an unsaved change too.
     string? _savedStateJson;
+    string? _savedDesignJson;
     bool _closingAfterPrompt;
     GameControlWindow.ConsoleTab _tab = GameControlWindow.ConsoleTab.Control;
 
@@ -54,6 +60,12 @@ public partial class MainWindow : Window, IControlPanelHost
     /// windows deliberately, and a modal prompt would stall an unattended run.
     /// </summary>
     public static bool PromptOnExit { get; set; } = true;
+
+    /// <summary>
+    /// Warns before a sport switch clears the old sport's values. The checks turn it off because they
+    /// change sports while driving the console, and a modal warning would stall an unattended run.
+    /// </summary>
+    public static bool WarnOnSportSwitch { get; set; } = true;
 
     /// <param name="mode">How the app was started: <see cref="LaunchMode.New"/> skips the autosave,
     /// <see cref="LaunchMode.Open"/> loads <paramref name="gamePath"/>. Null keeps the legacy
@@ -69,6 +81,9 @@ public partial class MainWindow : Window, IControlPanelHost
         _session = new MediaSession(_preferences);
         _playback = _session.Playback;
         ThemeManager.Apply(this, _preferences.Theme);
+        BuildSoundMeter();
+        _meterTimer.Tick += (_, _) => UpdateSoundMeter();
+        _meterTimer.Start();
         DisplayTiming.Apply(_preferences);
         SportSelector.SelectedValuePath = "Id";
         RefreshSports();
@@ -83,7 +98,7 @@ public partial class MainWindow : Window, IControlPanelHost
 
         _program = new ProgramSelection(_scorebug);
         _program.Changed += ProgramChanged;
-        _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback, layoutProvider: () => _program.Layout);
+        _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback, layoutProvider: () => _program.Layout, displayId: _program.DisplayId);
         PreviewHost.Content = _preview;
         // The monitor reads the published engine and the published layout, so it is a real
         // reflection of the audience window rather than another staged preview.
@@ -123,6 +138,7 @@ public partial class MainWindow : Window, IControlPanelHost
         {
             // The main window is already up behind the launcher, with nothing to change yet.
             _savedStateJson = _engine.ExportJson();
+            _savedDesignJson = DesignJson();
             SetWorkspaceEnabled(false);
             StatusText.Text = "WAITING · choose New Game or Open Game in the launch window";
             return;
@@ -148,6 +164,7 @@ public partial class MainWindow : Window, IControlPanelHost
         }
 
         _savedStateJson ??= _engine.ExportJson();
+        _savedDesignJson ??= DesignJson();
 
         // Panels are opened deliberately with New Panel; starting a game never spawns a second window.
     }
@@ -155,16 +172,17 @@ public partial class MainWindow : Window, IControlPanelHost
     /// <summary>
     /// Applies the choice made in the launch box to the window that is already open behind it.
     /// </summary>
-    public void StartFromLauncher(LaunchMode mode, string? path)
+    public void StartFromLauncher(LaunchMode mode, string? path, string? sportId = null)
     {
         if (mode == LaunchMode.Open && !string.IsNullOrWhiteSpace(path) && LoadGame(path))
             StatusText.Text = $"GAME OPENED · {Path.GetFileNameWithoutExtension(path)}";
         else
         {
-            StartNewGame(string.IsNullOrWhiteSpace(_preferences.LastSport) ? "football" : _preferences.LastSport, announce: false);
+            StartNewGame(sportId ?? (string.IsNullOrWhiteSpace(_preferences.LastSport) ? "football" : _preferences.LastSport), announce: false);
             StatusText.Text = "NEW GAME · set the teams and you are live";
         }
         _savedStateJson = _engine.ExportJson();
+        _savedDesignJson = DesignJson();
         SetWorkspaceEnabled(true);
         Activate();
         StartRemote();
@@ -351,6 +369,60 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void RefreshSports() => SportSelector.ItemsSource = _engine.Sports.All;
 
+    /// <summary>
+    /// Builds the rail's peak meter once: a column of segments whose fills the tick only repaints.
+    /// Green up to a healthy level, amber near the top, red at full scale.
+    /// </summary>
+    void BuildSoundMeter()
+    {
+        var unlit = new SolidColorBrush(Color.FromRgb(0x1B, 0x24, 0x30));
+        unlit.Freeze();
+        for (var index = 0; index < _meterBars.Length; index++)
+        {
+            var fraction = (index + 1) / (double)_meterBars.Length;
+            var color = fraction > 0.92 ? Color.FromRgb(0xFF, 0x6B, 0x6B)
+                : fraction > 0.78 ? Color.FromRgb(0xE8, 0xB2, 0x3A)
+                : Color.FromRgb(0x38, 0xD7, 0xA3);
+            var bar = new Border
+            {
+                Background = unlit,
+                CornerRadius = new CornerRadius(1),
+                Margin = new Thickness(1, 0, 1, 0),
+                ToolTip = fraction > 0.92 ? "Full scale — the output is clipping" : null
+            };
+            bar.Tag = color;
+            ThemeManager.SetSkipTheme(bar, true);
+            _meterBars[index] = bar;
+            SoundMeterSegments.Children.Add(bar);
+        }
+    }
+
+    /// <summary>
+    /// Repaints the meter and the show line beside it: what is on air, and the score and clock the
+    /// audience is actually looking at. Read from the published copy, not from staged edits.
+    /// </summary>
+    void UpdateSoundMeter()
+    {
+        if (_meterBars[0] is null) return;
+        var level = SoundLevelMeter.Read();
+        // A square-root scale so quiet speech still moves the bar, the way a real meter does.
+        var lit = (int)Math.Round(Math.Sqrt(level) * _meterBars.Length);
+        if (lit != _meterLit)
+        {
+            _meterLit = lit;
+            var unlit = (Brush)new BrushConverter().ConvertFromString("#1B2430")!;
+            for (var index = 0; index < _meterBars.Length; index++)
+                _meterBars[index].Background = index < lit ? new SolidColorBrush((Color)_meterBars[index].Tag) : unlit;
+        }
+        SoundLevelText.Text = level <= 0
+            ? (SoundLevelMeter.Available ? "−∞ dB" : "no output")
+            : $"{SoundLevelMeter.Decibels(level):0} dB";
+        if (_preview is null) { OnAirInfo.Text = "STANDBY"; ShowInfo.Text = "Start a game to go live"; return; }
+        OnAirInfo.Text = _program.HasStagedChanges ? "STAGED · UPDATE TO AIR" : $"ON AIR · {_program.Display.Name.ToUpperInvariant()}";
+        var s = _publishedEngine.State;
+        ShowInfo.Text = $"{s.AwayAbbreviation} {s.AwayScore} · {s.HomeAbbreviation} {s.HomeScore} · {GameEngine.FormatClock(s.ClockSeconds)} · {PeriodDisplay.Format(s)}";
+    }
+
     void ApplyHintVisibility()
     {
         var visibility = _preferences.ShowHeadingHints ? Visibility.Visible : Visibility.Collapsed;
@@ -428,7 +500,7 @@ public partial class MainWindow : Window, IControlPanelHost
     /// </summary>
     async Task CheckForUpdatesAsync()
     {
-        if (!_preferences.CheckForUpdates || string.IsNullOrWhiteSpace(_preferences.UpdateFeedUrl) || !AppInfo.IsInstalled) return;
+        if (!_preferences.CheckForUpdates || !AppInfo.IsInstalled) return;
         var manifest = await UpdateChecker.CheckAsync(_preferences.UpdateFeedUrl);
         if (manifest is null) return;
         var detail = $"Version {manifest.Version} is ready (this build is {AppInfo.Version}). " +
@@ -496,16 +568,31 @@ public partial class MainWindow : Window, IControlPanelHost
     void Sport_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_initializing || _sportSync || SportSelector.SelectedValue is not string id) return;
+        // A sport switch starts a brand new game, so anything the old sport was tracking is about to
+        // go. Say so plainly instead of deleting a period's worth of counts without a word.
+        if (WarnOnSportSwitch && _engine.HasSportSpecificData())
+        {
+            var next = _engine.Sports.Find(id)?.Name ?? id;
+            var detail = $"Switching to {next} starts a new game. The {_engine.Sport.Name} values this game is tracking — its counts, flags and figures — are cleared with it, along with the score, clocks and custom stats. The roster library, sport profiles, media and your layouts stay.";
+            if (!ConfirmWindow.Ask(this, _preferences.Theme, "SWITCH SPORT", detail, "Switch sport", destructive: true))
+            {
+                // Put the picker back on the sport being played; nothing has been touched yet.
+                _sportSync = true;
+                try { SportSelector.SelectedValue = _engine.State.SportId; }
+                finally { _sportSync = false; }
+                return;
+            }
+        }
         StartNewGame(id, announce: false);
         StatusText.Text = $"NEW {_engine.Sport.Name.ToUpperInvariant()} GAME";
     }
 
     void NewGame_Click(object sender, RoutedEventArgs e)
     {
-        if (!ConfirmWindow.Ask(this, _preferences.Theme, "START A NEW GAME",
-                "This resets everything about the game — score, clocks, down, possession, stats and the on-air graphic. Your scorebug design and rosters are kept.",
-                "Start new game", destructive: true)) return;
-        StartNewGame(SportSelector.SelectedValue as string ?? "basketball");
+        // The sport is part of starting a game; the chooser also states what a new game resets.
+        var picker = new SportPickerWindow(_engine.Sports, _engine.State.SportId, _preferences.Theme) { Owner = this };
+        if (picker.ShowDialog() != true || string.IsNullOrWhiteSpace(picker.SportId)) return;
+        StartNewGame(picker.SportId);
     }
 
     /// <summary>
@@ -524,6 +611,7 @@ public partial class MainWindow : Window, IControlPanelHost
         // A new game really starts over: one factory layout and no folder/playlist organisation.
         // Imported media files stay in the library; the game's design and shelves begin blank.
         _scorebug.ResetToDefault();
+        _savedDesignJson = DesignJson();
         _program.Sync();
         SyncDisplayPicker();
         _session.ResetOrganization();
@@ -555,7 +643,10 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         try
         {
-            _engine.Load(path);
+            var design = _engine.Load(path);
+            // A file written by an older build has no design; the current scorebug then stays as it
+            // is rather than being replaced by a factory layout.
+            if (design is not null) _scorebug.ApplyDocument(design);
             _projectPath = path;
             _startNewAutosavePoint = true;
             // Point the picker at the loaded sport without letting that look like a sport change,
@@ -575,6 +666,7 @@ public partial class MainWindow : Window, IControlPanelHost
             _preview?.Rebuild();
             foreach (var output in _outputs) output.Rebuild();
             _savedStateJson = _engine.ExportJson();
+            _savedDesignJson = DesignJson();
             StatusText.Text = $"GAME LOADED · {System.IO.Path.GetFileName(path)}";
             return true;
         }
@@ -646,7 +738,9 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         var dialog = new Microsoft.Win32.SaveFileDialog { Filter = "HTML game report (*.html)|*.html", DefaultExt = "html", FileName = $"{_engine.State.HomeAbbreviation}-{_engine.State.AwayAbbreviation}-report" };
         if (dialog.ShowDialog() != true) return;
-        File.WriteAllText(dialog.FileName, GameReport.Build(_engine.State));
+        // The report carries every player on every roster, including the ones who never touched the
+        // ball, so a zero is printed rather than an empty table.
+        File.WriteAllText(dialog.FileName, GameReport.Build(_engine.State, RosterStore.Book.Rosters));
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dialog.FileName) { UseShellExecute = true });
         StatusText.Text = "GAME REPORT EXPORTED";
     }
@@ -663,9 +757,12 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         try
         {
-            _engine.Save(path);
+            // The game travels with its screens: every display, every layout and what each one has
+            // on air, so opening the file puts the show back exactly where it was left.
+            _engine.Save(path, _scorebug.ExportDocument());
             _projectPath = path;
             _savedStateJson = _engine.ExportJson();
+            _savedDesignJson = DesignJson();
             StatusText.Text = $"GAME SAVED · {System.IO.Path.GetFileName(path)}";
             return true;
         }
@@ -676,7 +773,12 @@ public partial class MainWindow : Window, IControlPanelHost
         }
     }
 
-    bool HasUnsavedChanges() => _savedStateJson is not null && _savedStateJson != _engine.ExportJson();
+    bool HasUnsavedChanges() =>
+        (_savedStateJson is not null && _savedStateJson != _engine.ExportJson())
+        || (_savedDesignJson is not null && _savedDesignJson != DesignJson());
+
+    /// <summary>A comparable snapshot of the design, for the unsaved-changes check.</summary>
+    string DesignJson() => System.Text.Json.JsonSerializer.Serialize(_scorebug.ExportDocument());
 
     /// <summary>Saves to the game's own file, or asks for one when the game has never been saved.</summary>
     bool SaveBeforeClosing()
@@ -721,7 +823,7 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         try
         {
-            AutosaveStore.Save(_engine, _startNewAutosavePoint);
+            AutosaveStore.Save(_engine, _startNewAutosavePoint, _scorebug.ExportDocument());
             _startNewAutosavePoint = false;
             AutosaveText.Text = $"AUTOSAVED {DateTime.Now:HH:mm:ss}";
         }
@@ -748,6 +850,7 @@ public partial class MainWindow : Window, IControlPanelHost
         _engine.Changed -= Refresh;
         _engine.Changed -= EngineChanged;
         _remote?.Dispose();
+        _meterTimer.Stop();
         _program.Dispose();
         _preview?.Dispose();
         _session.Dispose();
