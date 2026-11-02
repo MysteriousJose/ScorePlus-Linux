@@ -260,6 +260,14 @@
           <Button x:Name="LiveButton" Content="Live" Style="{StaticResource DockAction}" Click="Live_Click"
                   ToolTip="Jump back to the live camera"/>
         </WrapPanel>
+        <!-- Microphones: live commentary, captured from a device and monitored on its own output. -->
+        <WrapPanel Margin="0,3,0,0">
+          <TextBlock Text="MICROPHONE" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+          <Button Content="Add microphone" Style="{StaticResource DockAction}" Click="Microphone_Click"
+                  ToolTip="Add a capture device to the library. Cue it and its sound goes live on the output set below"/>
+          <TextBlock x:Name="MicrophoneStatus" Text="" FontSize="10" Foreground="{DynamicResource DockMuted}" Opacity="0.75"
+                     VerticalAlignment="Center" Margin="6,0,0,0" TextTrimming="CharacterEllipsis"/>
+        </WrapPanel>
         <!-- Which camera item is live: pick another and it takes over on air. -->
         <DockPanel Margin="0,3,0,0">
           <TextBlock Text="LIVE" Style="{StaticResource DockLabel}" VerticalAlignment="Center" Margin="0,0,4,0"/>
@@ -290,7 +298,7 @@
         <TextBlock Text="SEARCH" Style="{StaticResource DockLabel}"/>
         <Grid Grid.Column="1">
           <TextBox x:Name="SearchBox" Style="{StaticResource DockSearch}" TextChanged="Search_Changed"
-                   ToolTip="Search every clip, folder and playlist — folders are ignored while searching"/>
+                   ToolTip="Search every clip, folder and playlist, wherever it is filed"/>
           <TextBlock x:Name="SearchPrompt" Text="clips, folders, playlists" FontSize="10"
                      Foreground="{DynamicResource DockMuted}" Opacity="0.65"
                      VerticalAlignment="Center" Margin="8,0,0,0" IsHitTestVisible="False"/>
@@ -300,27 +308,27 @@
                 Click="ClearSearch_Click" ToolTip="Clear the search"/>
       </Grid>
 
-      <!-- Folder shelf: a tile per folder, and clips are filed by dragging them onto one. -->
-      <DockPanel x:Name="FolderRailRow" Grid.Row="2" Margin="0,0,0,5">
-        <TextBlock Text="FOLDERS" Style="{StaticResource RailHeading}"/>
-        <ScrollViewer VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto">
-          <ScrollViewer.Resources>
-            <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource DockHScrollBar}"/>
-          </ScrollViewer.Resources>
-          <StackPanel x:Name="FolderRail" Orientation="Horizontal"/>
-        </ScrollViewer>
-      </DockPanel>
-
-      <!-- Playlist shelf: click one to open its clips; drop a clip on it to add. -->
-      <DockPanel x:Name="PlaylistRailRow" Grid.Row="3" Margin="0,0,0,5">
-        <TextBlock Text="PLAYLISTS" Style="{StaticResource RailHeading}"/>
-        <ScrollViewer VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto">
-          <ScrollViewer.Resources>
-            <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource DockHScrollBar}"/>
-          </ScrollViewer.Resources>
-          <StackPanel x:Name="PlaylistRail" Orientation="Horizontal"/>
-        </ScrollViewer>
-      </DockPanel>
+      <!-- The browser is a file explorer: folders and playlists are items in the grid below,
+           and this bar is where you go back out, make a folder, or move a folder in and out. -->
+      <StackPanel x:Name="BrowserBar" Grid.Row="2" Margin="0,0,0,5">
+        <DockPanel Margin="0,0,0,4">
+          <Button x:Name="UpButton" DockPanel.Dock="Right" Style="{StaticResource DockAction}" Content="← Back"
+                  Click="Up_Click" ToolTip="Back to the folder you came from"/>
+          <TextBlock Text="PATH" Style="{StaticResource DockLabel}"/>
+          <TextBlock x:Name="BreadcrumbText" Text="LIBRARY" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
+                     TextTrimming="CharacterEllipsis" ToolTip="Where you are in the media library"/>
+        </DockPanel>
+        <WrapPanel x:Name="BrowserActions">
+          <Button Content="+ Folder" Style="{StaticResource DockAction}" Click="NewFolder_Click"
+                  ToolTip="Make a folder inside the open folder — folders can hold folders"/>
+          <Button Content="+ Playlist" Style="{StaticResource DockAction}" Click="NewPlaylist_Click"
+                  ToolTip="Make a playlist of clips that run one after another"/>
+          <Button Content="Import folder…" Style="{StaticResource DockAction}" Click="ImportFolder_Click"
+                  ToolTip="Bring in a ScorePlus Media Folder (.spf) — clips, nested folders, tags and all"/>
+          <Button x:Name="ExportFolderButton" Content="Export folder…" Style="{StaticResource DockAction}" Click="ExportFolder_Click"
+                  ToolTip="Save the selected folder and everything inside it as a ScorePlus Media Folder (.spf)"/>
+        </WrapPanel>
+      </StackPanel>
 
       <Grid Grid.Row="4" Margin="0,0,0,5">
         <Grid.ColumnDefinitions>
@@ -328,7 +336,7 @@
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <Button x:Name="BackToLibraryButton" Style="{StaticResource DockAction}" Content="←" Width="32" Padding="0" Margin="0,0,8,0"
+        <Button x:Name="BackToLibraryButton" Style="{StaticResource DockAction}" Content="← Back" Margin="0,0,8,0"
                 Visibility="Collapsed" Click="BackToLibrary_Click" ToolTip="Back to the media library"/>
         <DockPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,5,0">
           <TextBlock x:Name="ViewTitle" DockPanel.Dock="Left" Text="LIBRARY" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"/>

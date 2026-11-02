@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Scoreboard.Core;
 using Scoreboard.Desktop;
+using ScorePlus.Setup;
 
 namespace UiSmoke;
 
@@ -35,6 +36,9 @@ internal static class Program
                 throw new Exception("FAIL: the unsaved-game prompt is not on by default");
             // The checks open and close windows constantly; a modal prompt would stall the run.
             MainWindow.PromptOnExit = false;
+            // The sport-switch warning is a real operator guard, but these checks change sports on
+            // purpose, so it is off for the run and covered by the core suite instead.
+            MainWindow.WarnOnSportSwitch = false;
 
             // The exit prompt is the app's own chrome, not a system message box.
             var unsavedPrompt = new UnsavedChangesWindow("Dark", "detail");
@@ -211,6 +215,38 @@ internal static class Program
             keybinds.UpdateLayout();
             keybinds.Close();
             Console.WriteLine("PASS: keybinds window loads");
+
+            // The keybind list is the current sport's: no downs on a baseball console, no power play
+            // on a football one, and the shared score/clock/output buttons everywhere.
+            var baseballActions = ControlActions.ForSport("baseball").Select(a => a.Id).ToArray();
+            if (baseballActions.Contains("football.down.next") || baseballActions.Contains("soccer.red.home"))
+                throw new Exception("FAIL: baseball keybinds still offer another sport's buttons");
+            if (!baseballActions.Contains("baseball.ball") || !baseballActions.Contains("home.score.plus1")
+                || !baseballActions.Contains("output.publish"))
+                throw new Exception("FAIL: baseball keybinds are missing its own or the shared buttons");
+            if (!ControlActions.ForSport("football").Any(a => a.Id == "football.playclock.toggle"))
+                throw new Exception("FAIL: football keybinds lost the play clock");
+            var baseballBinds = new KeybindsWindow(new KeybindSettings(), "baseball", "Baseball");
+            baseballBinds.Show();
+            baseballBinds.UpdateLayout();
+            var listedActions = FindAll<ListBox>(baseballBinds).First().Items.Cast<object>().Select(item => item.ToString() ?? "").ToArray();
+            if (listedActions.Any(text => text.Contains("Power play", StringComparison.Ordinal) || text.Contains("Next down", StringComparison.Ordinal)))
+                throw new Exception("FAIL: a baseball keybind list shows another sport's buttons");
+            baseballBinds.Close();
+            // The media browser's up-one-level control is named for what it does.
+            if (!FindAll<Button>(dock).Any(b => (b.Content as string) == "← Back"))
+                throw new Exception("FAIL: the media browser has no Back button");
+            // A new game asks which sport it is played in, offering every profile.
+            var newGameSportPicker = new SportPickerWindow(new SportCatalog(), "hockey", "Dark");
+            newGameSportPicker.Show();
+            newGameSportPicker.UpdateLayout();
+            var sportChoices = FindAll<ListBox>(newGameSportPicker).First();
+            if (sportChoices.Items.Count < 10)
+                throw new Exception($"FAIL: the new-game sport chooser lists {sportChoices.Items.Count} sports");
+            if (sportChoices.SelectedItem is null)
+                throw new Exception("FAIL: the new-game sport chooser opens with no sport selected");
+            newGameSportPicker.Close();
+            Console.WriteLine("PASS: keybinds list only the current sport, media goes Back, and a new game asks for its sport");
 
             var settings = new KeybindSettings();
             settings.Bindings["home.score.plus2"] = KeybindStore.ToText(Key.D2, ModifierKeys.Control);
@@ -571,12 +607,34 @@ internal static class Program
                 var addEditor = new ScorebugEditorWindow(freshCatalog, engine);
                 addEditor.Show();
                 addEditor.UpdateLayout();
-                var addText = FindAll<Button>(addEditor).First(b => (b.Content as string) == "Add text");
+                // Studio buttons read as capitals with a plus: SPORT DATA +, not "Add sport data".
+                foreach (var label in new[] { "TEXT +", "LOGO +", "SHAPE +", "SPORT DATA +", "PLAYER DATA +", "VIDEO +", "HTML +", "PARTS +" })
+                    if (!FindAll<Button>(addEditor).Any(b => (b.Content as string) == label))
+                        throw new Exception($"FAIL: the studio has no \"{label}\" button");
+                var addText = FindAll<Button>(addEditor).First(b => (b.Content as string) == "TEXT +");
                 addText.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 addEditor.UpdateLayout();
                 var created = freshCatalog.Layout.Elements.Last();
                 if (!created.TransparentBackground)
                     throw new Exception("FAIL: new studio artwork turned a background box on by default");
+
+                // A second element, then one property change for the whole selection.
+                addText.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                addEditor.UpdateLayout();
+                var studioLayers = (ListBox)addEditor.FindName("Layers")!;
+                studioLayers.SelectedItems.Clear();
+                foreach (var row in studioLayers.Items.Cast<object>().Take(2)) studioLayers.SelectedItems.Add(row);
+                addEditor.UpdateLayout();
+                var transparentToggle = (CheckBox)addEditor.FindName("TransparentBackgroundInput")!;
+                transparentToggle.IsChecked = false;
+                ((TextBox)addEditor.FindName("BackgroundInput")!).Text = "#FF123456";
+                Pump(TimeSpan.FromMilliseconds(700));
+                var group = freshCatalog.Layout.Elements.TakeLast(2).ToArray();
+                var applied = group.Count(element => !element.TransparentBackground && element.Background == "#FF123456");
+                if (applied != group.Length)
+                    throw new Exception($"FAIL: a property change reached {applied} of {group.Length} selected elements");
+                Console.WriteLine("PASS: a property change lands on every selected element at once");
+
                 addEditor.Close();
                 Console.WriteLine("PASS: new studio artwork starts without a background box");
             }
@@ -796,6 +854,43 @@ internal static class Program
             iconStudio.Close();
             Console.WriteLine("PASS: icon elements draw on the scorebug canvas and edit from the studio");
 
+            // The possession dot is the whole icon — no value printed beside it — and its mark keeps
+            // its size when the box is resized, growing only with the element's own type size.
+            {
+                var markItem = new ScorebugElement { Name = "Possession", Content = "{{POSSESSION}}", Kind = ScorebugElementKind.Text, Icon = ScorebugIcon.PossessionDot, Width = 200, Height = 60, FontSize = 24 };
+                var markView = new ScorebugIconView(markItem, () => iconEngine.State);
+                if (FindAll<TextBlock>(markView).Any())
+                    throw new Exception("FAIL: the possession dot still prints a value beside the mark");
+                var mark = FindAll<System.Windows.Shapes.Ellipse>(markView).Single();
+                var markSize = mark.Width;
+                markItem.Width = 500; markItem.Height = 200; markView.Update();
+                if (Math.Abs(mark.Width - markSize) > 0.01)
+                    throw new Exception("FAIL: the possession dot grew just because its box did");
+                markItem.FontSize = 48; markView.Update();
+                if (mark.Width <= markSize + 1)
+                    throw new Exception("FAIL: the possession dot did not follow the element's type size");
+                Console.WriteLine("PASS: the possession dot draws without text and keeps its size until the type size changes");
+            }
+
+            // The backdrop can be reset to ScorePlus navy, and the layout no longer exports as a page.
+            {
+                var navyCatalog = new ScorebugCatalog(Path.Combine(appDataPath, $"navy-{Guid.NewGuid():N}.json"));
+                navyCatalog.Update(layout => layout.Background = "#FF00B140");
+                var navyStudio = new ScorebugEditorWindow(navyCatalog, iconEngine, null, "Dark");
+                navyStudio.Show();
+                navyStudio.UpdateLayout();
+                FindAll<Button>(navyStudio).First(b => (b.Content as string) == "Navy")
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                if (!string.Equals(navyCatalog.Layout.Background, "#FF091018", StringComparison.OrdinalIgnoreCase))
+                    throw new Exception($"FAIL: the navy reset set {navyCatalog.Layout.Background}");
+                if (FindAll<Button>(navyStudio).Any(b => (b.Content as string) == "Green screen"))
+                    throw new Exception("FAIL: the old green screen button is still offered");
+                if (FindAll<Button>(navyStudio).Any(b => (b.Content as string) == "HTML page…"))
+                    throw new Exception("FAIL: the studio still offers an HTML page export");
+                navyStudio.Close();
+                Console.WriteLine("PASS: the backdrop resets to navy and the layout has no HTML export");
+            }
+
             if (KeybindStore.Defaults().Bindings.Count != 0)
                 throw new Exception("FAIL: keybinds are still assigned out of the box");
             Console.WriteLine("PASS: no shortcut is assigned until the operator picks one");
@@ -831,6 +926,20 @@ internal static class Program
             if (detailHint.Visibility != Visibility.Visible) throw new Exception("FAIL: heading tips stayed hidden while enabled");
             hintWindow.Close();
             Console.WriteLine("PASS: heading tips follow the preference");
+
+            // The studio's explanatory lines follow the same switch; tips are off by default.
+            {
+                var tipCatalog = new ScorebugCatalog(Path.Combine(appDataPath, $"tips-{Guid.NewGuid():N}.json"));
+                var tipStudio = new ScorebugEditorWindow(tipCatalog, engine, null, "Dark");
+                tipStudio.Show();
+                tipStudio.UpdateLayout();
+                var headerHint = (TextBlock)tipStudio.FindName("HeaderHint")!;
+                var transitionHint = (TextBlock)tipStudio.FindName("TransitionCaption")!;
+                if (headerHint.Visibility != Visibility.Collapsed || transitionHint.Visibility != Visibility.Collapsed)
+                    throw new Exception("FAIL: the studio showed its tips while heading tips are off");
+                tipStudio.Close();
+                Console.WriteLine("PASS: the studio's tips follow the heading-tips preference");
+            }
 
             // Live score & clocks can be toggled from a keybind.
             var liveState = true;
@@ -924,6 +1033,30 @@ internal static class Program
                 playback.Start(ad);
                 Console.WriteLine("PASS: ANY plays whatever is cued, and a live camera routes like a clip");
 
+                // A microphone is a live source like a camera: its own library item, audio only.
+                var micPath = MediaLibrary.MicrophonePath(1);
+                var micItem = new MediaEntry(micPath, "Microphone");
+                if (!micItem.IsMicrophone || micItem.IsVideo || micItem.IsCamera || micItem.KindLabel != "MIC")
+                    throw new Exception($"FAIL: a microphone item is not audio-only ({micItem.IsVideo}/{micItem.KindLabel})");
+                if (MediaLibrary.MicrophoneIndex(micPath) != 1 || MediaLibrary.CameraIndex(micPath) is not null)
+                    throw new Exception("FAIL: a microphone path does not round-trip");
+                var micSession = new MediaSession(new UserPreferences());
+                try
+                {
+                    var addedMic = micSession.AddMicrophone(0, "Commentary");
+                    if (!addedMic.IsMicrophone || !micSession.Library.Contains(addedMic) || addedMic.Tag != "Commentary")
+                        throw new Exception("FAIL: Add microphone did not file the item in the library");
+                    var again = micSession.AddMicrophone(0);
+                    if (!ReferenceEquals(again, addedMic))
+                        throw new Exception("FAIL: adding the same microphone twice made a second item");
+                }
+                finally { micSession.Stop(); micSession.Dispose(); }
+                // The playlist view's way back is a labelled button, not a lone clipped arrow.
+                var playlistBack = (Button)dock.FindName("BackToLibraryButton")!;
+                if ((playlistBack.Content as string) != "← Back")
+                    throw new Exception($"FAIL: the playlist back button reads '{playlistBack.Content}'");
+                Console.WriteLine("PASS: a microphone is a live audio item, and the playlist Back button is labelled");
+
                 // Replay opens in the preview only: the audience keeps the live camera until Start replay.
                 var staging = new MediaPlayback();
                 var liveCamera = new MediaEntry(MediaLibrary.CameraPath(0), "Camera");
@@ -1007,8 +1140,8 @@ internal static class Program
                 var sizeRight = sizeControls.TransformToAncestor(studioContent).Transform(new Point(sizeControls.ActualWidth, 0)).X;
                 if (sizeRight > studioContent.ActualWidth + 0.5)
                     throw new Exception("FAIL: the canvas size controls do not fit in the studio");
-                if (!FindAll<Button>(presetStudio).Any(b => (b.Content as string) == "Add video"))
-                    throw new Exception("FAIL: the studio has no Add video button");
+                if (!FindAll<Button>(presetStudio).Any(b => (b.Content as string) == "VIDEO +"))
+                    throw new Exception("FAIL: the studio has no VIDEO + button");
 
                 // 4K preset: canvas grows and every element stays inside the frame.
                 ((ComboBox)presetStudio.FindName("CanvasPreset")!).SelectedIndex = 3;
@@ -1229,8 +1362,10 @@ internal static class Program
                 var panelDock = FindAll<MediaDock>(mediaPanel).FirstOrDefault() ?? throw new Exception("FAIL: a detached control panel has no media dock");
                 var panelTiles = (WrapPanel)panelDock.FindName("Tiles")!;
                 panelTiles.UpdateLayout();
-                if (panelTiles.Children.Count != sharedMedia.Library.Count || panelTiles.Children.Count == 0)
-                    throw new Exception($"FAIL: the detached panel shows {panelTiles.Children.Count} media tiles for a library of {sharedMedia.Library.Count}");
+                // Folders are browser items too, so count the clip cards rather than every card.
+                var panelClips = panelTiles.Children.OfType<Border>().Count(b => b.Tag is MediaEntry);
+                if (panelClips != sharedMedia.Library.Count || panelClips == 0)
+                    throw new Exception($"FAIL: the detached panel shows {panelClips} media tiles for a library of {sharedMedia.Library.Count}");
                 if (panelDock.ActualWidth < mediaPanel.ActualWidth - 120)
                     throw new Exception($"FAIL: the media tab does not fill the panel ({panelDock.ActualWidth:0} of {mediaPanel.ActualWidth:0})");
                 var panelTransport = (Button)panelDock.FindName("PlayPauseButton")!;
@@ -1253,9 +1388,9 @@ internal static class Program
             var chooserButtons = FindAll<Button>(launcherWindow).Select(b => b.Content as string).Where(t => t is not null).ToArray();
             if (!chooserButtons.Contains("New Game") || !chooserButtons.Contains("Open Game"))
                 throw new Exception("FAIL: the launcher is missing New Game / Open Game");
-            var versionLabel = FindAll<TextBlock>(launcherWindow).FirstOrDefault(t => t.Text.StartsWith("v"));
-            if (versionLabel is null || versionLabel.Text != LauncherWindow.Version)
-                throw new Exception("FAIL: the launcher does not show the version on its side strip");
+            var versionLabel = FindAll<TextBlock>(launcherWindow).FirstOrDefault(t => t.Text == LauncherWindow.Version);
+            if (versionLabel is null)
+                throw new Exception($"FAIL: the launcher does not show {LauncherWindow.Version} on its side strip");
             if (!FindAll<TextBlock>(launcherWindow).Any(t => t.Text.Contains("SCOREPLUS", StringComparison.OrdinalIgnoreCase)))
                 throw new Exception("FAIL: the launcher does not show the product name");
             var autosaveList = (ListBox)launcherWindow.FindName("AutosaveList")!;
@@ -1450,15 +1585,14 @@ internal static class Program
                 var contextEditor = new ScorebugEditorWindow(contextCatalog, engine);
                 contextEditor.Show();
                 contextEditor.UpdateLayout();
-                // The studio must never open taller than the desktop: a window that runs past the
-                // bottom of the screen hides the lower edge of the artwork.
-                if (contextEditor.MaxHeight > SystemParameters.WorkArea.Height ||
-                    contextEditor.MaxWidth > SystemParameters.WorkArea.Width)
-                    throw new Exception($"FAIL: the studio can open past the work area ({contextEditor.MaxWidth:0}x{contextEditor.MaxHeight:0})");
-                // A maximized window reports the work area plus its resize border, which sits off
-                // the edge of the screen; anything more than that would put content below the desk.
-                if (contextEditor.Height > SystemParameters.WorkArea.Height + 40)
-                    throw new Exception($"FAIL: the studio opened {contextEditor.Height:0} tall on a {SystemParameters.WorkArea.Height:0} desktop");
+                // The studio must never open past the desktop: a window that runs past the edge hides
+                // part of the artwork. Its allowance (MaxWidth/MaxHeight) is the whole monitor so a
+                // maximized window can fill every pixel; what matters is the size it actually takes.
+                // A maximized window reports the work area plus its resize border, which sits off the
+                // edge of the screen, so the tolerance covers that.
+                if (contextEditor.ActualWidth > SystemParameters.WorkArea.Width + 40 ||
+                    contextEditor.ActualHeight > SystemParameters.WorkArea.Height + 40)
+                    throw new Exception($"FAIL: the studio opened {contextEditor.ActualWidth:0}x{contextEditor.ActualHeight:0} on a {SystemParameters.WorkArea.Width:0}x{SystemParameters.WorkArea.Height:0} desktop");
                 if (contextEditor.WindowState != WindowState.Maximized)
                     throw new Exception($"FAIL: the studio opened {contextEditor.WindowState} instead of full windowed");
                 var contextLayers = (ListBox)contextEditor.FindName("Layers")!;
@@ -1723,6 +1857,23 @@ internal static class Program
                     throw new Exception("FAIL: the studio layout picker did not switch the design");
                 if (((Canvas)layoutStudio.FindName("DesignCanvas")!).Width < 320)
                     throw new Exception("FAIL: the studio did not draw the chosen layout");
+                // Each layout crosses in its own way: the transition pickers edit the layout being
+                // designed, not the whole display.
+                var transitionBox = (ComboBox)layoutStudio.FindName("TransitionBox")!;
+                if (transitionBox.SelectedItem is null)
+                    throw new Exception("FAIL: the transition picker is empty when the studio opens");
+                var slideOption = transitionBox.Items.OfType<object>()
+                    .First(item => item.ToString()!.Contains("Swing left", StringComparison.Ordinal));
+                transitionBox.SelectedItem = slideOption;
+                Pump(TimeSpan.FromMilliseconds(200));
+                if (layoutMain.Scorebug.Layouts[1].Transition != LayoutTransition.SlideLeft)
+                    throw new Exception($"FAIL: picking a transition did not save it on this layout ({layoutMain.Scorebug.Layouts[1].Transition})");
+                if (layoutMain.Scorebug.Layouts[0].Transition == LayoutTransition.SlideLeft)
+                    throw new Exception("FAIL: the transition was written onto the display's other layout");
+                layoutMain.Scorebug.SelectLayout(0);
+                layoutStudio.UpdateLayout();
+                if (transitionBox.SelectedItem.ToString()!.Contains("Swing left", StringComparison.Ordinal))
+                    throw new Exception("FAIL: the transition picker did not follow the layout being designed");
                 layoutStudio.Close();
                 layoutMain.Scorebug.SelectLayout(0);
 
@@ -2067,122 +2218,110 @@ internal static class Program
                 var folderWindow = new Window { Width = 470, Height = 680, Content = folderDock };
                 folderWindow.Show();
                 folderWindow.UpdateLayout();
-                // Folders are a shelf of tiles, not a dropdown, and every tile accepts a clip.
-                if (folderDock.FindName("FolderFilter") is not null || folderDock.FindName("FolderBox") is not null || folderDock.FindName("PlaylistBox") is not null)
-                    throw new Exception("FAIL: the media dock still files clips through dropdowns");
-                var folderRail = (StackPanel)folderDock.FindName("FolderRail")!;
-                var playlistRail = (StackPanel)folderDock.FindName("PlaylistRail")!;
-                var allTile = folderRail.Children.OfType<Border>().FirstOrDefault(b => b.ToolTip is string tip && tip.StartsWith("Every clip"))
-                    ?? throw new Exception("FAIL: the folder shelf has no All tile");
-                if (!allTile.AllowDrop)
-                    throw new Exception("FAIL: the All tile does not accept dragged clips");
+                // Folders and playlists are browser items now, like a file explorer: no rails, no dropdowns.
+                foreach (var stale in new[] { "FolderFilter", "FolderBox", "PlaylistBox", "FolderRail", "PlaylistRail", "FolderRailRow" })
+                    if (folderDock.FindName(stale) is not null)
+                        throw new Exception($"FAIL: the media dock still has a {stale} shelf or dropdown");
+                var tiles = (WrapPanel)folderDock.FindName("Tiles")!;
+                var breadcrumb = (TextBlock)folderDock.FindName("BreadcrumbText")!;
+                var upButton = (Button)folderDock.FindName("UpButton")!;
+                object? Method(string name, params object?[] args) =>
+                    typeof(MediaDock).GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                        .First(m => m.Name == name && m.GetParameters().Length == args.Length).Invoke(folderDock, args);
+                Border CardFor(Func<object?, bool> match) => FindAll<Border>(folderDock).FirstOrDefault(b => match(b.Tag))
+                    ?? throw new Exception("FAIL: the browser has no card for that item");
+                if (tiles.Children.Count != 4)
+                    throw new Exception($"FAIL: a library of 3 clips in one folder shows {tiles.Children.Count} browser items instead of 4");
+                var adsCard = CardFor(tag => tag is string folder && folder == "Ads");
+                if (!adsCard.AllowDrop || adsCard.ToolTip is not string adsTip || !adsTip.Contains("Double-click to open"))
+                    throw new Exception("FAIL: a folder is not a drop target that opens on double-click");
+
                 playlistSession.MoveToFolder(playlistSession.Library[1], "Openers");
                 playlistSession.CreateFolder("Empty");
+                // A clip filed in Ads/2026 makes 2026 a folder inside Ads, with Ads as its parent.
+                playlistSession.MoveToFolder(playlistSession.Library[1], "Ads/2026");
                 folderWindow.UpdateLayout();
-                if (!FindAll<Border>(folderDock).Any(b => b.Tag is string folder && folder == "Openers"))
-                    throw new Exception("FAIL: a folder that holds a clip has no tile");
-                if (!FindAll<Border>(folderDock).Any(b => b.Tag is string folder && folder == "Empty"))
-                    throw new Exception("FAIL: an empty folder has no tile on the shelf");
-                // The shelf scrollbar is the dock's slim themed bar, not the default system one.
-                var railRow = (DockPanel)folderDock.FindName("FolderRailRow")!;
-                var railBar = FindAll<System.Windows.Controls.Primitives.ScrollBar>(railRow)
-                    .FirstOrDefault(bar => bar.Orientation == Orientation.Horizontal && bar.IsVisible);
-                var themedBar = (Style)folderDock.FindResource("DockHScrollBar");
-                if (railBar is null || (railBar.Style != themedBar && !ReferenceEquals(railBar.Style?.BasedOn, themedBar)))
-                    throw new Exception("FAIL: the folder shelf uses the default system scrollbar instead of the dock's themed bar");
-                var tiles = (WrapPanel)folderDock.FindName("Tiles")!;
+                // Openers was only implied by the clip that lived there, so it goes when the clip leaves.
+                if (tiles.Children.Count != 5)
+                    throw new Exception($"FAIL: folders are not browser items ({tiles.Children.Count} items for 2 folders and 3 clips)");
+                Method("OpenFolder", "Ads");
+                folderWindow.UpdateLayout();
+                if (breadcrumb.Text != "LIBRARY / Ads")
+                    throw new Exception($"FAIL: opening a folder did not move into it ('{breadcrumb.Text}')");
+                CardFor(tag => tag is string folder && folder == "Ads/2026");
                 if (tiles.Children.Count != 3)
-                    throw new Exception($"FAIL: the dock shows {tiles.Children.Count} clips for a library of 3");
-                playlistSession.SetFolderFilter("Openers");
+                    throw new Exception($"FAIL: the open folder shows {tiles.Children.Count} items instead of 2 clips and its sub-folder");
+                Method("OpenFolder", "Ads/2026");
                 folderWindow.UpdateLayout();
-                if (tiles.Children.Count != 1)
-                    throw new Exception($"FAIL: choosing a folder did not filter the library ({tiles.Children.Count} tiles)");
-                var openersTile = FindAll<Border>(folderDock).First(b => b.Tag is string folder && folder == "Openers");
-                if (openersTile.BorderThickness.Left < 2 || openersTile.BorderBrush is not SolidColorBrush highlight || highlight.Color != Color.FromRgb(0x38, 0xD7, 0xA3))
-                    throw new Exception("FAIL: the folder on screen is not marked as selected");
+                if (breadcrumb.Text != "LIBRARY / Ads / 2026" || !FindAll<Border>(folderDock).Any(b => b.Tag is MediaEntry nestedEntry && nestedEntry.Path == clipB))
+                    throw new Exception("FAIL: a folder inside a folder does not open into its clip");
+                upButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                folderWindow.UpdateLayout();
+                if (breadcrumb.Text != "LIBRARY / Ads")
+                    throw new Exception($"FAIL: Up did not leave the nested folder ('{breadcrumb.Text}')");
 
-                playlistSession.SetFolderFilter(null);
-                playlistSession.Select(playlistSession.Library[0]);
+                // A folder leaves the app as one file, nesting included, and comes back whole.
+                var folderFile = Path.Combine(Path.GetTempPath(), $"smoke-folder-{Guid.NewGuid():N}.spf");
+                try
+                {
+                    if (!playlistSession.ExportFolder("Ads", folderFile) || !File.Exists(folderFile))
+                        throw new Exception("FAIL: a folder could not be exported to a ScorePlus Media Folder");
+                    var importedFolders = new MediaSession(new UserPreferences());
+                    try
+                    {
+                        if (!importedFolders.ImportFolder(folderFile))
+                            throw new Exception("FAIL: an exported folder could not be imported");
+                        // Two real files exist; the fake .mp4 has no media on disk and is not carried.
+                        if (!importedFolders.Folders.Contains("Ads/2026") || importedFolders.Library.Count != 2)
+                            throw new Exception($"FAIL: importing a folder lost its nesting or its clips ({importedFolders.Library.Count} clips)");
+                    }
+                    finally { importedFolders.Dispose(); }
+                    Console.WriteLine("PASS: a folder exports to one file with its folders inside it, and imports back whole");
+                }
+                finally { try { File.Delete(folderFile); } catch { } }
+
+                // A folder opened from anywhere in the app is the folder the browser is showing.
+                playlistSession.SetFolderFilter("Empty");
+                folderDock.UpdateLayout();
+                if (breadcrumb.Text != "LIBRARY / Empty")
+                    throw new Exception($"FAIL: the browser does not follow the folder on screen ('{breadcrumb.Text}')");
+                Method("OpenFolder", (object?)null);
                 folderWindow.UpdateLayout();
-                var clipLoop = (CheckBox)folderDock.FindName("ClipLoopBox")!;
-                clipLoop.IsChecked = true;
-                if (!playlistSession.Library[0].Loop)
-                    throw new Exception("FAIL: the loop toggle did not reach the clip");
+                if (breadcrumb.Text != "LIBRARY")
+                    throw new Exception($"FAIL: the browser did not return to the library root ('{breadcrumb.Text}')");
 
                 var playlist = playlistSession.CreatePlaylist("Run of show");
                 playlistSession.AddToPlaylist(playlist, playlistSession.Library[0]);
-                playlistSession.AddToPlaylist(playlist, playlistSession.Library[1]);
+                playlistSession.AddToPlaylist(playlist, playlistSession.Library[2]);
                 playlistSession.SetPlaylistLoop(playlist, true);
                 folderWindow.UpdateLayout();
-                var playlistTile = FindAll<Border>(folderDock).FirstOrDefault(b => ReferenceEquals(b.Tag, playlist))
-                    ?? throw new Exception("FAIL: a new playlist has no tile on the shelf");
-                if (!playlistTile.AllowDrop)
-                    throw new Exception("FAIL: a playlist tile does not accept dropped clips");
-                // Opening the playlist replaces the rail with everything it holds.
-                playlistTile.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
+                if (tiles.Children.Count != 6)
+                    throw new Exception($"FAIL: a playlist is not a browser item ({tiles.Children.Count} items for 2 folders, 3 clips and a playlist)");
+                var playlistCard = CardFor(tag => ReferenceEquals(tag, playlist));
+                if (!playlistCard.AllowDrop)
+                    throw new Exception("FAIL: a playlist card does not accept dropped clips");
+                Method("OpenPlaylist", playlist);
                 folderWindow.UpdateLayout();
-                if (((TextBlock)folderDock.FindName("ViewTitle")!).Text != "RUN OF SHOW")
-                    throw new Exception("FAIL: clicking a playlist did not open it");
-                if (tiles.Children.Count != 2)
-                    throw new Exception($"FAIL: the open playlist shows {tiles.Children.Count} clips for a playlist of 2");
+                if (((TextBlock)folderDock.FindName("ViewTitle")!).Text != "RUN OF SHOW" || tiles.Children.Count != 2)
+                    throw new Exception("FAIL: a playlist does not open into its clip list");
                 var playlistLoop = (CheckBox)folderDock.FindName("PlaylistLoopBox")!;
                 if (playlistLoop.IsChecked != true || playlistLoop.Visibility != Visibility.Visible)
-                    throw new Exception("FAIL: the playlist loop setting does not appear in the open playlist");
+                    throw new Exception("FAIL: the open playlist does not show its loop setting");
                 playlistLoop.IsChecked = false;
                 folderWindow.UpdateLayout();
                 if (playlist.Loop) throw new Exception("FAIL: switching playlist loop off did not reach the playlist");
                 playlistLoop.IsChecked = true;
                 folderWindow.UpdateLayout();
                 if (!playlist.Loop) throw new Exception("FAIL: switching playlist loop on did not reach the playlist");
-                if (playlistRail.Children.Count < 2 || folderDock.FindName("FolderRailRow") is not DockPanel)
-                    throw new Exception("FAIL: the media shelves are not laid out as tiles");
+                ((Button)folderDock.FindName("BackToLibraryButton")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                folderWindow.UpdateLayout();
+                if (((TextBlock)folderDock.FindName("ViewTitle")!).Text != "LIBRARY")
+                    throw new Exception("FAIL: leaving a playlist did not return to the library");
+
                 playlistSession.PlayPlaylist(playlist);
                 if (playlistSession.ActivePlaylist?.Name != "Run of show" || playlistSession.PlaylistPosition != 0)
                     throw new Exception("FAIL: a playlist did not start at its first clip");
-                // Each clip is one second long: the playlist must move on by itself when one ends.
-                var autoAdvance = DateTime.UtcNow.AddSeconds(10);
-                while (playlistSession.PlaylistPosition == 0 && playlistSession.ActivePlaylist is not null && DateTime.UtcNow < autoAdvance)
-                    Pump(TimeSpan.FromMilliseconds(200));
-                if (playlistSession.PlaylistPosition != 1)
-                    throw new Exception($"FAIL: the playlist did not advance on its own ({playlistSession.PlaylistPosition})");
-                playlistSession.NextClip();
-                if (playlistSession.PlaylistPosition != 0)
-                    throw new Exception("FAIL: a looping playlist did not wrap to its first clip");
-                playlistSession.Stop();
-                // Back to the library keeps the shelves and the full library on screen.
-                ((Button)folderDock.FindName("BackToLibraryButton")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                folderWindow.UpdateLayout();
-                if (tiles.Children.Count != 3)
-                    throw new Exception($"FAIL: leaving a playlist returned {tiles.Children.Count} library clips instead of 3");
-                if (((TextBlock)folderDock.FindName("ViewTitle")!).Text != "LIBRARY")
-                    throw new Exception("FAIL: leaving a playlist did not return to the library title");
-                // Search is library-wide: a clip is never hidden because it lives in a folder or playlist.
-                var searchBox = (TextBox)folderDock.FindName("SearchBox")!;
-                var searchClear = (Button)folderDock.FindName("SearchClearButton")!;
-                playlistSession.SetFolderFilter("Openers");
-                folderWindow.UpdateLayout();
-                searchBox.Text = Path.GetFileName(clipA);
-                folderWindow.UpdateLayout();
-                if (tiles.Children.Count != 1)
-                    throw new Exception($"FAIL: search found {tiles.Children.Count} clips for a clip inside another folder");
-                if (((TextBlock)folderDock.FindName("ViewTitle")!).Text != "SEARCH" || searchClear.Visibility != Visibility.Visible)
-                    throw new Exception("FAIL: the media search did not switch to a search view");
-                searchBox.Text = "Run of show";
-                folderWindow.UpdateLayout();
-                if (tiles.Children.Count != 2)
-                    throw new Exception($"FAIL: searching a playlist name showed {tiles.Children.Count} of its 2 clips");
-                if (!FindAll<Border>(folderDock).Any(b => b.Tag is MediaPlaylist p && p.Name == "Run of show"))
-                    throw new Exception("FAIL: searching a playlist name did not show the playlist tile");
-                searchBox.Text = "Openers";
-                folderWindow.UpdateLayout();
-                if (!FindAll<Border>(folderDock).Any(b => b.Tag is string folder && folder == "Openers"))
-                    throw new Exception("FAIL: searching a folder name did not show the folder tile");
-                playlistSession.SetFolderFilter(null);
-                searchClear.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                folderWindow.UpdateLayout();
-                if (searchBox.Text.Length != 0 || tiles.Children.Count != 3)
-                    throw new Exception($"FAIL: clearing search did not restore the full library ({tiles.Children.Count} tiles)");
-
+                // Each clip is one second long: the playlist must move on by itself when one e
                 var savedMedia = PreferencesStore.Load();
                 var savedPlaylist = savedMedia.Playlists.SingleOrDefault(p => p.Name == "Run of show");
                 if (savedPlaylist is null || savedPlaylist.Count != 2 || !savedPlaylist.Loop || savedMedia.Media.All(m => m.Path != clipA))
@@ -2381,12 +2520,12 @@ internal static class Program
                 rosterWindow.UpdateLayout();
                 if (rosterEngine.State.HomePlayer?.Name != "Jones")
                     throw new Exception($"FAIL: selecting a player after clearing left {rosterEngine.State.HomePlayer?.Name}");
-                // The desk paints itself in charcoal, not the older navy with white wells.
-                var listCard = FindAll<Border>(homePanel).FirstOrDefault(b => b.Background is SolidColorBrush s && s.Color == Color.FromRgb(36, 36, 36))
-                    ?? throw new Exception("FAIL: the roster desk is not painted in its charcoal palette");
+                // The desk shares the console's navy surfaces instead of its own charcoal palette.
+                var listCard = FindAll<Border>(homePanel).FirstOrDefault(b => b.Background is SolidColorBrush s && s.Color == Color.FromRgb(16, 22, 31))
+                    ?? throw new Exception("FAIL: the roster desk does not use the console's surface colour");
                 var inputWell = FindAll<TextBox>(homePanel).FirstOrDefault() ?? throw new Exception("FAIL: the roster desk has no fields");
-                if (inputWell.Background is not SolidColorBrush well || well.Color != Color.FromRgb(25, 25, 25))
-                    throw new Exception($"FAIL: a roster field is not a dark input well ({inputWell.Background})");
+                if (inputWell.Background is not SolidColorBrush well || well.Color != Color.FromRgb(11, 15, 20))
+                    throw new Exception($"FAIL: a roster field is not the console's input well colour ({inputWell.Background})");
                 if (listCard.ActualHeight <= 0) throw new Exception("FAIL: the roster list column did not lay out");
 
                 // The whole stat sheet is laid out as two compact columns, so it fills the desk
@@ -2421,7 +2560,7 @@ internal static class Program
                 var studio = new ScorebugEditorWindow(rosterCatalog, rosterEngine);
                 studio.Show();
                 studio.UpdateLayout();
-                if (!FindAll<Button>(studio).Any(b => (b.Content as string) == "Add player data"))
+                if (!FindAll<Button>(studio).Any(b => (b.Content as string) == "PLAYER DATA +"))
                     throw new Exception("FAIL: the studio has no Add player data button");
                 studio.Close();
                 var rosterMain = new MainWindow();
@@ -2668,6 +2807,25 @@ internal static class Program
                     throw new Exception($"FAIL: a fresh game from the launcher is not a blank slate ({cold.Engine.State.HomeScore}-{cold.Engine.State.AwayScore}, period {cold.Engine.State.Period}, {cold.Engine.State.Events.Count} events)");
                 cold.Close();
                 Console.WriteLine("PASS: the main window opens locked behind the launch box, keeps its tab outline, and starts blank");
+
+                // ---------- the console fills the screen when maximized ----------
+                {
+                    var fillMain = new MainWindow(LaunchMode.New) { Width = 1280, Height = 800 };
+                    fillMain.Show();
+                    Pump(TimeSpan.FromMilliseconds(250));
+                    fillMain.WindowState = WindowState.Maximized;
+                    Pump(TimeSpan.FromMilliseconds(450));
+                    var desk = SystemParameters.WorkArea;
+                    // A maximized window has to be allowed the whole monitor: capping it to the work
+                    // area minus a frame margin is what left a strip of desktop down the side of the
+                    // screen, on a wide monitor and a portrait one alike.
+                    if (fillMain.MaxWidth < desk.Width - 1 || fillMain.MaxHeight < desk.Height - 1)
+                        throw new Exception($"FAIL: a maximized console is capped at {fillMain.MaxWidth:0}x{fillMain.MaxHeight:0} on a {desk.Width:0}x{desk.Height:0} screen");
+                    if (fillMain.ActualWidth < desk.Width - 40 || fillMain.ActualHeight < desk.Height - 40)
+                        throw new Exception($"FAIL: a maximized console fills only {fillMain.ActualWidth:0}x{fillMain.ActualHeight:0} of {desk.Width:0}x{desk.Height:0}");
+                    fillMain.Close();
+                    Console.WriteLine("PASS: a maximized console fills the screen instead of leaving a strip of desktop");
+                }
             }
 
             // ---------- program preview: the audience monitor shows what is on air ----------
@@ -2802,7 +2960,109 @@ internal static class Program
                     throw new Exception("FAIL: a bad accent value did not fall back to the shipped green");
                 if (!UpdateChecker.IsNewer("1.2.0", "1.0.0") || UpdateChecker.IsNewer("1.0.0", "1.0.0") || UpdateChecker.IsNewer("0.9.9", "1.0.0"))
                     throw new Exception("FAIL: the update version comparison is wrong");
-                Console.WriteLine("PASS: interface accents are stored and validated, and updates only offer a genuinely newer version");
+
+                // Tags are what a release carries, so they have to survive real-world names.
+                if (UpdateChecker.VersionFromTag("v1.2.0") != "1.2.0"
+                    || UpdateChecker.VersionFromTag("release-2.0") != "2.0.0"
+                    || UpdateChecker.VersionFromTag("a1.01") != "1.1.0"
+                    || UpdateChecker.VersionFromTag("nightly") is not null)
+                    throw new Exception("FAIL: a release tag was not turned into a comparable version");
+
+                // A GitHub releases array: the draft is invisible, the prerelease is the point, and
+                // the installer's own digest becomes the checksum with no manifest to publish.
+                const string releaseJson = """
+                [
+                  { "tag_name": "v9.0.0", "draft": true, "prerelease": false, "name": "Unpublished",
+                    "assets": [ { "name": "ScorePlusSetup.exe", "browser_download_url": "https://example.invalid/draft.exe", "state": "uploaded" } ] },
+                  { "tag_name": "a1.12", "draft": false, "prerelease": true, "name": "Alpha 1.12",
+                    "assets": [
+                      { "name": "ScorePlusPortable.exe", "browser_download_url": "https://example.invalid/portable.exe", "state": "uploaded" },
+                      { "name": "ScorePlusSetup.exe", "browser_download_url": "https://example.invalid/setup.exe", "state": "uploaded",
+                        "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" } ] },
+                  { "tag_name": "v1.2.0", "draft": false, "prerelease": false,
+                    "assets": [ { "name": "ScorePlusSetup.exe", "browser_download_url": "https://example.invalid/old.exe", "state": "uploaded" } ] }
+                ]
+                """;
+                var offered = UpdateChecker.ParseReleases(releaseJson);
+                if (offered is null
+                    || offered.Version != "1.12.0"
+                    || offered.Url != "https://example.invalid/setup.exe"
+                    || offered.Notes != "Alpha 1.12"
+                    || offered.Sha256 != "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF")
+                    throw new Exception("FAIL: a prerelease was not offered as the newest build with its own checksum");
+                if (UpdateChecker.ParseReleases("[ { \"tag_name\": \"v9.0.0\", \"draft\": false, \"assets\": [] } ]") is not null)
+                    throw new Exception("FAIL: a release with no installer was offered as an update");
+                // Releases always carry ScorePlusPortable and ScorePlusSetup; the installer is matched
+                // on its base name, so an upload without an extension is still found, and the portable
+                // file is never mistaken for it.
+                const string bareNameJson = """
+                [
+                  { "tag_name": "a1.2", "draft": false, "prerelease": true,
+                    "assets": [ { "name": "ScorePlusPortable.exe", "browser_download_url": "https://example.invalid/portable.exe", "state": "uploaded" },
+                                { "name": "ScorePlusSetup", "browser_download_url": "https://example.invalid/setup-no-extension", "state": "uploaded" } ] }
+                ]
+                """;
+                var bareOffered = UpdateChecker.ParseReleases(bareNameJson);
+                if (bareOffered is null || bareOffered.Url != "https://example.invalid/setup-no-extension")
+                    throw new Exception("FAIL: a ScorePlusSetup asset without an extension was not offered as an update");
+                if (!UpdateFeed.IsSetupAsset("ScorePlusSetup.exe") || UpdateFeed.IsSetupAsset("ScorePlusPortable.exe") || UpdateFeed.IsSetupAsset(null))
+                    throw new Exception("FAIL: the release asset names are not matched by base name");
+                if (UpdateChecker.ParseManifest("{ \"version\": \"3.0.0\", \"url\": \"https://example.invalid/setup.exe\" }") is not { Version: "3.0.0" })
+                    throw new Exception("FAIL: a hand-hosted manifest no longer parses");
+                if (!Uri.TryCreate(UpdateFeed.BuiltIn, UriKind.Absolute, out var builtIn) || builtIn.Host != "api.github.com")
+                    throw new Exception("FAIL: the built-in update feed is not a GitHub API address");
+                Console.WriteLine("PASS: interface accents are stored and validated, updates read prereleases from the built-in feed with the asset's own checksum, and only a genuinely newer version is offered");
+
+                // ---------- the installer wears the app's own chrome and reads its Alpha label ----------
+                {
+                    var setupWindow = new SetupWindow(false) { ShowInTaskbar = false };
+                    setupWindow.Show();
+                    setupWindow.UpdateLayout();
+                    if (!FindAll<TextBlock>(setupWindow).Any(t => t.Text.Contains("Alpha ", StringComparison.Ordinal)))
+                        throw new Exception("FAIL: the installer does not show its Alpha version");
+                    if (setupWindow.Background is not SolidColorBrush setupFace || setupFace.Color.R > 0x20 || setupFace.Color.B > 0x20)
+                        throw new Exception($"FAIL: the installer still paints a coloured (navy) panel ({setupWindow.Background})");
+                    foreach (var setupButton in FindAll<Button>(setupWindow))
+                    {
+                        if (setupButton.Foreground is not SolidColorBrush setupInk || setupInk.Color.R < 230)
+                            throw new Exception($"FAIL: an installer button has unreadable text on its box ({setupButton.Foreground})");
+                        if (setupButton.Background is not SolidColorBrush setupFill || setupFill.Color.R > 0x80)
+                            throw new Exception($"FAIL: an installer button is still a pale system box ({setupButton.Background})");
+                    }
+                    setupWindow.Close();
+                    Console.WriteLine("PASS: the installer uses the app's dark chrome, readable buttons and its Alpha version label");
+                }
+
+                // ---------- the installer keeps to folders and files that are its own ----------
+                {
+                    var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    if (Installer.IsSafeInstallDirectory(Path.Combine(profile, "Downloads"), out _)
+                        || Installer.IsSafeInstallDirectory(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), out _)
+                        || Installer.IsSafeInstallDirectory(profile, out _)
+                        || Installer.IsSafeInstallDirectory(Path.GetPathRoot(profile)!, out _))
+                        throw new Exception("FAIL: the installer would move into Downloads, the Desktop, the profile or a drive root");
+                    if (!Installer.IsSafeInstallDirectory(Installer.DefaultDirectory, out _))
+                        throw new Exception("FAIL: the installer refuses its own default folder");
+
+                    var sandbox = Path.Combine(Path.GetTempPath(), "ScorePlusSafety");
+                    try
+                    {
+                        if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+                        Directory.CreateDirectory(sandbox);
+                        File.WriteAllText(Path.Combine(sandbox, "payroll.xlsx"), "the user's own file");
+                        if (Installer.IsSafeInstallDirectory(sandbox, out _))
+                            throw new Exception("FAIL: the installer would share a folder with somebody else's files");
+                        File.WriteAllText(Path.Combine(sandbox, "ScorePlus.exe"), "app");
+                        File.WriteAllText(Path.Combine(sandbox, "install.json"), "{}");
+                        File.WriteAllText(Path.Combine(sandbox, "Uninstall.exe"), "installer");
+                        var kept = Installer.RemoveOwnFiles(sandbox);
+                        if (kept != 1 || !File.Exists(Path.Combine(sandbox, "payroll.xlsx"))
+                            || File.Exists(Path.Combine(sandbox, "ScorePlus.exe")) || File.Exists(Path.Combine(sandbox, "install.json")))
+                            throw new Exception("FAIL: an uninstall removed files it did not install");
+                    }
+                    finally { try { if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true); } catch { } }
+                    Console.WriteLine("PASS: the installer refuses Downloads, the Desktop, a drive root and occupied folders, and an uninstall deletes only its own three files");
+                }
 
                 // ---------- linked parts: one edit reaches every copy, and the link can be broken ----------
                 {
@@ -2905,6 +3165,76 @@ internal static class Program
                     if (square.Background is not SolidColorBrush onBrush || onBrush.Color.A < 200)
                         throw new Exception("FAIL: an occupied base did not light up");
                     Console.WriteLine("PASS: baseball draws three bases (lit for runners) and the console flags are square bases");
+                }
+
+                // ---------- live artwork: any element can become an icon, and the diamond animates ----------
+                {
+                    var artPath = Path.Combine(Path.GetTempPath(), $"smoke-artwork-{Guid.NewGuid():N}.json");
+                    var artEngine = new GameEngine();
+                    artEngine.NewGame("football");
+                    artEngine.SetTimeoutCount(true, 2);
+                    var artCatalog = new ScorebugCatalog(artPath);
+                    artCatalog.Update(layout =>
+                    {
+                        layout.Elements.Clear();
+                        layout.Elements.Add(new ScorebugElement { Name = "Timeouts", Content = "{{POSSESSION}}", X = 60, Y = 60, Width = 260, Height = 70, FontSize = 30 });
+                    });
+                    var artStudio = new ScorebugEditorWindow(artCatalog, artEngine) { Width = 1400, Height = 900 };
+                    artStudio.Show();
+                    artStudio.UpdateLayout();
+                    ((ListBox)artStudio.FindName("Layers")!).SelectedIndex = 0;
+                    artStudio.UpdateLayout();
+                    var artCanvas = (Canvas)artStudio.FindName("DesignCanvas")!;
+                    // A plain text element to begin with, as the operator would add it.
+                    if (FindAll<ScorebugIconView>(artCanvas).Any()) throw new Exception("FAIL: a text element already draws artwork");
+                    ((ComboBox)artStudio.FindName("IconInput")!).SelectedItem = ScorebugIcon.TimeoutBars;
+                    Pump(TimeSpan.FromMilliseconds(250));
+                    var barsView = FindAll<ScorebugIconView>(artCanvas).FirstOrDefault();
+                    if (barsView is null)
+                        throw new Exception("FAIL: switching an element to timeout bars draws no live artwork in the studio");
+                    if (FindAll<System.Windows.Shapes.Rectangle>(barsView).Count() != 2)
+                        throw new Exception($"FAIL: timeout bars show {FindAll<System.Windows.Shapes.Rectangle>(barsView).Count()} bars for two timeouts");
+                    if (FindAll<ScorebugTextBlock>(artCanvas).Any(t => t.Text.Contains("POSSESSION", StringComparison.Ordinal)))
+                        throw new Exception("FAIL: the old text is still drawn under the artwork");
+                    // Live: another timeout removes a bar without any studio edit.
+                    artEngine.SetTimeoutCount(true, 1);
+                    Pump(TimeSpan.FromMilliseconds(200));
+                    if (FindAll<System.Windows.Shapes.Rectangle>(barsView).Count() != 1)
+                        throw new Exception("FAIL: the timeout bars did not follow the game");
+                    // Switching to a different icon builds that artwork instead of keeping the bars.
+                    ((ComboBox)artStudio.FindName("IconInput")!).SelectedItem = ScorebugIcon.PossessionDot;
+                    Pump(TimeSpan.FromMilliseconds(250));
+                    if (!FindAll<System.Windows.Shapes.Ellipse>(artCanvas).Any())
+                        throw new Exception("FAIL: switching to the possession dot drew no dot");
+                    artStudio.Close();
+
+                    // The diamond lights a base through the element's own value-change animation.
+                    var diamondItem = new ScorebugElement
+                    {
+                        Name = "Bases", Icon = ScorebugIcon.Bases, Width = 220, Height = 150, Foreground = "#FFFF8800",
+                        Transition = ScorebugTransition.Fade, TransitionSeconds = 1
+                    };
+                    var diamondEngine = new GameEngine();
+                    diamondEngine.NewGame("baseball");
+                    var diamondView = new ScorebugIconView(diamondItem, () => diamondEngine.State);
+                    var diamondHost = new Window { Content = diamondView, Width = 300, Height = 240, ShowInTaskbar = false, WindowStyle = WindowStyle.None };
+                    diamondHost.Show();
+                    Pump(TimeSpan.FromMilliseconds(250));
+                    diamondEngine.SetSportValue("baseball.first", 1);
+                    diamondView.Update();
+                    var diamondSquares = FindAll<System.Windows.Shapes.Rectangle>(diamondView).ToArray();
+                    if (diamondSquares.Length != 3) throw new Exception("FAIL: the animated diamond lost a base");
+                    // Order on the canvas is third, second, first; the first base is the one just lit.
+                    if (!diamondSquares[2].HasAnimatedProperties)
+                        throw new Exception("FAIL: a lit base snaps in even though the element has a value-change animation");
+                    if (diamondSquares[2].Fill is not SolidColorBrush litBase || litBase.Color.A < 200)
+                        throw new Exception("FAIL: the animated base never lit");
+                    diamondEngine.SetSportValue("baseball.first", 0);
+                    diamondView.Update();
+                    if (diamondSquares[2].Fill is not SolidColorBrush cleared || cleared.Color.A > 40)
+                        throw new Exception("FAIL: clearing a base left it lit");
+                    diamondHost.Close();
+                    Console.WriteLine("PASS: any element can become live artwork in the studio, and runners light the diamond through its own transition");
                 }
 
                 // ---------- phone remote: password, state and actions ----------

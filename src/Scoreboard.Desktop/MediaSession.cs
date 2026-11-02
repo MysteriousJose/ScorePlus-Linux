@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.IO.Compression;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -30,6 +32,8 @@ public sealed class MediaSession
     // MediaElement (which can only ever use the Windows default output).
     readonly AudioRouter _audio = new();
     CameraFeed? _camera;
+    // The live microphone, if one is cued. Like the camera it owns a capture device while on air.
+    MicrophoneFeed? _microphone;
     // The recorded clips a replay is travelling through, newest last, and the point inside them.
     readonly List<CameraSegment> _replayBuffer = [];
     int _replayIndex = -1;
@@ -113,6 +117,9 @@ public sealed class MediaSession
     /// <summary>The camera entry behind the live feed, so Replay can go back to it.</summary>
     public MediaEntry? CameraEntry { get; private set; }
 
+    /// <summary>The microphone item currently cued, if any.</summary>
+    public MediaEntry? MicrophoneEntry { get; private set; }
+
     /// <summary>True while an instant replay of a camera clip is open.</summary>
     public bool IsReplaying { get; private set; }
 
@@ -122,8 +129,11 @@ public sealed class MediaSession
     /// <summary>True while a live camera is cued.</summary>
     public bool IsCameraLive => Current?.IsCamera == true && _camera is not null;
 
+    /// <summary>True while a live microphone is cued and being monitored.</summary>
+    public bool IsMicrophoneLive => Current?.IsMicrophone == true && _microphone?.IsRunning == true;
+
     /// <summary>The capture device's last error, for the dock's status line.</summary>
-    public string? Error => _camera?.Error;
+    public string? Error => Current?.IsMicrophone == true ? _microphone?.Error : _camera?.Error;
 
     /// <summary>How far behind live the replay playhead is, in seconds. 0 is the live edge.</summary>
     public double ReplayBack { get; private set; }
@@ -370,6 +380,171 @@ public sealed class MediaSession
         Status?.Invoke($"FOLDER · {updated.Label} → {updated.FolderLabel}");
     }
 
+    // ---------- a folder as a file ----------
+
+    /// <summary>True when a folder path is this folder or lives somewhere under it.</summary>
+    static bool InFolder(string path, string folder) =>
+        folder.Length == 0
+            ? path.Length == 0
+            : string.Equals(path, folder, StringComparison.OrdinalIgnoreCase)
+              || path.StartsWith(folder + "/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The folder the operator would export right now, for the dock's button state.</summary>
+    public bool CanExportFolder(string? folder)
+    {
+        var normalized = MediaLibrary.NormalizeFolder(folder);
+        return Library.Any(entry => InFolder(MediaLibrary.NormalizeFolder(entry.Folder), normalized))
+            || _folders.Any(name => InFolder(name, normalized));
+    }
+
+    /// <summary>
+    /// Writes a folder, everything under it and the clips inside it to one ScorePlus Media Folder
+    /// (.spf). It is a zip rather than a bare manifest, so the folder really carries its media with
+    /// it and round-trips on another machine: nested folders, tags, loops, levels, speakers, cameras.
+    /// </summary>
+    public bool ExportFolder(string? folderPath, string destination)
+    {
+        try
+        {
+            var folder = MediaLibrary.NormalizeFolder(folderPath);
+            var manifest = new MediaFolderManifest { Folder = folder };
+            foreach (var name in Folders.Where(candidate => InFolder(candidate, folder)))
+                if (!manifest.Folders.Contains(name, StringComparer.OrdinalIgnoreCase)) manifest.Folders.Add(name);
+            if (folder.Length > 0 && !manifest.Folders.Contains(folder, StringComparer.OrdinalIgnoreCase)) manifest.Folders.Insert(0, folder);
+
+            using (var stream = File.Create(destination))
+            using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
+            {
+                var index = 0;
+                foreach (var entry in Library.Where(item => InFolder(MediaLibrary.NormalizeFolder(item.Folder), folder)).ToArray())
+                {
+                    var clip = new MediaFolderClip
+                    {
+                        Path = entry.IsCamera || entry.IsMicrophone ? entry.Path : "",
+                        Tag = entry.Tag,
+                        Folder = MediaLibrary.NormalizeFolder(entry.Folder),
+                        Loop = entry.Loop,
+                        Volume = entry.Volume,
+                        AudioDevice = entry.AudioDevice,
+                        Name = entry.Name,
+                        CameraDevice = entry.CameraDevice,
+                        MicrophoneDevice = entry.MicrophoneDevice
+                    };
+                    if (!entry.IsCamera && !entry.IsMicrophone && File.Exists(entry.Path))
+                    {
+                        clip.File = $"files/{index:000}-{Path.GetFileName(entry.Path)}";
+                        var item = archive.CreateEntry(clip.File, CompressionLevel.Optimal);
+                        using var target = item.Open();
+                        using var source = File.OpenRead(entry.Path);
+                        source.CopyTo(target);
+                        index++;
+                    }
+                    manifest.Clips.Add(clip);
+                }
+
+                var json = archive.CreateEntry(MediaFolderManifest.FileName, CompressionLevel.Optimal);
+                using var writer = new StreamWriter(json.Open());
+                writer.Write(JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+            }
+
+            Status?.Invoke($"FOLDER EXPORTED · {(folder.Length == 0 ? "unfiled" : folder)} · {manifest.Clips.Count} clip{(manifest.Clips.Count == 1 ? "" : "s")} → {Path.GetFileName(destination)}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Status?.Invoke($"FOLDER EXPORT FAILED · {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Brings a ScorePlus Media Folder (.spf) back in. Its clips are unpacked into the library's own
+    /// media folder, never over an existing file, and every folder in the manifest is recreated —
+    /// nested ones included — before the clips are filed into them.
+    /// </summary>
+    public bool ImportFolder(string source)
+    {
+        try
+        {
+            using var archive = ZipFile.OpenRead(source);
+            var manifestEntry = archive.GetEntry(MediaFolderManifest.FileName);
+            if (manifestEntry is null)
+            {
+                Status?.Invoke("FOLDER IMPORT · that file is not a ScorePlus Media Folder");
+                return false;
+            }
+
+            MediaFolderManifest? manifest;
+            using (var reader = new StreamReader(manifestEntry.Open()))
+                manifest = JsonSerializer.Deserialize<MediaFolderManifest>(reader.ReadToEnd());
+            if (manifest is null)
+            {
+                Status?.Invoke("FOLDER IMPORT · its manifest could not be read");
+                return false;
+            }
+
+            var landing = AppPaths.Combine("media");
+            Directory.CreateDirectory(landing);
+            foreach (var name in manifest.Folders.Select(MediaLibrary.NormalizeFolder).Where(name => name.Length > 0))
+                if (!_folders.Contains(name, StringComparer.OrdinalIgnoreCase)) _folders.Add(name);
+
+            var added = 0;
+            foreach (var clip in manifest.Clips)
+            {
+                var folder = MediaLibrary.NormalizeFolder(clip.Folder);
+                if (folder.Length > 0 && !_folders.Contains(folder, StringComparer.OrdinalIgnoreCase)) _folders.Add(folder);
+
+                if (MediaLibrary.CameraIndex(clip.Path) is not null || MediaLibrary.MicrophoneIndex(clip.Path) is not null)
+                {
+                    if (Library.Any(entry => string.Equals(entry.Path, clip.Path, StringComparison.OrdinalIgnoreCase))) continue;
+                    Library.Add(new MediaEntry(clip.Path, MediaLibrary.NormalizeTag(clip.Tag), folder, clip.Loop,
+                        Math.Clamp(clip.Volume, 0, 1), clip.AudioDevice, clip.Name, clip.CameraDevice, clip.MicrophoneDevice));
+                    added++;
+                    continue;
+                }
+
+                var zipEntry = string.IsNullOrWhiteSpace(clip.File) ? null : archive.GetEntry(clip.File);
+                if (zipEntry is null) continue;
+                var name = Path.GetFileName(zipEntry.FullName);
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var target = UniqueFile(landing, name);
+                zipEntry.ExtractToFile(target, true);
+                Library.Add(new MediaEntry(target, MediaLibrary.NormalizeTag(clip.Tag), folder, clip.Loop,
+                    Math.Clamp(clip.Volume, 0, 1), clip.AudioDevice, clip.Name, clip.CameraDevice));
+                added++;
+            }
+
+            var landed = MediaLibrary.NormalizeFolder(manifest.Folder);
+            if (landed.Length > 0) FolderFilter = landed;
+            Save();
+            StateChanged?.Invoke();
+            Status?.Invoke(added == 0
+                ? "FOLDER IMPORT · that folder is already in the library"
+                : $"FOLDER IMPORTED · {(landed.Length == 0 ? "unfiled" : landed)} · {added} clip{(added == 1 ? "" : "s")}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Status?.Invoke($"FOLDER IMPORT FAILED · {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>A name in the media folder nothing else uses, so an import never overwrites a clip.</summary>
+    static string UniqueFile(string directory, string name)
+    {
+        var target = Path.Combine(directory, name);
+        if (!File.Exists(target)) return target;
+        var stem = Path.GetFileNameWithoutExtension(name);
+        var extension = Path.GetExtension(name);
+        for (var attempt = 1; attempt < 1000; attempt++)
+        {
+            target = Path.Combine(directory, $"{stem}-{attempt}{extension}");
+            if (!File.Exists(target)) return target;
+        }
+        return Path.Combine(directory, $"{Guid.NewGuid():N}{extension}");
+    }
+
     /// <summary>Turns this one clip's own loop on or off.</summary>
     public void SetClipLoop(MediaEntry entry, bool loop)
     {
@@ -406,6 +581,8 @@ public sealed class MediaSession
         Save();
         if (SameClip(Current, updated))
         {
+            // A live microphone is monitored by its feed, so its own level is set there.
+            if (updated.IsMicrophone) _microphone?.SetVolume(updated.Volume);
             _player.Volume = updated.IsVideo && string.IsNullOrWhiteSpace(updated.AudioDevice) ? 0 : (float)updated.Volume;
             if (updated.IsVideo && !string.IsNullOrWhiteSpace(updated.AudioDevice)) _audio.SetVolume(updated.Volume);
         }
@@ -424,6 +601,13 @@ public sealed class MediaSession
         if (SameClip(Selected, updated)) Selected = updated;
         Playback.UpdateEntry(updated);
         Save();
+        if (SameClip(Current, updated) && updated.IsMicrophone)
+        {
+            // Moving a live mic to another output re-opens its monitor; the capture stays live.
+            _microphone?.SetOutput(updated.AudioDevice);
+            Status?.Invoke($"OUTPUT · {updated.Label} → {updated.AudioLabel}");
+            return;
+        }
         if (SameClip(Current, updated) && updated.IsVideo)
         {
             _audio.Stop();
@@ -463,6 +647,33 @@ public sealed class MediaSession
         Status?.Invoke($"CAMERA ADDED · {entry.Label} · tag {entry.Tag}");
         return entry;
     }
+
+    /// <summary>
+    /// Adds a microphone to the library. It behaves like a camera item — one entry, cued from the
+    /// dock, with its own level and output — but it carries sound only, so no video box ever fills.
+    /// </summary>
+    public MediaEntry AddMicrophone(int index, string? tag = null)
+    {
+        var path = MediaLibrary.MicrophonePath(index);
+        var existing = Library.FirstOrDefault(e => string.Equals(e.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            Selected = existing;
+            StateChanged?.Invoke();
+            Status?.Invoke($"{existing.Label} is already in the library");
+            return existing;
+        }
+        Library.Add(new MediaEntry(path, MediaLibrary.NormalizeTag(string.IsNullOrWhiteSpace(tag) ? "Microphone" : tag)));
+        var entry = Library[^1];
+        Selected = entry;
+        Save();
+        StateChanged?.Invoke();
+        Status?.Invoke($"MICROPHONE ADDED · {entry.Label}");
+        return entry;
+    }
+
+    /// <summary>Every capture device the operator can add as a microphone, by Windows' name.</summary>
+    public IReadOnlyList<MicrophoneDevice> MicrophoneDevices() => MicrophoneFeed.NamedDevices();
 
     /// <summary>The capture devices a camera item can be routed to, with the names Windows gives
     /// them, for the routing menu.</summary>
@@ -522,6 +733,8 @@ public sealed class MediaSession
     /// </summary>
     void PlayCamera(MediaEntry entry, MediaPlaylist? playlist, int index)
     {
+        // A camera and a microphone are two live sources; only one can be on air at a time.
+        StopMicrophone();
         try { _player.Stop(); _player.Close(); } catch { }
         _seekApply.Stop();
         _seekTarget = 0;
@@ -728,6 +941,53 @@ public sealed class MediaSession
         _camera = null;
     }
 
+    /// <summary>
+    /// Cues a live microphone: the device is opened and its sound is monitored on the item's own
+    /// output. There is no file, no picture and no timeline — the mic simply goes live until the
+    /// operator stops it or cues something else, and the transport player is closed so a previous
+    /// clip cannot keep playing underneath it.
+    /// </summary>
+    void PlayMicrophone(MediaEntry entry)
+    {
+        try { _player.Stop(); _player.Close(); } catch { }
+        _seekApply.Stop();
+        _seekTarget = 0;
+        _playlist = null;
+        _playlistIndex = -1;
+        StopCamera();
+        CameraEntry = null;
+        IsReplaying = false;
+        _replayOnAir = false;
+        _replayBuffer.Clear();
+        _replayIndex = -1;
+        ReplayBack = 0;
+        ReplayDepth = 0;
+        _duration = 0;
+        _pendingSeek = null;
+        _audio.Stop();
+        if (_microphone is not null && _microphone.Index != entry.MicrophoneIndex) StopMicrophone();
+        Current = entry;
+        MicrophoneEntry = entry;
+        _microphone = MicrophoneFeed.Get(entry.MicrophoneIndex);
+        _microphone.SetVolume(entry.Volume);
+        _microphone.Start(entry.AudioDevice);
+        // A microphone sends no picture, so every scorebug video box is told to clear instead of
+        // leaving the last clip's frame up while the mic is live.
+        Playback.Stop();
+        SetTransportPlaying(true);
+        StateChanged?.Invoke();
+        Status?.Invoke(_microphone.Error is { } failure
+            ? $"MICROPHONE ERROR · {failure}"
+            : $"LIVE · {entry.Label} → {entry.AudioLabel}");
+    }
+
+    void StopMicrophone()
+    {
+        if (_microphone is not null) _microphone.Stop();
+        _microphone = null;
+        MicrophoneEntry = null;
+    }
+
     /// <summary>Keeps the cued clip pointing at the updated record after a tag/folder/loop edit.</summary>
     void ReplaceCurrent(MediaEntry before, MediaEntry after)
     {
@@ -755,6 +1015,7 @@ public sealed class MediaSession
     void PlayClip(MediaEntry entry, MediaPlaylist? playlist, int index)
     {
         if (entry.IsCamera) { PlayCamera(entry, playlist, index); return; }
+        if (entry.IsMicrophone) { PlayMicrophone(entry); return; }
         entry = Resolve(entry);
         IsReplaying = false;
         _replayBuffer.Clear();
@@ -767,6 +1028,7 @@ public sealed class MediaSession
             return;
         }
         StopCamera();
+        StopMicrophone();
         IsReplaying = false;
         _replayOnAir = false;
         // A clip sent to a speaker must not keep playing after the next clip is cued.
@@ -803,6 +1065,25 @@ public sealed class MediaSession
 
     public void TogglePlayPause()
     {
+        // A live microphone has no playhead: pause stops listening, play opens the device again.
+        if (Current?.IsMicrophone == true)
+        {
+            if (_playing)
+            {
+                _microphone?.Stop();
+                SetTransportPlaying(false);
+                Status?.Invoke($"MICROPHONE PAUSED · {Current.Label}");
+            }
+            else
+            {
+                _microphone ??= MicrophoneFeed.Get(Current.MicrophoneIndex);
+                _microphone.SetVolume(Current.Volume);
+                _microphone.Start(Current.AudioDevice);
+                SetTransportPlaying(true);
+                Status?.Invoke($"LIVE · {Current.Label} → {Current.AudioLabel}");
+            }
+            return;
+        }
         // A replay is paused and resumed like any clip, but never cued again from the top.
         if (IsReplaying)
         {
@@ -1018,6 +1299,7 @@ public sealed class MediaSession
     {
         try { _player.Stop(); _player.Close(); } catch { }
         StopCamera();
+        StopMicrophone();
         _audio.Stop();
         IsReplaying = false;
         _replayOnAir = false;
@@ -1153,6 +1435,7 @@ public sealed class MediaSession
         _transport.Stop();
         _seekApply.Stop();
         StopCamera();
+        StopMicrophone();
         _audio.Dispose();
         try { _player.Close(); } catch { }
     }

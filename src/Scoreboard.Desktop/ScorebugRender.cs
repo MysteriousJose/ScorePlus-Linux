@@ -72,12 +72,28 @@ internal static class ScorebugRender
             ? Brushes.Transparent
             : BackgroundBrush(item, state);
 
+    /// <summary>
+    /// The colour the inside of a baseball base is filled with. Empty follows the element's text
+    /// colour, so an existing diamond keeps its look; a palette slot follows that team.
+    /// </summary>
+    public static string ResolveIconFill(ScorebugElement item, GameState? state) =>
+        item.IconFillSource != ScorebugColorSource.Custom
+            ? state?.ColorFor(item.IconFillSource) ?? item.IconFillColor
+            : string.IsNullOrWhiteSpace(item.IconFillColor) ? ResolveForeground(item, state) : item.IconFillColor;
+
     public static string? ResolveLogoPath(ScorebugElement item, GameState? state) =>
         item.LogoSide == ScorebugLogoSide.None ? item.ImagePath : state?.LogoFor(item.LogoSide) ?? item.ImagePath;
 
     public static FrameworkElement CreateContent(ScorebugElement item, Func<GameState>? state, MediaPlayback? playback = null, bool muteVideo = true, bool showVideoPlaceholder = false, bool onAirVideo = false)
     {
         if (item.Kind == ScorebugElementKind.Video) return new VideoSurface(item, playback, muteVideo, showVideoPlaceholder, onAirVideo);
+        // HTML is drawn by a browser engine and captured as a frame, so every feed shows the same
+        // picture at the element's design size.
+        if (item.Kind == ScorebugElementKind.Html) return new HtmlSurface(item, showVideoPlaceholder);
+        // A still image imported into the studio. It keeps its picture slot while the file is there,
+        // and goes blank (rather than stale) if the file is moved away.
+        if (item.Kind == ScorebugElementKind.Image)
+            return new Image { Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
         // Icons are drawn from live data rather than typed text: small bars per timeout, or a dot
         // showing which team has the ball.
         if (item.Kind == ScorebugElementKind.Text && item.Icon != ScorebugIcon.None) return new ScorebugIconView(item, state);
@@ -154,6 +170,9 @@ internal static class ScorebugRender
             case ScorebugLogoView logo:
                 // Logos are set from the console: pick one up, drop one, all without a rebuild.
                 logo.Update(item, state);
+                break;
+            case HtmlSurface htmlPage:
+                htmlPage.Update(item);
                 break;
             case Image image:
                 var path = ResolveLogoPath(item, state);
@@ -501,26 +520,43 @@ public sealed class ScorebugIconView : Grid
 {
     readonly ScorebugElement _item;
     readonly Func<GameState>? _state;
-    readonly ScorebugTextBlock? _text;
     readonly Ellipse? _dot;
     readonly StackPanel? _bars;
     readonly Canvas? _bases;
+    readonly List<Rectangle> _baseSquares = [];
+    readonly List<ScaleTransform> _baseScales = [];
+    readonly bool[] _baseLit = new bool[3];
+    Brush _baseBrush = Brushes.White;
+    Brush _baseFill = Brushes.White;
+    Brush _baseFaint = Brushes.White;
     string _appliedForeground = "";
     string _baseSignature = "";
+    // Which side the dot was last drawn on, so a possession change can animate from the old side.
+    bool? _dotRight;
+
+    /// <summary>
+    /// Which live artwork this view was built for, so the studio can tell one icon from another.
+    /// It is captured at construction rather than read from the element: the element is edited in
+    /// place, so reading it would let a view that draws bars claim it is already a dot.
+    /// </summary>
+    public ScorebugIcon Icon { get; }
 
     public ScorebugIconView(ScorebugElement item, Func<GameState>? state, string? text = null)
     {
         _item = item;
         _state = state;
-        ClipToBounds = true;
-        if (item.Icon == ScorebugIcon.Bases)
+        Icon = item.Icon;
+        // Bars and bases are artwork that must stay inside its plate; the dot is a small mark that
+        // is allowed to breathe over the edge rather than arrive chopped in half.
+        ClipToBounds = Icon != ScorebugIcon.PossessionDot;
+        if (Icon == ScorebugIcon.Bases)
         {
             // Three bases in a diamond: a base a runner is standing on is filled, an empty one is
             // only a faint outline, so the graphic reads at a glance like the field does.
             _bases = new Canvas { ClipToBounds = true };
             Children.Add(_bases);
         }
-        else if (item.Icon == ScorebugIcon.TimeoutBars)
+        else if (Icon == ScorebugIcon.TimeoutBars)
         {
             // One short horizontal line per timeout, in a row from left to right.
             _bars = new StackPanel
@@ -533,12 +569,8 @@ public sealed class ScorebugIconView : Grid
         }
         else
         {
-            // The dot sits beside whatever the element says (usually {{POSSESSION}}).
-            if (!string.IsNullOrWhiteSpace(item.Content))
-            {
-                _text = ScorebugRender.MakeText(item, text ?? item.Content);
-                Children.Add(_text);
-            }
+            // The dot is the whole icon: it marks the side with the ball, on the side that has it.
+            // Printing the value beside it read as a second, stale possession next to the mark.
             _dot = new Ellipse { Fill = ScorebugRender.ParseBrush(ScorebugRender.ResolveForeground(item, state?.Invoke())), VerticalAlignment = VerticalAlignment.Center };
             Children.Add(_dot);
         }
@@ -549,32 +581,43 @@ public sealed class ScorebugIconView : Grid
     public void Update(string? text = null)
     {
         var state = _state?.Invoke();
-        _text?.ApplyStyle(_item, state);
         var foreground = ScorebugRender.ResolveForeground(_item, state);
         if (_bases is not null)
         {
             var first = state is not null && SportValues.Read(state, "baseball.first") != 0;
             var second = state is not null && SportValues.Read(state, "baseball.second") != 0;
             var third = state is not null && SportValues.Read(state, "baseball.third") != 0;
-            var signature = $"{_item.Width:0.#}x{_item.Height:0.#}|{foreground}|{first}{second}{third}";
-            if (signature != _baseSignature)
+            var width = Math.Max(24, _item.Width);
+            var height = Math.Max(24, _item.Height);
+            // The three bases are built once for a given size and colour, then only lit and cleared.
+            // Rebuilding them on every runner (what this used to do) threw away the squares mid-change,
+            // so a value-change animation had nothing to animate.
+            var lit = new[] { third, second, first };
+            var fill = ScorebugRender.ResolveIconFill(_item, state);
+            var geometry = $"{width:0.#}x{height:0.#}|{foreground}|{fill}";
+            if (geometry != _baseSignature)
             {
-                _baseSignature = signature;
+                _baseSignature = geometry;
                 _bases.Children.Clear();
-                var width = Math.Max(24, _item.Width);
-                var height = Math.Max(24, _item.Height);
+                _baseSquares.Clear();
+                _baseScales.Clear();
                 var size = Math.Clamp(Math.Min(width, height) * 0.34, 9, 70);
-                var brush = ScorebugRender.ParseBrush(foreground);
-                var faint = (Brush)brush.Clone();
+                // The outline and the inside are separate brushes: a base can be a red diamond with a
+                // white inside, or follow either team's palette independently of the element's text.
+                _baseBrush = ScorebugRender.ParseBrush(foreground);
+                _baseFill = ScorebugRender.ParseBrush(fill);
+                var faint = (Brush)_baseBrush.Clone();
                 faint.Opacity = 0.32;
-                (double X, double Y, bool On)[] spots =
+                _baseFaint = faint;
+                (double X, double Y)[] spots =
                 [
-                    (width * 0.30, height * 0.70, third),
-                    (width * 0.50, height * 0.24, second),
-                    (width * 0.70, height * 0.70, first)
+                    (width * 0.30, height * 0.70),
+                    (width * 0.50, height * 0.24),
+                    (width * 0.70, height * 0.70)
                 ];
-                foreach (var (x, y, on) in spots)
+                for (var index = 0; index < spots.Length; index++)
                 {
+                    var scale = new ScaleTransform(1, 1);
                     var square = new Rectangle
                     {
                         Width = size,
@@ -582,15 +625,32 @@ public sealed class ScorebugIconView : Grid
                         RadiusX = Math.Max(1, size * 0.10),
                         RadiusY = Math.Max(1, size * 0.10),
                         RenderTransformOrigin = new Point(0.5, 0.5),
-                        RenderTransform = new RotateTransform(45),
-                        Fill = on ? brush : Brushes.Transparent,
-                        Stroke = on ? brush : faint,
+                        RenderTransform = new TransformGroup { Children = { new RotateTransform(45), scale } },
                         StrokeThickness = Math.Max(1.5, size * 0.12)
                     };
-                    Canvas.SetLeft(square, x - size / 2);
-                    Canvas.SetTop(square, y - size / 2);
+                    Canvas.SetLeft(square, spots[index].X - size / 2);
+                    Canvas.SetTop(square, spots[index].Y - size / 2);
+                    _baseSquares.Add(square);
+                    _baseScales.Add(scale);
                     _bases.Children.Add(square);
                 }
+                // A fresh set of squares starts from the game as it stands, painted instantly: the
+                // first paint and every thumbnail are stills, not animated changes.
+                for (var index = 0; index < _baseSquares.Count; index++)
+                {
+                    _baseLit[index] = lit[index];
+                    PaintBase(index, lit[index], null);
+                }
+            }
+            var seconds = Math.Clamp(_item.TransitionSeconds, 0, 5);
+            // Only a real value-change animation is honoured, and only once the view is on screen:
+            // thumbnails and the studio's first paint land instantly.
+            var animate = _item.Transition != ScorebugTransition.Cut && seconds > 0.02 && IsLoaded;
+            for (var index = 0; index < lit.Length; index++)
+            {
+                if (_baseLit[index] == lit[index]) continue;
+                _baseLit[index] = lit[index];
+                PaintBase(index, lit[index], animate ? TimeSpan.FromSeconds(seconds) : null);
             }
             return;
         }
@@ -605,8 +665,10 @@ public sealed class ScorebugIconView : Grid
                 var width = Math.Max(6, Math.Min(_item.Width * 0.22, slot * 0.62));
                 var thickness = Math.Clamp(_item.Height / 8, 2, 6);
                 var gap = Math.Max(2, width * 0.22);
+                var animate = Animates;
                 for (var i = 0; i < count; i++)
-                    _bars.Children.Add(new Rectangle
+                {
+                    var bar = new Rectangle
                     {
                         Width = width,
                         Height = thickness,
@@ -614,7 +676,12 @@ public sealed class ScorebugIconView : Grid
                         RadiusY = thickness / 2,
                         Margin = new Thickness(gap / 2, 0, gap / 2, 0),
                         Fill = ScorebugRender.ParseBrush(foreground)
-                    });
+                    };
+                    _bars.Children.Add(bar);
+                    // A timeout being used changes how many bars the icon shows; the new row arrives
+                    // with the element's own value-change motion instead of appearing all at once.
+                    if (animate) PlayIn(bar);
+                }
                 _appliedForeground = foreground;
             }
             else if (foreground != _appliedForeground)
@@ -628,20 +695,170 @@ public sealed class ScorebugIconView : Grid
         }
         if (_dot is not null)
         {
-            var size = Math.Max(8, Math.Min(_item.Width, _item.Height) * 0.3);
+            // The mark keeps its size when the box is resized, so a wider plate does not inflate the
+            // dot. Ctrl-resizing in the studio scales the element's type size, and the dot follows,
+            // so the mark can still be made bigger on purpose. A box shorter than the mark wins,
+            // though: a dot that is bigger than its plate would be cut by the plate's own clip.
+            var size = Math.Clamp(_item.FontSize * 1.15, 6, 240);
+            var room = DotBox();
+            if (room.Height > 0) size = Math.Min(size, room.Height);
+            // The gap off the plate's edge only exists when the box can afford it, so a tight box
+            // never squeezes the mark into an oval against its own border.
+            var gap = room.Width <= 0 || room.Width < size * 1.9 ? 0 : size * 0.22;
             _dot.Width = size;
             _dot.Height = size;
-            _dot.Margin = new Thickness(size * 0.35, 0, size * 0.35, 0);
+            _dot.Margin = new Thickness(gap, 0, gap, 0);
             _dot.Fill = ScorebugRender.ParseBrush(foreground);
             // Visitors on the left, home on the right, like the console; the element can mirror it.
             var home = state?.HomePossession ?? true;
             var right = _item.IconFlipped ? !home : home;
             _dot.HorizontalAlignment = right ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+            // Possession changing moves the mark to the other side of the plate. It slides across
+            // the plate, from the side the ball left, so a viewer sees the ball change hands rather
+            // than a dot teleport — and the slide happens inside the box, never past its clip.
+            if (_dotRight != right)
+            {
+                _dotRight = right;
+                // Whatever was running belongs to the old side; drop it before starting again.
+                _dot.BeginAnimation(UIElement.OpacityProperty, null);
+                if (_dot.RenderTransform is TranslateTransform running) running.BeginAnimation(TranslateTransform.XProperty, null);
+                if (Animates)
+                {
+                    var travel = Math.Max(0, room.Width - size - gap * 2);
+                    var from = right ? -travel : travel;
+                    var shift = new TranslateTransform(from, 0);
+                    _dot.RenderTransform = shift;
+                    var duration = MotionTime;
+                    var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+                    shift.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(from, 0, duration) { EasingFunction = easing });
+                    _dot.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.35, 1, duration) { EasingFunction = easing });
+                }
+                else
+                {
+                    _dot.RenderTransform = null;
+                    _dot.Opacity = 1;
+                }
+            }
         }
-        if (_text is not null)
+    }
+
+    /// <summary>
+    /// The room the dot has to live in: the laid-out box when it has one, otherwise the element's
+    /// own design size, so a slide is measured before the first arrange instead of guessing.
+    /// </summary>
+    (double Width, double Height) DotBox()
+    {
+        var width = ActualWidth;
+        var height = ActualHeight;
+        if (double.IsNaN(width) || width <= 0) width = _item.Width;
+        if (double.IsNaN(height) || height <= 0) height = _item.Height;
+        return (double.IsNaN(width) ? 0 : width, double.IsNaN(height) ? 0 : height);
+    }
+
+    /// <summary>True when this icon should animate its changes rather than snap.</summary>
+    bool Animates => _item.Transition != ScorebugTransition.Cut
+        && Math.Clamp(_item.TransitionSeconds, 0, 5) > 0.02 && IsLoaded;
+
+    TimeSpan MotionTime => TimeSpan.FromSeconds(Math.Clamp(_item.TransitionSeconds, 0, 5));
+
+    /// <summary>
+    /// Brings a freshly built piece of the icon in with the element's chosen value-change motion:
+    /// a dissolve, a slide from the edge, or a pop/zoom, so bars and the dot move like the text does.
+    /// </summary>
+    void PlayIn(FrameworkElement element)
+    {
+        var duration = MotionTime;
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        switch (_item.Transition)
         {
-            var value = text ?? (state is null ? _item.Content : ScoreboardTemplates.Bind(_item.Content, state, _item.PeriodFormat));
-            _text.UpdateText(value, _item.Transition, _item.TransitionSeconds);
+            case ScorebugTransition.Cut:
+                return;
+            case ScorebugTransition.Fade:
+                element.Opacity = 0;
+                element.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = easing });
+                return;
+            case ScorebugTransition.SlideLeft or ScorebugTransition.SlideRight
+                or ScorebugTransition.SlideUp or ScorebugTransition.SlideDown
+                or ScorebugTransition.WheelUp or ScorebugTransition.WheelDown:
+                var (fromX, fromY) = _item.Transition switch
+                {
+                    ScorebugTransition.SlideLeft => (22.0, 0.0),
+                    ScorebugTransition.SlideRight => (-22.0, 0.0),
+                    ScorebugTransition.SlideUp => (0.0, 12.0),
+                    ScorebugTransition.SlideDown => (0.0, -12.0),
+                    ScorebugTransition.WheelUp => (0.0, 12.0),
+                    _ => (0.0, -12.0)
+                };
+                var translate = new TranslateTransform(fromX, fromY);
+                element.RenderTransform = translate;
+                translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(fromX, 0, duration) { EasingFunction = easing });
+                translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(fromY, 0, duration) { EasingFunction = easing });
+                element.Opacity = 0;
+                element.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = easing });
+                return;
+            default:
+                // Flip, zoom, pop, drop and the remaining fades: a small scale up with a dissolve.
+                element.RenderTransformOrigin = new Point(0.5, 0.5);
+                var from = _item.Transition == ScorebugTransition.Zoom ? 0.2 : 0.45;
+                var scale = new ScaleTransform(from, from);
+                element.RenderTransform = scale;
+                scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(from, 1, duration) { EasingFunction = easing });
+                scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(from, 1, duration) { EasingFunction = easing });
+                element.Opacity = 0;
+                element.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = easing });
+                return;
         }
+    }
+
+    /// <summary>
+    /// Lights or clears one base. A runner arriving fades and pops the base in over the element's own
+    /// value-change time, so the diamond moves the way the rest of the graphic does; clearing a base
+    /// is a quiet change and lands at once.
+    /// </summary>
+    void PaintBase(int index, bool on, TimeSpan? duration)
+    {
+        if (index < 0 || index >= _baseSquares.Count) return;
+        var square = _baseSquares[index];
+        var scale = _baseScales[index];
+        square.BeginAnimation(UIElement.OpacityProperty, null);
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        if (duration is null)
+        {
+            ApplyBaseLook(square, on);
+            square.Opacity = 1;
+            scale.ScaleX = 1;
+            scale.ScaleY = 1;
+            return;
+        }
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        if (!on)
+        {
+            // A runner leaving shrinks the lit base out, then leaves the faint outline behind.
+            var shrink = new DoubleAnimation(1, 0.55, duration.Value) { EasingFunction = easing };
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, shrink);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, shrink);
+            var fade = new DoubleAnimation(1, 0, duration.Value) { EasingFunction = easing };
+            fade.Completed += (_, _) =>
+            {
+                ApplyBaseLook(square, false);
+                square.Opacity = 1;
+                scale.ScaleX = 1;
+                scale.ScaleY = 1;
+            };
+            square.BeginAnimation(UIElement.OpacityProperty, fade);
+            return;
+        }
+        ApplyBaseLook(square, true);
+        square.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, duration.Value) { EasingFunction = easing });
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.55, 1, duration.Value) { EasingFunction = easing });
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.55, 1, duration.Value) { EasingFunction = easing });
+    }
+
+    /// <summary>Lit: the inside takes the base fill, the outline the text colour. Empty: a faint outline only.</summary>
+    void ApplyBaseLook(Rectangle square, bool on)
+    {
+        square.Fill = on ? _baseFill : Brushes.Transparent;
+        square.Stroke = on ? _baseBrush : _baseFaint;
     }
 }
