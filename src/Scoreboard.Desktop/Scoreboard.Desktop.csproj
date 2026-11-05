@@ -1,15 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>ScorePlus</AssemblyName>
     <RootNamespace>Scoreboard.Desktop</RootNamespace>
     <SelfContained>true</SelfContained>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Product>ScorePlus</Product>
     <AssemblyTitle>ScorePlus</AssemblyTitle>
     <ApplicationIcon>app.ico</ApplicationIcon>
@@ -22,15 +19,34 @@
     <AllowedReferenceRelatedFileExtensions>.pdb</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Scoreboard.Core/Scoreboard.Core.csproj" /></ItemGroup>
-  <ItemGroup>
-    <!-- The brand mark and the taskbar icon. The transparent mark is the one used inside the app. -->
-    <Resource Include="app.ico" />
-    <Resource Include="Assets\logo.png" />
+  <ItemGroup Label="Avalonia compiled surfaces and embedded media">
+    <Resource Include="Assets/logo.png" />
+    <Resource Include="App.axaml" />
+    <!-- Phase 2 renames+converts each window XAML to Avalonia markup; listed now so the
+         build system owns every surface from the start. -->
+    <Resource Include="MainWindow.xaml" />
+    <Resource Include="LauncherWindow.xaml" />
+    <Resource Include="OutputWindow.xaml" />
+    <Resource Include="GameControlWindow.xaml" />
+    <Resource Include="MediaDock.xaml" />
+    <Resource Include="ScorebugEditorWindow.xaml" />
+    <Resource Include="SettingsWindow.xaml" />
+    <Resource Include="ControlPanelView.xaml" />
+    <Resource Include="RosterPanel.xaml" />
+    <Resource Include="RosterDock.xaml" />
+    <Resource Include="SportProfileWindow.xaml" />
+    <Resource Include="EventLogWindow.xaml" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Kept as a plain resource: the .ico is Windows taskbar chrome, unused at runtime here. -->
+    <Resource Include="app.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- WebView2 stays until HtmlSurface is ported (browser-handler path); NAudio and
+         OpenCvSharp4 are Windows-native and have no role in the ffmpeg/pulse stack. -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
-    <PackageReference Include="NAudio" Version="3.3.0" />
-    <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" />
-    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
   </ItemGroup>
 </Project>
