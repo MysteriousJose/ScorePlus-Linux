@@ -1,0 +1,149 @@
+# Pull-request / branch gate for the Linux port: does it still compile, does the engine suite still
+# pass, and do the tar.gz / .deb / AppImage still build *and boot*? The packages are uploaded as
+# artifacts, so a bug report can be tested against the exact files CI made rather than a rebuild.
+#
+# Nothing here uploads a release. Tagging (see release-linux.yml) or scripts/publish-linux-release.sh
+# does that.
+name: linux-ci
+
+on:
+  push:
+    branches: [linux, dev, main]
+  pull_request:
+    branches: [linux, dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A CI build is not a release. The label says where the build came from and keeps build-linux.sh's
+  # numeric-version stamping happy; the app's launch box shows "0.0.<run>-ci".
+  LABEL: 0.0.${{ github.run_number }}-ci
+
+jobs:
+  engine:
+    name: engine suite
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: nuget cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      # tests/Scoreboard.Core.Tests is a plain Exe runner, not a framework suite: `dotnet test` restores,
+      # runs nothing, and exits 0 — a false green. `dotnet run` is what executes the assertions, and a
+      # failed Check() throws, which is the non-zero exit this gate needs.
+      - name: dotnet run --project tests/Scoreboard.Core.Tests
+        run: dotnet run --project tests/Scoreboard.Core.Tests -c Release
+
+  # tests/UiSmoke and tests/HtmlRender are still WPF-era (they fail to compile against Avalonia), so they
+  # are not gates yet. When the port plan's phase 8 lands, drop the continue-on-error and gate on them.
+  unconverted:
+    name: not-yet-ported harnesses (informational)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build tests/UiSmoke -c Release -v minimal
+      - run: dotnet build tests/HtmlRender -c Release -v minimal
+
+  packages:
+    name: build, package, boot
+    runs-on: ubuntu-24.04
+    env:
+      # Ubuntu 24.04 runners ship libfuse3, and the AppImage runtime wants libfuse2. Extract-and-run
+      # unpacks to a temp dir instead of mounting, which covers appimagetool during the build and the
+      # AppImage boot test below.
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # squashfs-tools is what appimagetool needs to write the squashfs; xvfb is the headless X display
+      # the boot tests run under; ffmpeg is the runtime dependency video cues shell out to.
+      - name: packagers and a headless display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools xvfb ffmpeg
+
+      - name: build tar.gz + deb + AppImage
+        run: bash scripts/build-linux.sh "$LABEL"
+
+      # The pass condition is a timeout, not an exit code: a window that is still drawing after 45
+      # seconds got far past the point where a broken build dies (XOpenDisplay, missing assemblies,
+      # bad AppRun). 124 is how timeout reports "still alive".
+      - name: the AppImage boots under Xvfb
+        run: |
+          app="dist/ScorePlus-linux-x64-$LABEL/ScorePlus-$LABEL-x86_64.AppImage"
+          # APPIMAGE_EXTRACT_AND_RUN unpacks to a temp dir instead of mounting, so no FUSE needed.
+          # `|| code=$?` because Actions runs the script under -e and a timeout exit is expected.
+          # pkill first: a scoreplus left over from an earlier test would trip install.sh's guard and
+          # make the install step look broken when it is not.
+          code=0
+          pkill -x scoreplus || true
+          timeout 45 env HOME="$RUNNER_TEMP" \
+            xvfb-run -a -s "-screen 0 1920x1080x24" "$app" || code=$?
+          if [[ $code -eq 124 ]]; then echo "AppImage stayed up for 45s"
+          else echo "AppImage exited early (status $code)"; exit 1; fi
+
+      - name: the tarball installs per-user, no root
+        run: |
+          stage="$RUNNER_TEMP/fakehome"
+          rm -rf "$stage"; mkdir -p "$stage"
+          code=0
+          pkill -x scoreplus || true
+          tar -xzf "dist/ScorePlus-linux-x64-$LABEL/scoreplus_${LABEL}_linux-x64.tar.gz" -C "$stage"
+          ( cd "$stage/scoreplus-$LABEL-linux-x64" && HOME="$stage" bash install.sh --silent )
+          test -x "$stage/.local/bin/scoreplus"
+          test -f "$stage/.local/share/scoreplus/install.json"
+          test -f "$stage/.local/share/applications/scoreplus.desktop"
+          timeout 30 env HOME="$stage" xvfb-run -a -s "-screen 0 1920x1080x24" "$stage/.local/bin/scoreplus" || code=$?
+          [[ $code -eq 124 ]] || { echo "installed copy exited early (status $code)"; exit 1; }
+          ( cd "$stage/scoreplus-$LABEL-linux-x64" && HOME="$stage" bash install.sh --remove )
+          test ! -e "$stage/.local/bin/scoreplus"
+
+      - name: the deb is well formed and installs
+        run: |
+          deb="dist/ScorePlus-linux-x64-$LABEL/scoreplus_${LABEL%%-ci}_amd64.deb"
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | head -20
+          sudo dpkg -i "$deb"
+          code=0
+          pkill -x scoreplus || true
+          timeout 30 xvfb-run -a -s "-screen 0 1920x1080x24" /usr/bin/scoreplus || code=$?
+          [[ $code -eq 124 ]] || { echo "installed deb exited early (status $code)"; exit 1; }
+          sudo dpkg -r scoreplus
+
+      # Only the shippable files: the loose 46 MB binary is inside all three packages already.
+      - name: upload the packages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scoreplus-linux-x64-${{ env.LABEL }}
+          path: |
+            dist/ScorePlus-linux-x64-*/*.tar.gz
+            dist/ScorePlus-linux-x64-*/*.deb
+            dist/ScorePlus-linux-x64-*/*.AppImage
+            dist/ScorePlus-linux-x64-*/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

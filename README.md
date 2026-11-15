@@ -6,7 +6,7 @@
 
 Everything runs locally on one Windows PC. No browser, no server, no internet connection, and no separately installed .NET runtime. The clock, the score and the graphics are all in one program, and the audience output updates the moment a value changes — there is never a "refresh" step mid-game.
 
-Linux builds are often behind and are maintained separately at [MysteriousJose/ScorePlus-Linux](https://github.com/MysteriousJose/ScorePlus-Linux) and are not officially supported. Although they will be pushed to the linux branch when progress is made.
+Linux builds are maintained in their own repository, [MysteriousJose/ScorePlus-Linux](https://github.com/MysteriousJose/ScorePlus-Linux), publish their own releases, and are not officially supported. They often lag the Windows ones. **You are reading that repository now** — so the Linux install steps below are the real ones, and Linux problems belong in its issue tracker.
 
 ---
 
@@ -55,7 +55,7 @@ It was built around four ideas:
 
 | | |
 | --- | --- |
-| **Platform** | Windows 10/11, 64-bit. Self-contained single-file executables. |
+| **Platform** | Windows 10/11 and Linux (x86_64). Self-contained single-file executables — no .NET runtime to install. |
 | **Sports** | American Football, Australian Football, Baseball, Basketball, Cricket, Hockey, Lacrosse, Rugby, Soccer, Tennis, Volleyball, Wrestling, and a blank Custom preset |
 | **Displays** | Unlimited, each holding unlimited layouts, each layout with its own transition |
 | **Inputs** | Keyboard, mouse, phone/tablet remote, live cameras, microphones |
@@ -88,27 +88,74 @@ Download **`ScorePlusPortable.exe`** and run it from anywhere — a USB stick, a
 
 A portable copy never checks for updates and never touches the registry, so it is the safe choice for testing a new alpha beside the version that runs your show.
 
-### Linux Build
+### Linux Builds
 
-First you must clone the linux branch. 
+Linux builds are published on this repository's **[releases page](https://github.com/MysteriousJose/ScorePlus-Linux/releases)**. Every release carries four Linux files, all built from the same program:
 
-```git clone -b linux https://github.com/lhultimate/ScorePlus.git```
+| File | What it is |
+| --- | --- |
+| `ScorePlus-<label>-x86_64.AppImage` | one file that runs from wherever you downloaded it; installs nothing |
+| `scoreplus_<label>_linux-x64.tar.gz` | the same program plus `install.sh`, which installs it **for your user only** — no root, no system directories |
+| `scoreplus_<number>_amd64.deb` | the system package for Debian and Ubuntu: `/usr/bin/scoreplus`, menu entry, icon, `ffmpeg` pulled in as a dependency |
+| `SHA256SUMS` | checksums of the three packages above |
 
-Then get into that directory 
+The version in the name is the release label — `b1.0` ships as `ScorePlus-b1.0-x86_64.AppImage` and `scoreplus_1.0.0_amd64.deb`. Nothing here needs .NET: like the Windows builds, a Linux build is one self-contained file with no loose libraries and no runtime to install.
 
-```cd ScorePlus```
+What a Linux build needs:
 
-Next build the project, dotnet is required for this, speciffically a 10.x.x version of dotnet.
+- **x86_64 Linux with glibc 2.27 or newer** — Ubuntu 18.04+, Debian 10+, Fedora 28+, RHEL 8+, and any rolling distro from 2018 onward. There is no 32-bit or ARM build.
+- **`ffmpeg`** for video cues, live cameras, replay export and audio routing. Without it the app still runs and scorekeeps; those features report what is missing instead of failing. The `.deb` declares the dependency, so the package manager installs it for you.
+- A desktop session. X11 runs it directly; on Wayland it runs through XWayland. The **System** theme follows your GTK theme.
 
-Check if it is installed with ```dotnet --version```. 
+**The AppImage is the quickest look** — nothing is installed and nothing is left behind:
 
-If not then install it with the official install instuctions found here [.NET Microsoft Install Instuctions](https://learn.microsoft.com/en-us/dotnet/core/install/linux?WT.mc_id=dotnet-35129-website).
+```sh
+chmod +x ScorePlus-b1.0-x86_64.AppImage
+./ScorePlus-b1.0-x86_64.AppImage
+```
 
-Once it is installed build the app with ```dotnet build src/Scoreboard.Desktop/Scoreboard.Desktop.csproj -c Debug --nologo --no-incremental```.
+Newer distros ship libfuse3 where the AppImage runtime expects libfuse2. If it complains about FUSE, run it unpacked instead of mounted:
 
-Then run it with ```./src/Scoreboard.Desktop/bin/Debug/net10.0/linux-x64/ScorePlus```.
+```sh
+APPIMAGE_EXTRACT_AND_RUN=1 ./ScorePlus-b1.0-x86_64.AppImage
+```
 
-Now you are good to continue onto the first launch.
+**The `.deb` is what to install on Debian and Ubuntu:**
+
+```sh
+sudo apt install ./scoreplus_1.0.0_amd64.deb   # or: sudo dpkg -i scoreplus_1.0.0_amd64.deb && sudo apt -f install
+scoreplus                                      # run it, or use the ScorePlus entry in your applications menu
+sudo apt remove scoreplus                       # remove it — your games, layouts and preferences stay
+```
+
+**The tarball installs the same thing without root**, entirely inside your own XDG folders:
+
+```sh
+tar -xzf scoreplus_b1.0_linux-x64.tar.gz
+cd scoreplus-b1.0-linux-x64
+./install.sh
+scoreplus
+```
+
+`install.sh` puts the program in `~/.local/share/scoreplus`, links `~/.local/bin/scoreplus`, and adds `~/.local/share/applications/scoreplus.desktop` with its icon — add `~/.local/bin` to your `PATH` if your distro does not already have it there. **Re-running it is how you update**: the same command replaces the files in place, and it refuses to run while ScorePlus is open rather than pulling the binary out from under a running copy. `./install.sh --remove` uninstalls, `--silent` is for scripts, and `--prefix DIR` moves the install elsewhere.
+
+To check a download, put `SHA256SUMS` in the same folder as the packages it lists:
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
+An installed copy — from the `.deb` or the tarball — carries an `install.json` marker beside its binary, which is what makes it an installed copy at all. The AppImage deliberately has no marker, so it behaves like the portable build on Windows: it never replaces itself, you download the next AppImage.
+
+> **In-app updating on Linux is not wired up yet.** An installed copy does check a feed at startup, but the feed the app carries is the Windows project's releases, and the download step hands the file to a Windows installer. Until the Linux half lands: install a new release with the same commands above. You can still see *what* is current by putting this repository's feed into **Preferences → Updates**:
+>
+> ```
+> https://api.github.com/repos/MysteriousJose/ScorePlus-Linux/releases?per_page=20
+> ```
+>
+> The tarball is also published under the unchanging name `ScorePlusLinuxSetup.tar.gz`, so a script or a cron job can always ask for "the current Linux build" without knowing the label.
+
+Prefer to build it yourself? One command and the .NET 10 SDK — see [Building and Releasing](#building-and-releasing).
 
 ### First Launch
 
@@ -702,9 +749,13 @@ Autosaves roll: a new one is written every five seconds, at most one per minute 
 
 If you had an older installation, the files in `%LOCALAPPDATA%\Scoreboard` are copied into `%LOCALAPPDATA%\ScorePlus` on first run. Copied, not moved, so an older build still works.
 
+On Linux the same folder is `~/.local/share/ScorePlus` (`$XDG_DATA_HOME/ScorePlus`) — autosaves, preferences, sport profiles, scorebug displays and layouts, rosters, keybinds, imported fonts, team logos and logs all live there. Installing, updating and uninstalling never touch it.
+
 ---
 
 ## Building and Releasing
+
+### Windows
 
 Building needs the **.NET 10 SDK** with the Windows desktop targeting pack.
 
@@ -734,6 +785,42 @@ Asset names matter: the release must carry **`ScorePlusSetup.exe`** and **`Score
 
 `--prerelease` marks it as an alpha. Drafts are ignored by the updater, because their assets aren't served.
 
+### Linux
+
+```sh
+./scripts/build-linux.sh b1.0                # bare binary + tar.gz + .deb + AppImage
+./scripts/build-linux.sh b1.0 --local        # just the bare binary, to run from the tree
+./scripts/build-linux.sh b1.0 --tar --deb    # only the formats you want
+```
+
+One `dotnet publish` produces the self-contained single-file binary, and every package is built from that same file, so the tarball, the `.deb` and the AppImage cannot disagree with each other. Output goes to its own folder per label:
+
+```
+dist/ScorePlus-linux-x64-b1.0/
+├── scoreplus                        the bare binary
+├── scoreplus_b1.0_linux-x64.tar.gz  tarball + install.sh
+├── scoreplus_1.0.0_amd64.deb        Debian and Ubuntu package
+├── ScorePlus-b1.0-x86_64.AppImage   one file, any x86_64 distro
+└── SHA256SUMS
+```
+
+Labels behave exactly as they do on Windows: `b1.0` is the tag, and the assembly version becomes `1.0.0`, because the updater compares numbers rather than labels.
+
+The .NET 10 SDK alone is enough for the tarball. The other packages need optional tools, and a missing tool is reported and skipped rather than failing the whole build: `dpkg-deb` for the `.deb` — without it the script assembles the package with `ar` and `tar`, which still installs on any Debian-family box — and `squashfs-tools` plus `appimagetool` for the AppImage, which the script downloads into `tools/bin` when it is missing.
+
+To ship it:
+
+```sh
+./scripts/publish-linux-release.sh b1.0 --release --prerelease --notes "Adds X, fixes Y"
+```
+
+It builds, copies the tarball onto the unchanging asset name, and creates the release with every asset through the GitHub CLI. `--skip-build` publishes what `build-linux.sh` already made instead of rebuilding it.
+
+Both halves also run in GitHub Actions, and that is how a Linux release normally happens now:
+
+- **`.github/workflows/ci.yml`** — every push and pull request runs the engine suite, builds all four packages, then *boots* them headless under Xvfb: the AppImage, the tarball installed into a throwaway home, and the `.deb` installed with `dpkg`. Packages upload as workflow artifacts, so a pull request can be tested on a real machine without publishing anything.
+- **`.github/workflows/release-linux.yml`** — pushing a tag runs the engine suite, builds, boots the AppImage and installs the tarball, and only then publishes the release with the workflow's own token. A tag cannot ship a build that dies on the first frame.
+
 ---
 
 ## Updates
@@ -752,6 +839,8 @@ Things worth knowing:
 - **The check runs at startup**, plus a manual **Check now** in Preferences → Updates. If a release goes live while the app is open, it won't notice until the next launch.
 - **Release numbers must increase.** `a1.3` reads as 1.3.0, and the highest published number wins — not the most recent upload. Watch out for `a1.03`: it parses to the same 1.03 → 1.3.0 as `a1.3`, so it isn't "newer" to an a1.3 install.
 - **Prefer a custom host?** Preferences → Updates can point at a JSON manifest elsewhere. See [docs/updates.md](docs/updates.md).
+
+On Linux the marker rule is the same — `install.sh` and the `.deb` both write `install.json` beside the binary, an AppImage carries none — but the download-and-run half is still Windows-shaped: the built-in feed is the Windows project's releases, and what it downloads is a `.exe`. Until the Linux half of the updater lands, point **Preferences → Updates** at this repository's releases feed to see what is current, and install it with the commands in [Install and Run](#install-and-run).
 
 ---
 
@@ -804,13 +893,28 @@ Replay is staged in the preview until **Start replay**. The audience and the aud
 Each clip's position is preserved while the studio is edited. If a clip was re-imported or replaced, it starts from the beginning. Seek with the bar rather than waiting through a clip.
 
 **The update prompt never appears.**
-Only installed copies check, and the release must be published (not a draft), tagged with a higher number, and carry an asset named `ScorePlusSetup.exe`. Portable builds never update.
+Only installed copies check, and the release must be published (not a draft), tagged with a higher number, and carry an asset named `ScorePlusSetup.exe` — `ScorePlusLinuxSetup.tar.gz` on Linux, where in-app install is still Windows-shaped (see [Install and Run](#install-and-run)). Portable builds and AppImages never update.
 
 **A new game opened an old game.**
 It shouldn't — New Game wipes to a blank slate. If you see stale data, check you're on the latest build; the launch box's autosave list is the most common mix-up, since those load a game you chose.
 
 **Something is clipped or the window doesn't fit.**
 The console and studio reflow onto portrait monitors and high-DPI scaling. The studio canvas fills its panel and re-fits when the window resizes, so drag space always matches the framed artwork area.
+
+**Linux: it exits at once with `XOpenDisplay failed`.**
+There was no desktop session to open a window in — a raw TTY, or SSH without a forwarded display. Start it from a terminal inside your desktop session. (A headless machine can run it under a virtual X server; that is exactly what the CI boot tests do.)
+
+**Linux: the AppImage refuses to mount, or mentions FUSE.**
+Your distro ships libfuse3 and the AppImage runtime expects libfuse2. Run it unpacked: `APPIMAGE_EXTRACT_AND_RUN=1 ./ScorePlus-<label>-x86_64.AppImage`.
+
+**Linux: `install.sh` says "ScorePlus is running. Quit it first, then install again."**
+That is deliberate — replacing the binary of a live copy would leave it running from a deleted file. Quit ScorePlus, including any copy started from your applications menu, and run it again.
+
+**Linux: `scoreplus: command not found`, or no entry in the applications menu.**
+The tarball install links `~/.local/bin/scoreplus` and writes `~/.local/share/applications/scoreplus.desktop`; most distros have `~/.local/bin` on `PATH` already, but some do not. Add it to your shell profile, or run `~/.local/bin/scoreplus`.
+
+**Linux: video, cameras and replay all do nothing.**
+`ffmpeg` is a runtime dependency, not a bundled one. Install it from your distro (`sudo apt install ffmpeg`); the `.deb` package already asks for it.
 
 ---
 

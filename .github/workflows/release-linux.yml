@@ -1,0 +1,145 @@
+# Tag the repo and the Linux build goes out by itself: no shell at a desk, and no chance of shipping
+# a package built before the last commit. It builds tar.gz + .deb + AppImage, boots the AppImage
+# headless under Xvfb, then lets scripts/publish-linux-release.sh upload everything to a GitHub
+# release created with the workflow's own GITHUB_TOKEN.
+#
+# Releases live in this repo, which is also where an operator points the app's Update feed box:
+#   https://api.github.com/repos/MysteriousJose/ScorePlus-Linux/releases?per_page=20
+# The stable asset name an installed copy should update from is ScorePlusLinuxSetup.tar.gz, and
+# install.json beside the installed binary is what lets the app offer the update at all.
+#
+# Windows still ships from the release box: Setup.exe/.msi come from ScorePlus.Setup.vdproj, which
+# needs the Visual Studio installer extension, so it is deliberately not in this workflow.
+name: release-linux
+
+on:
+  # Release labels are the tags: a1.2 for internal drops, b1.0 for public ones, v* in case that ever
+  # becomes the habit. Nothing here fires on a branch push, so a push can never ship anything.
+  push:
+    tags: ['a*', 'b*', 'v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release label to publish (a1.2) — the tag must already exist'
+        required: true
+        default: 'a1.0'
+      prerelease:
+        description: 'Mark as a pre-release (tags default to yes; only v* defaults to no)'
+        type: boolean
+        default: true
+      notes:
+        description: 'Release notes (blank = GitHub writes them from the commits)'
+        required: false
+
+permissions:
+  # gh release create / upload writes to this repo's releases with the run's own token.
+  contents: write
+
+concurrency:
+  group: release-linux-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+  check:
+    name: engine suite first
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      # A release should not go out over a red engine suite. dotnet run, not dotnet test: the suite is
+      # a plain Exe runner and `dotnet test` would run nothing and report success.
+      - name: dotnet run --project tests/Scoreboard.Core.Tests
+        run: dotnet run --project tests/Scoreboard.Core.Tests -c Release
+
+  release:
+    name: build and ship ${{ github.event.inputs.version || github.ref_name }}
+    needs: check
+    runs-on: ubuntu-24.04
+    env:
+      # Same reason as in ci.yml: no libfuse2 on the runner, so AppImages unpack instead of mounting.
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: packagers and a headless display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools xvfb ffmpeg
+
+      # Build and verify first: a tag alone should not be able to ship an AppImage that dies on the
+      # first frame. The publish step then packages these same files instead of rebuilding them.
+      - name: build
+        run: bash scripts/build-linux.sh "$VERSION" --tar --deb --appimage
+
+      - name: the AppImage boots before anything is published
+        run: |
+          app="dist/ScorePlus-linux-x64-$VERSION/ScorePlus-$VERSION-x86_64.AppImage"
+          code=0
+          pkill -x scoreplus || true
+          timeout 45 env HOME="$RUNNER_TEMP" \
+            xvfb-run -a -s "-screen 0 1920x1080x24" "$app" || code=$?
+          [[ $code -eq 124 ]] || { echo "AppImage exited early (status $code) — nothing published"; exit 1; }
+
+      - name: the tarball installs per-user and runs
+        run: |
+          stage="$RUNNER_TEMP/fakehome"
+          code=0
+          rm -rf "$stage"; mkdir -p "$stage"
+          pkill -x scoreplus || true
+          tar -xzf "dist/ScorePlus-linux-x64-$VERSION/scoreplus_${VERSION}_linux-x64.tar.gz" -C "$stage"
+          ( cd "$stage/scoreplus-$VERSION-linux-x64" && HOME="$stage" bash install.sh --silent )
+          test -x "$stage/.local/bin/scoreplus"
+          test -f "$stage/.local/share/scoreplus/install.json"
+          timeout 30 env HOME="$stage" xvfb-run -a -s "-screen 0 1920x1080x24" "$stage/.local/bin/scoreplus" || code=$?
+          [[ $code -eq 124 ]] || { echo "installed copy exited early (status $code) — nothing published"; exit 1; }
+
+      - name: ship it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PROMPT_DISABLED: '1'
+        run: |
+          ARGS=("$VERSION" --release --skip-build --formats tar,deb,appimage)
+          # Everything published so far — a1.4 through b1.0 — is flagged pre-release, because the
+          # project says so on its own front page: it is alpha and beta software. So tags default to
+          # pre-release, and only a `v` tag is treated as a real release. A manual run overrides either
+          # way, and the updater keeps pre-releases: that is the point of the feed.
+          PRE="${{ github.event.inputs.prerelease }}"
+          if [[ -z "$PRE" ]]; then
+            case "$VERSION" in v*) PRE=false ;; *) PRE=true ;; esac
+          fi
+          if [[ "$PRE" == "true" ]]; then ARGS+=(--prerelease); fi
+          NOTES="${{ github.event.inputs.notes }}"
+          if [[ -n "$NOTES" ]]; then ARGS+=(--notes "$NOTES"); fi
+          bash scripts/publish-linux-release.sh "${ARGS[@]}"
+
+      # Proof that the published page really serves what the app was told to expect: the asset a
+      # feed reader picks is the one users' copies will download.
+      - name: the release page serves what it claims
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="${GITHUB_REPOSITORY}"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$repo/releases/tags/$VERSION" -o "$RUNNER_TEMP/rel.json"
+          jq -r '"release \(.tag_name)  prerelease=\(.prerelease)  draft=\(.draft)"' "$RUNNER_TEMP/rel.json"
+          jq -r '.assets[] | "   \(.name)  \(.size / 1000000 | round)MB  \(.state)"' "$RUNNER_TEMP/rel.json"
+          # Every asset finished uploading, and the two names that matter are both there.
+          jq -e '([.assets[].name] | index("ScorePlusLinuxSetup.tar.gz"))
+                 and ([.assets[].name] | index("SHA256SUMS"))
+                 and ([.assets[] | select(.state != "uploaded")] | length == 0)' \
+            "$RUNNER_TEMP/rel.json" > /dev/null \
+            || { echo "the published release is missing an asset"; exit 1; }
+          url="https://github.com/$repo/releases/download/$VERSION/ScorePlusLinuxSetup.tar.gz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/down.tar.gz"
+          echo "fetched $url"
+          sha256sum "$RUNNER_TEMP/down.tar.gz" | head -1
+          tar -tzf "$RUNNER_TEMP/down.tar.gz" | head -5
