@@ -268,7 +268,7 @@ find_appimagetool() {
   if [[ -x "$cached" ]]; then printf '%s\n' "$cached"; return 0; fi
   if [[ $DOWNLOAD -eq 1 ]] && command -v curl >/dev/null 2>&1; then
     mkdir -p "$ROOT/tools/bin"
-    echo "    fetching appimagetool ..."
+    echo "    fetching appimagetool ..." >&2
     if curl -fL --retry 3 -o "$cached" \
         https://github.com/AppImage/appimagetool/releases/latest/download/appimagetool-x86_64.AppImage; then
       chmod +x "$cached"; printf '%s\n' "$cached"; return 0

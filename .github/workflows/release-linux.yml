@@ -44,17 +44,22 @@ env:
 
 jobs:
   check:
-    name: engine suite first
+    name: all three suites first
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      # A release should not go out over a red engine suite. dotnet run, not dotnet test: the suite is
-      # a plain Exe runner and `dotnet test` would run nothing and report success.
-      - name: dotnet run --project tests/Scoreboard.Core.Tests
+      # A release should not go out over any red suite. dotnet run, not dotnet test: these are plain
+      # Exe runners and `dotnet test` would run nothing and report success.
+      - name: engine suite
         run: dotnet run --project tests/Scoreboard.Core.Tests -c Release
+      # The UI and HTML suites are the same on every OS; a release must not go out over a red one.
+      - name: UI suite (Avalonia headless)
+        run: dotnet run --project tests/UiSmoke -c Release
+      - name: HTML element suite (Avalonia headless)
+        run: dotnet run --project tests/HtmlRender -c Release
 
   release:
     name: build and ship ${{ github.event.inputs.version || github.ref_name }}

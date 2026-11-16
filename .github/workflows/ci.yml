@@ -1,10 +1,9 @@
-# Pull-request / branch gate for the Linux port: does it still compile, does the engine suite still
-# pass, and do the tar.gz / .deb / AppImage still build *and boot*? The packages are uploaded as
-# artifacts, so a bug report can be tested against the exact files CI made rather than a rebuild.
+# Cross-platform gate: the same three suites run on Linux, Windows and macOS. The UI harness is
+# Avalonia headless, not WPF, so there is no OS-specific test project and no skipped platform.
 #
-# Nothing here uploads a release. Tagging (see release-linux.yml) or scripts/publish-linux-release.sh
+# Nothing here uploads a release. Tagging (see release-linux.yml) or scripts/publish-*-release.sh
 # does that.
-name: linux-ci
+name: tests
 
 on:
   push:
@@ -17,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: linux-ci-${{ github.ref }}
+  group: tests-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -26,9 +25,13 @@ env:
   LABEL: 0.0.${{ github.run_number }}-ci
 
 jobs:
-  engine:
-    name: engine suite
-    runs-on: ubuntu-24.04
+  suites:
+    name: suites (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
     steps:
       - uses: actions/checkout@v4
 
@@ -44,28 +47,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      # tests/Scoreboard.Core.Tests is a plain Exe runner, not a framework suite: `dotnet test` restores,
-      # runs nothing, and exits 0 — a false green. `dotnet run` is what executes the assertions, and a
-      # failed Check() throws, which is the non-zero exit this gate needs.
-      - name: dotnet run --project tests/Scoreboard.Core.Tests
+      # The suites are plain Exe runners, not framework suites: `dotnet test` restores, runs
+      # nothing and exits 0 — a false green. `dotnet run` executes the assertions, and a failed
+      # Check() throws, which is the non-zero exit this gate needs.
+      - name: engine suite
         run: dotnet run --project tests/Scoreboard.Core.Tests -c Release
 
-  # tests/UiSmoke and tests/HtmlRender are still WPF-era (they fail to compile against Avalonia), so they
-  # are not gates yet. When the port plan's phase 8 lands, drop the continue-on-error and gate on them.
-  unconverted:
-    name: not-yet-ported harnesses (informational)
-    runs-on: ubuntu-24.04
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-      - run: dotnet build tests/UiSmoke -c Release -v minimal
-      - run: dotnet build tests/HtmlRender -c Release -v minimal
+      - name: UI suite (Avalonia headless)
+        run: dotnet run --project tests/UiSmoke -c Release
+
+      - name: HTML element suite (Avalonia headless)
+        run: dotnet run --project tests/HtmlRender -c Release
 
   packages:
     name: build, package, boot
+    # A package is only worth building when every OS passed the same three suites.
+    needs: suites
     runs-on: ubuntu-24.04
     env:
       # Ubuntu 24.04 runners ship libfuse3, and the AppImage runtime wants libfuse2. Extract-and-run
@@ -79,8 +76,8 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # squashfs-tools is what appimagetool needs to write the squashfs; xvfb is the headless X display
-      # the boot tests run under; ffmpeg is the runtime dependency video cues shell out to.
+      # squashfs-tools is what appimagetool needs to write the squashfs; xvfb is the headless X
+      # display the boot tests run under; ffmpeg is the runtime dependency video cues shell out to.
       - name: packagers and a headless display
         run: |
           sudo apt-get update
