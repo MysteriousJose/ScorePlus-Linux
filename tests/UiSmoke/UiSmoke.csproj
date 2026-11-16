@@ -1,17 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!-- One harness for Linux, Windows and macOS: Avalonia's headless platform drives the real
+       windows and controls without a window server, so there is no per-OS test project. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <StartupObject>UiSmoke.Program</StartupObject>
+    <!-- Scoreboard.Desktop is a self-contained app, so its executable references must be too. -->
     <SelfContained>true</SelfContained>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier>$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Scoreboard.Desktop/Scoreboard.Desktop.csproj" />
-    <ProjectReference Include="../../src/ScorePlus.Setup/ScorePlus.Setup.csproj" />
+    <PackageReference Include="Avalonia.Headless" Version="11.3.22" />
   </ItemGroup>
 </Project>

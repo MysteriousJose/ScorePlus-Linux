@@ -96,7 +96,7 @@ var liveTick=new GameEngine();liveTick.NewGame("basketball");var tickNotified=0;
 
 // ---------- team identity: name, abbreviation, logo and palette ----------
 var identityEngine=new GameEngine();identityEngine.NewGame("football");
-identityEngine.SetTeamIdentity(false,"Rovers FC","RFC",@"C:\logos\rovers.png","#FFAA1122","#FF223344");
+identityEngine.SetTeamIdentity(false,"Rovers FC","RFC",Path.Combine("logos","rovers.png"),"#FFAA1122","#FF223344");
 Check(identityEngine.State.AwayTeam=="Rovers FC"&&identityEngine.State.AwayAbbreviation=="RFC"&&identityEngine.State.AwayLogoPath!.EndsWith("rovers.png",StringComparison.OrdinalIgnoreCase)&&identityEngine.State.ColorFor(ScorebugColorSource.AwayPrimary)=="#FFAA1122","team details save the name, abbreviation, logo and colours");
 var identityTarget=new GameEngine();identityTarget.LoadFromState(identityEngine.CloneState());
 identityEngine.SetTeamIdentity(true,"Home Town","HT",null,"#FF010203","#FF040506");
@@ -516,7 +516,7 @@ try
     var webGame=new GameEngine();webGame.NewGame("football");webGame.Score(true,7);
     var page=ScorebugHtml.Build(ScorebugLayout.Default(),webGame.State,"Broadcast");
     Check(page.Contains("data-token")&&page.Contains("ScorePlus")&&page.Contains("<html"),"the web export keeps the tokens a site can update");
-    Check(page.Contains(">7<")||page.Contains("7"),"the web export prints the bound values onto the page");
+    Check(page.Contains(">7</div>"),"the web export prints the bound score inside the element, not just the token");
 
     var reportRoster=Roster.Create("Home Roster");
     var bench=reportRoster.AddPlayer();bench.Name="Bench";bench.SetStat("Yards",0);
