@@ -17,6 +17,7 @@ public sealed class HtmlSurface : Grid
 {
     readonly Image _image = new() { Stretch = Stretch.Fill };
     readonly Border _placeholder;
+    readonly bool _showPlaceholder;
     readonly DispatcherTimer _refresh = new() { Interval = TimeSpan.FromMilliseconds(160) };
     HtmlEngine? _engine;
     ScorebugElement _item;
@@ -29,6 +30,7 @@ public sealed class HtmlSurface : Grid
     public HtmlSurface(ScorebugElement item, bool showPlaceholder)
     {
         _item = item;
+        _showPlaceholder = showPlaceholder;
         _placeholder = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0x33, 0x38, 0xD7, 0xA3)),
@@ -105,7 +107,7 @@ public sealed class HtmlSurface : Grid
                 // the previews and the audience stay clear. Keep trying for a moment, then settle.
                 _attempts++;
                 if (_attempts > 12) _refresh.Stop();
-                _placeholder.Visibility = _image.Source is null ? Visibility.Visible : Visibility.Collapsed;
+                _placeholder.Visibility = _showPlaceholder && _image.Source is null ? Visibility.Visible : Visibility.Collapsed;
                 return;
             }
             _image.Source = frame;
@@ -118,7 +120,7 @@ public sealed class HtmlSurface : Grid
             HtmlEngine.Note(ex);
             _attempts++;
             if (_attempts > 12) _refresh.Stop();
-            _placeholder.Visibility = _image.Source is null ? Visibility.Visible : Visibility.Collapsed;
+            _placeholder.Visibility = _showPlaceholder && _image.Source is null ? Visibility.Visible : Visibility.Collapsed;
         }
         finally { _busy = false; }
     }

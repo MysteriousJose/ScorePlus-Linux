@@ -1721,7 +1721,9 @@ public partial class ScorebugEditorWindow : Window
 
     void CanvasPreset_Changed(object sender,SelectionChangedEventArgs e)
     {
-        if(_canvasLoading||CanvasPreset.SelectedIndex<0)return;
+        // The picker names its starting preset in XAML, so this runs while the window is still
+        // populating — before the catalog field is assigned. There is nothing to resize yet.
+        if(_canvasLoading||_catalog is null||CanvasPreset.SelectedIndex<0)return;
         var preset=ScorebugLayout.SizePresets[CanvasPreset.SelectedIndex];
         ApplyCanvasSize(preset.Width,preset.Height);
     }

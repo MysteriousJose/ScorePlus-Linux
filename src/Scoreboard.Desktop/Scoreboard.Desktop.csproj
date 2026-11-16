@@ -28,9 +28,9 @@
     <AvaloniaResource Include="app.ico" />
   </ItemGroup>
   <ItemGroup>
-    <!-- WebView2 stays until HtmlSurface is ported (browser-handler path); NAudio and
-         OpenCvSharp4 are Windows-native and have no role in the ffmpeg/pulse stack. -->
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <!-- No Windows-only packages: HtmlSurface's browser path has an inert, cross-platform
+         stand-in, and media/audio/camera go through ffmpeg and PulseAudio. Keeping WPF's WebView2
+         here would drag Windows assemblies into every macOS/Linux build for no code that uses them. -->
     <PackageReference Include="Avalonia" Version="11.3.22" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
