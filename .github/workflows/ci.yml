@@ -1,5 +1,6 @@
-# Cross-platform gate: the same three suites run on Linux, Windows and macOS. The UI harness is
-# Avalonia headless, not WPF, so there is no OS-specific test project and no skipped platform.
+# Cross-platform gate: the same three suites run on Linux and Windows. The UI harness is
+# Avalonia headless, not WPF, so there is no OS-specific test project. macOS is deliberately not in
+# the matrix: this repo ships no macOS package, so there is nothing for a macOS leg to gate.
 #
 # Nothing here uploads a release. Tagging (see release-linux.yml) or scripts/publish-*-release.sh
 # does that.
@@ -31,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022, macos-14]
+        os: [ubuntu-24.04, windows-2022]
     steps:
       - uses: actions/checkout@v4
 
