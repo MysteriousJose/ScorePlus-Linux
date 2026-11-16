@@ -323,17 +323,27 @@ APPRUN
     echo "      then re-run with --appimage, or set APPIMAGETOOL=/path/to/appimagetool"
     return 0
   fi
-  # appimagetool names its output after the AppDir folder, so the folder is named what we want shipped.
+  # appimagetool does not reliably name its output after the AppDir folder: newer builds apply their
+  # own version rules and drop a label like "0.0.3-ci" ("should be packaged as
+  # ScorePlus-x86_64.AppImage"), writing that file into the current directory. So the output path is
+  # passed explicitly — that is the only guarantee of the shipped name — and the stray name is still
+  # accepted as a fallback for builds that ignore the second argument.
   local named="$DIST/ScorePlus-$VERSION-x86_64.AppDir"; rm -rf "$named"; mv "$APPDIR" "$named"
   local produced="$OUT/ScorePlus-${VERSION}-x86_64.AppImage" log="$DIST/.appimagetool.log"
   echo "    building AppImage with $(basename "$tool") ..."
-  if ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" "$named" > "$log" 2>&1; then
+  if ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" "$named" "$produced" > "$log" 2>&1; then
     grep -vE '^(Determining|Skipping)' "$log" | sed 's/^/      /' || true
   else
     tail -12 "$log" | sed 's/^/      /'; echo "    (full log: $log)" >&2
   fi
-  if [[ -f "$named.AppImage" ]]; then
-    mv "$named.AppImage" "$produced"; rm -rf "$named"
+  if [[ ! -f "$produced" ]]; then
+    local stray
+    for stray in "$named.AppImage" "$PWD/ScorePlus-x86_64.AppImage" "$PWD/ScorePlus-$VERSION-x86_64.AppImage"; do
+      if [[ -f "$stray" ]]; then mv "$stray" "$produced"; break; fi
+    done
+  fi
+  if [[ -f "$produced" ]]; then
+    rm -rf "$named"
     echo "    ScorePlus-${VERSION}-x86_64.AppImage  $(du -h "$produced" | cut -f1)"
   else
     echo "    appimagetool produced no AppImage; leaving $named for inspection" >&2
