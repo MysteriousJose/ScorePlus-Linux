@@ -848,14 +848,14 @@ On Linux the marker rule is the same — `install.sh` and the `.deb` both write 
 
 ```
 src/Scoreboard.Core       Game state, engine, sport catalog, scorebug model, tokens, files, reports
-src/Scoreboard.Desktop    WPF application: console, media, rosters, studio, output, remote
+src/Scoreboard.Desktop    Avalonia application: console, media, rosters, studio, output, remote
 src/ScorePlus.Setup       The installer: payload, shortcuts, registry entry, uninstall
 scripts/build-release.sh  Publishes the app and builds the setup exe into dist/
 scripts/publish-release.sh  Builds, writes the manifest, publishes a GitHub release
 docs/updates.md           How the built-in update feed works, and hosting your own
 tests/Scoreboard.Core.Tests  Headless checks: scoring, clocks, stats, profiles, files, reports
-tests/UiSmoke                Loads every window and exercises the operator flows
-tests/HtmlRender             Proves an HTML element draws a real frame in a real event loop
+tests/UiSmoke                Avalonia headless: loads every window and exercises the operator flows
+tests/HtmlRender             Proves an HTML element draws a frame or an explained placeholder
 ```
 
 Run them with:
@@ -866,9 +866,9 @@ dotnet run --project tests/UiSmoke/UiSmoke.csproj -c Release
 dotnet run --project tests/HtmlRender/HtmlRender.csproj -c Release
 ```
 
-`HtmlRender` is separate because the browser engine refuses to start unless the app's own event loop is running; the smoke harness drives the dispatcher itself.
+All three suites are plain `dotnet run` executables, and the UI ones drive the real Avalonia windows through `Avalonia.Headless`. There is one test suite, not one per platform: the same commands run on Linux, Windows and macOS (CI runs them on all three). UI checks assert structure and behaviour rather than pixel sizes, because fonts and window decorations legitimately differ between operating systems.
 
-Between them the suites cover scoring, undo, clock behaviour, period formats, sport profiles and overrides, custom stats and tokens, live-versus-staged publishing, multiple layouts and displays, linked and copied parts, element typography and transitions, icon artwork, media tags, volume and speaker routing, camera and replay staging, roster files, layout and display files, media folder files, report output, the remote page, the installer's update path, and the studio's keyboard and canvas behaviour.
+Between them the suites cover scoring, undo, clock behaviour, period formats, sport profiles and overrides, custom stats and tokens, live-versus-staged publishing, multiple layouts and displays, linked and copied parts, element typography and transitions, icon artwork, media tags, volume and speaker routing, camera and replay staging, roster files, layout and display files, media folder files, report output, and the studio's keyboard and canvas behaviour.
 
 ---
 
