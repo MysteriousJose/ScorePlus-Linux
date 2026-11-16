@@ -866,7 +866,7 @@ dotnet run --project tests/UiSmoke/UiSmoke.csproj -c Release
 dotnet run --project tests/HtmlRender/HtmlRender.csproj -c Release
 ```
 
-All three suites are plain `dotnet run` executables, and the UI ones drive the real Avalonia windows through `Avalonia.Headless`. There is one test suite, not one per platform: the same commands run on Linux, Windows and macOS (CI runs them on all three). UI checks assert structure and behaviour rather than pixel sizes, because fonts and window decorations legitimately differ between operating systems.
+All three suites are plain `dotnet run` executables, and the UI ones drive the real Avalonia windows through `Avalonia.Headless`. There is one test suite, not one per platform: the same commands run on Linux and Windows (CI runs them on both). UI checks assert structure and behaviour rather than pixel sizes, because fonts and window decorations legitimately differ between operating systems.
 
 Between them the suites cover scoring, undo, clock behaviour, period formats, sport profiles and overrides, custom stats and tokens, live-versus-staged publishing, multiple layouts and displays, linked and copied parts, element typography and transitions, icon artwork, media tags, volume and speaker routing, camera and replay staging, roster files, layout and display files, media folder files, report output, and the studio's keyboard and canvas behaviour.
 
