@@ -13,10 +13,10 @@
 name: release-linux
 
 on:
-  # Release labels are the tags: a1.2 for internal drops, b1.0 for public ones, v* in case that ever
-  # becomes the habit. Nothing here fires on a branch push, so a push can never ship anything.
+  # Release labels are Linux tags only: a1.2L and v*; the b* / a1.x tags are Windows history.
+  # Nothing here fires on a branch push, so a push can never ship anything.
   push:
-    tags: ['a*', 'b*', 'v*']
+    tags: ['a*L', 'v*']
   workflow_dispatch:
     inputs:
       version:

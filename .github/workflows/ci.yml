@@ -26,6 +26,18 @@ env:
   LABEL: 0.0.${{ github.run_number }}-ci
 
 jobs:
+  ledger:
+    name: upstream feature ledger
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The ledger compares the Linux tree against the pinned b1.1 tag, so the tag has to be
+          # in the clone. A shallow checkout hides it and would make this job silently useless.
+          fetch-depth: 0
+      - name: every upstream source file is present or deliberately deferred
+        run: python3 scripts/check-port-ledger.py
+
   suites:
     name: suites (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
