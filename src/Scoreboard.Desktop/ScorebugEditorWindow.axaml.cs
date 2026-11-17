@@ -14,6 +14,7 @@ using Scoreboard.Core;
 namespace Scoreboard.Desktop;
 public partial class ScorebugEditorWindow : Window
 {
+    static readonly DataFormat<string> LayerFormat = DataFormat.CreateStringApplicationFormat("ScorePlus.LayerId");
     readonly ScorebugCatalog _catalog;
     readonly GameEngine _engine;
     readonly MediaPlayback? _playback;
@@ -2072,12 +2073,17 @@ public partial class ScorebugEditorWindow : Window
     {
         if(e.LeftButton!=MouseButtonState.Pressed||Layers.SelectedItem is not LayerItem item)return;
         var p=e.GetPosition(null);
-        if(Math.Abs(p.X-_listStart.X)>8||Math.Abs(p.Y-_listStart.Y)>8)WpfDragDrop.DoDragDrop(Layers,item.Element.Id,DragDropEffects.Move);
+        if(Math.Abs(p.X-_listStart.X)>8||Math.Abs(p.Y-_listStart.Y)>8)
+        {
+            var data = new DataTransfer();
+            data.Add(DataTransferItem.Create(LayerFormat, item.Element.Id));
+            _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+        }
     }
 
     void Layers_Drop(object? sender,DragEventArgs e)
     {
-        if(e.Data.GetData(typeof(string)) is not string movedId)return;
+        if(e.DataTransfer.TryGetValue(LayerFormat) is not string movedId)return;
         var p=e.GetPosition(Layers);
         var target=Layers.InputHitTest(p) as Avalonia.AvaloniaObject;
         while(target is not null&&target is not ListBoxItem)target=VisualTreeHelper.GetParent(target);

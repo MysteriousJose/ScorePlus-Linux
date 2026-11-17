@@ -144,14 +144,6 @@ public static class RenderOptions
     public static BitmapScalingMode GetBitmapScalingMode(Avalonia.AvaloniaObject target) => BitmapScalingMode.HighQuality;
 }
 
-// ---------- WPF's VisualTreeHelper.GetParent / drag source helpers ----------
-// TECH DEBT: DoDragDrop is inert on Linux until a real Avalonia drag source is wired; external
-// drops (files from the desktop) still reach the Drop handlers. TODO(port): DragDrop.DoDragDropAsync.
-public static class WpfDragDrop
-{
-    public static void DoDragDrop(object source, object data, Avalonia.Input.DragDropEffects effects) { }
-}
-
 // WPF's Transform.Identity: Avalonia treats null as identity.
 public static class WpfTransforms
 {
@@ -399,14 +391,6 @@ public static class WpfCompat3Extensions
     extension (DragEventArgs e)
     {
         public DragDropEffects Effects { get => e.DragEffects; set => e.DragEffects = value; }
-    }
-
-    extension (Avalonia.Input.IDataObject data)
-    {
-        public bool GetDataPresent(string format) => data.Contains(format);
-        public object? GetData(string format) => data.Get(format);
-        public bool GetDataPresent(Type type) => data.Contains(type.FullName ?? "");
-        public object? GetData(Type type) => data.Get(type.FullName ?? "");
     }
 
     extension (Avalonia.Controls.Shapes.Line line)

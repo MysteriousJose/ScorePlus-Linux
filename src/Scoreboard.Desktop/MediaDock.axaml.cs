@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Microsoft.Win32;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
@@ -25,6 +26,7 @@ public partial class MediaDock : UserControl
     enum MediaView { Library, Playlist }
 
     const string ClipFormat = "ScorePlus.MediaPath";
+    static readonly DataFormat<string> ClipDataFormat = DataFormat.CreateStringApplicationFormat(ClipFormat);
 
     static readonly Brush BorderSelected = Frozen("#38D7A3");
     static readonly Brush BorderOnAir = Frozen("#FFD166");
@@ -598,7 +600,8 @@ public partial class MediaDock : UserControl
             e.Handled = true;
             if (_session is null) return;
             // Files dropped from Explorer join the library in this folder; library clips move here.
-            if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            var files = DroppedFiles(e);
+            if (files.Length > 0)
             {
                 _session.Import(files, MediaLibrary.NormalizeTag(TagBox.Text), folder);
                 Refresh();
@@ -709,7 +712,8 @@ public partial class MediaDock : UserControl
             e.Handled = true;
             if (_session is null) return;
             // Files from Explorer are imported, then appended to the playlist in one step.
-            if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            var files = DroppedFiles(e);
+            if (files.Length > 0)
             {
                 _session.Import(files, MediaLibrary.NormalizeTag(TagBox.Text));
                 foreach (var path in files)
@@ -730,8 +734,8 @@ public partial class MediaDock : UserControl
 
     void HighlightDrop(object? sender, DragEventArgs e)
     {
-        var files = e.Data.GetDataPresent(DataFormats.FileDrop);
-        if (!files && !e.Data.GetDataPresent(ClipFormat)) return;
+        var files = e.DataTransfer.Contains(DataFormat.File);
+        if (!files && !e.DataTransfer.Contains(ClipDataFormat)) return;
         e.Effects = files ? DragDropEffects.Copy : DragDropEffects.Move;
         e.Handled = true;
         if (sender is Border border) border.BorderBrush = BorderSelected;
@@ -739,9 +743,14 @@ public partial class MediaDock : UserControl
 
     MediaEntry? DraggedEntry(DragEventArgs e)
     {
-        if (_session is null || e.Data.GetData(ClipFormat) is not string path) return null;
+        if (_session is null || e.DataTransfer.TryGetValue(ClipDataFormat) is not string path) return null;
         return _session.Library.FirstOrDefault(entry => string.Equals(entry.Path, path, StringComparison.OrdinalIgnoreCase));
     }
+
+    static string[] DroppedFiles(DragEventArgs e) =>
+        e.DataTransfer.TryGetFiles() is { Length: > 0 } items
+            ? items.Select(item => item.TryGetLocalPath()).OfType<string>().ToArray()
+            : [];
 
     static FrameworkElement FolderGlyph(Brush fill, double width, double height) => new Avalonia.Controls.Shapes.Path
     {
@@ -902,12 +911,11 @@ public partial class MediaDock : UserControl
             if (Math.Abs(position.X - _dragOrigin.X) < 9 && Math.Abs(position.Y - _dragOrigin.Y) < 9) return;
             var path = _dragEntry.Path;
             _dragEntry = null;
-            // WPF's DataObject(format, value): Avalonia's data object is set-then-drag, and the drag
-            // starts from the pointer event that began it. TECH DEBT: DataObject is obsolete in
-            // Avalonia 11.3 (DataTransfer replaces it); the custom in-process format stays the same.
-            var data = new DataObject();
-            data.Set(ClipFormat, path);
-            _ = DragDrop.DoDragDrop(e, data, DragDropEffects.Move);
+            // Avalonia 11.3 data transfers are set-then-drag; the drag starts from the pointer event
+            // that began it. The custom application format keeps clip drags in-process.
+            var data = new DataTransfer();
+            data.Add(DataTransferItem.Create(ClipDataFormat, path));
+            _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
         });
         return tile;
     }
