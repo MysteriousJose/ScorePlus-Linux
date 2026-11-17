@@ -128,15 +128,15 @@ public sealed class PaintTextureWindow : Window
 
         var gradient = text ? _draft.TextGradientPaint : _draft.BackgroundGradientPaint;
         var enabled = new CheckBox { Content = "Paint a gradient", IsChecked = gradient is { IsUsable: true }, Margin = new Thickness(0, 2, 0, 2) };
-        enabled.Checked += (_, _) => SetGradient(text, Existing(text) ?? ScorebugGradient.TwoStop(
-            text ? _draft.Foreground : _draft.Background,
-            text ? "#FF38D7A3" : _draft.BackgroundColor2));
-        enabled.Unchecked += (_, _) => SetGradient(text, null);
+        enabled.IsCheckedChanged += (_, _) => SetGradient(text, enabled.IsChecked == true
+            ? Existing(text) ?? ScorebugGradient.TwoStop(
+                text ? _draft.Foreground : _draft.Background,
+                text ? "#FF38D7A3" : _draft.BackgroundColor2)
+            : null);
         panel.Children.Add(enabled);
 
         var radial = new CheckBox { Content = "Radial (out from a centre)", IsChecked = gradient?.Radial == true, Margin = new Thickness(0, 2, 0, 2) };
-        radial.Checked += (_, _) => { var paint = Existing(text); if (paint is null) return; paint.Radial = true; Touch(); };
-        radial.Unchecked += (_, _) => { var paint = Existing(text); if (paint is null) return; paint.Radial = false; Touch(); };
+        radial.IsCheckedChanged += (_, _) => { var paint = Existing(text); if (paint is null) return; paint.Radial = radial.IsChecked == true; Touch(); };
         panel.Children.Add(radial);
 
         var angleRow = new WrapPanel();
@@ -186,8 +186,9 @@ public sealed class PaintTextureWindow : Window
         panel.Children.Add(Section(finishHeader));
         var finish = text ? _draft.TextTexture : _draft.BackgroundTexture;
         var finishOn = new CheckBox { Content = "Lay a material over this paint", IsChecked = finish?.Enabled == true, Margin = new Thickness(0, 2, 0, 4) };
-        finishOn.Checked += (_, _) => SetTexture(text, ExistingTexture(text) ?? ScorebugTexture.ForKind("Matte"));
-        finishOn.Unchecked += (_, _) => SetTexture(text, null);
+        finishOn.IsCheckedChanged += (_, _) => SetTexture(text, finishOn.IsChecked == true
+            ? ExistingTexture(text) ?? ScorebugTexture.ForKind("Matte")
+            : null);
         panel.Children.Add(finishOn);
 
         var kindRow = new WrapPanel();
