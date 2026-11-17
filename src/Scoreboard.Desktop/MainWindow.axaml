@@ -62,6 +62,7 @@
           <Button Classes="header-button icon-button" Content="⧉" Click="NewPanel_Click" ToolTip.Tip="New panel — open a detached control panel that stays in sync"/>
           <Button Classes="header-button icon-button" Content="⌨" Click="Keybinds_Click" ToolTip.Tip="Keybinds — assign a key combination to any control"/>
           <Button Classes="header-button icon-button" Content="⚙" Click="Preferences_Click" ToolTip.Tip="Preferences"/>
+          <Button Classes="header-button icon-button" Content="i" Click="Info_Click" ToolTip.Tip="About ScorePlus — name, version and credits"/>
           <Button Classes="header-button icon-button" Content="▶" Click="Output_Click" ToolTip.Tip="Audience output — choose a display and open its window (F11 fills the screen)"/>
           <Button Classes="header-button icon-button" Content="☰" Click="EventLog_Click" ToolTip.Tip="Event log — open it in its own window"/>
           <Button Classes="header-button icon-button" Content="▦" Click="GameReport_Click" ToolTip.Tip="Game report — export a printable HTML summary"/>
