@@ -97,12 +97,15 @@
         <Button x:Name="MediaTab" Classes="tab-button" Content="MEDIA" Click="MediaTab_Click" ToolTip.Tip="Clips, camera, replay and playlists"/>
         <Button x:Name="RosterTab" Classes="tab-button" Content="ROSTERS" Click="RosterTab_Click"
                 ToolTip.Tip="Team rosters, player stats and the player on the graphic"/>
+        <Button x:Name="MacrosTab" Classes="tab-button" Content="MACROS" Click="MacrosTab_Click"
+                ToolTip.Tip="One button that changes several things in order"/>
       </StackPanel>
 
       <Grid Grid.Row="4" Margin="0,9,0,0">
         <ContentControl x:Name="PanelHost"/>
         <local:MediaDock x:Name="MediaControl" IsVisible="False"/>
         <local:RosterDock x:Name="RosterControl" IsVisible="False"/>
+        <ContentControl x:Name="MacroHost" IsVisible="False"/>
       </Grid>
     </Grid>
   </DockPanel>

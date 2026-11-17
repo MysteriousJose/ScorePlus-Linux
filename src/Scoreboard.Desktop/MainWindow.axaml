@@ -66,6 +66,7 @@
           <Button Classes="header-button icon-button" Content="▶" Click="Output_Click" ToolTip.Tip="Audience output — choose a display and open its window (F11 fills the screen)"/>
           <Button Classes="header-button icon-button" Content="☰" Click="EventLog_Click" ToolTip.Tip="Event log — open it in its own window"/>
           <Button Classes="header-button icon-button" Content="▦" Click="GameReport_Click" ToolTip.Tip="Game report — export a printable HTML summary"/>
+          <Button Classes="header-button icon-button" Content="☁" Click="LeagueCloud_Click" ToolTip.Tip="League cloud — upload this game and fetch other league scores for a ticker"/>
           <Button Classes="header-button icon-button" Content="⇄" Click="Ticker_Click" ToolTip.Tip="Ticker rotation — choose league games, headlines and score alerts"/>
           <Button Classes="header-button" Content="Save Game" Click="Save_Click"/>
           <Button Classes="header-button" Content="Open Game" Click="Open_Click"/>
@@ -207,11 +208,14 @@
           <Button x:Name="MediaTab" Classes="tab-button" Content="MEDIA" Click="MediaTab_Click" ToolTip.Tip="Clips, camera, replay and playlists"/>
           <Button x:Name="RosterTab" Classes="tab-button" Content="ROSTERS" Click="RosterTab_Click"
                   ToolTip.Tip="Team rosters, player stats and the player on the graphic"/>
+          <Button x:Name="MacrosTab" Classes="tab-button" Content="MACROS" Click="MacrosTab_Click"
+                  ToolTip.Tip="One button that changes several things in order"/>
         </StackPanel>
         <Grid Grid.Row="1">
           <ContentControl x:Name="ControlHost"/>
           <local:MediaDock x:Name="MediaControl" IsVisible="False"/>
           <local:RosterDock x:Name="RosterControl" IsVisible="False"/>
+          <ContentControl x:Name="MacroHost" IsVisible="False"/>
         </Grid>
       </Grid>
     </Grid>

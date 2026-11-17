@@ -42,6 +42,8 @@ public partial class MainWindow : Window, IControlPanelHost
     AudiencePreview? _audience;
     // The four assignable quick-layout buttons above the rail's meter.
     QuickLayoutBar? _quickLayouts;
+    MacroDock? _macroDock;
+    LeagueCloudService? _leagueCloud;
     int _eventCount = -1;
     readonly UserPreferences _preferences = PreferencesStore.Load();
     string? _projectPath;
@@ -99,6 +101,9 @@ public partial class MainWindow : Window, IControlPanelHost
 
         _engine.Changed += Refresh;
         _engine.Changed += EngineChanged;
+        _leagueCloud = new LeagueCloudService(_engine, _preferences);
+        _leagueCloud.Status += message => Dispatcher.BeginInvoke(new Action(() => StatusText.Text = message));
+        _engine.Changed += () => _leagueCloud?.MarkDirty();
         _timer.Tick += (_, _) => _engine.Tick();
         _timer.Start();
         _autosave.Tick += (_, _) => AutoSave();
@@ -121,7 +126,7 @@ public partial class MainWindow : Window, IControlPanelHost
         {
             ApplyTabVisuals();
             // The remote and the update check belong to a live window, not to the launch sequence.
-            if (!waitForLaunch) { StartRemote(); _ = CheckForUpdatesAsync(); }
+            if (!waitForLaunch) { StartRemote(); _leagueCloud?.Start(); _ = CheckForUpdatesAsync(); }
         };
 
         // Exit prompt: the world has no OnClosing override; Avalonia's Closing event carries the same
@@ -163,6 +168,9 @@ public partial class MainWindow : Window, IControlPanelHost
         _panel = new ControlPanelView(_engine, this);
         ControlHost.Content = _panel;
         _panel.SetHintVisibility(_preferences.ShowHeadingHints);
+        _macroDock = new MacroDock(_engine, _session, _preferences.Theme, _panel.Execute, _scorebug, PublishGameState);
+        _macroDock.Status += message => StatusText.Text = message;
+        MacroHost.Content = _macroDock;
 
         RosterControl.Attach(_engine);
         RosterControl.ApplyTheme(_preferences.Theme);
@@ -230,6 +238,7 @@ public partial class MainWindow : Window, IControlPanelHost
         SetWorkspaceEnabled(true);
         Activate();
         StartRemote();
+        _leagueCloud?.Start();
         _ = CheckForUpdatesAsync();
     }
 
@@ -358,16 +367,22 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void RosterTab_Click(object sender, RoutedEventArgs e) => ShowTab(GameControlWindow.ConsoleTab.Rosters);
 
-    /// <summary>Switches the operator surface between the console, the media desk and the roster desk.</summary>
+    void MacrosTab_Click(object sender, RoutedEventArgs e) => ShowTab(GameControlWindow.ConsoleTab.Macros);
+
+    /// <summary>Switches the operator surface between the console, media, roster and macro desks.</summary>
     void ShowTab(GameControlWindow.ConsoleTab tab)
     {
+        if (_tab == GameControlWindow.ConsoleTab.Macros && tab != GameControlWindow.ConsoleTab.Macros)
+            _macroDock?.CommitPendingEdits();
         _tab = tab;
         ControlHost.Visibility = tab == GameControlWindow.ConsoleTab.Control ? Visibility.Visible : Visibility.Collapsed;
         MediaControl.Visibility = tab == GameControlWindow.ConsoleTab.Media ? Visibility.Visible : Visibility.Collapsed;
         RosterControl.Visibility = tab == GameControlWindow.ConsoleTab.Rosters ? Visibility.Visible : Visibility.Collapsed;
+        MacroHost.Visibility = tab == GameControlWindow.ConsoleTab.Macros ? Visibility.Visible : Visibility.Collapsed;
         ApplyTabVisuals();
         if (tab == GameControlWindow.ConsoleTab.Media) MediaControl.RefreshView();
         if (tab == GameControlWindow.ConsoleTab.Rosters) RosterControl.RefreshView();
+        if (tab == GameControlWindow.ConsoleTab.Macros) _macroDock?.RefreshView();
     }
 
     /// <summary>
@@ -383,7 +398,7 @@ public partial class MainWindow : Window, IControlPanelHost
         var onBorder = UiPalette.Frozen(accent);
         var offBorder = new SolidColorBrush(Color.Parse("#28323F"));
         var muted = new SolidColorBrush(Color.Parse("#93A0B2"));
-        Button[] tabs = [ControlTab, MediaTab, RosterTab];
+        Button[] tabs = [ControlTab, MediaTab, RosterTab, MacrosTab];
         var active = (int)_tab;
         for (var i = 0; i < tabs.Length; i++)
         {
@@ -475,6 +490,7 @@ public partial class MainWindow : Window, IControlPanelHost
         SportHint.Visibility = PreviewAudienceHint.Visibility = visibility;
         MediaControl.SetHintVisibility(_preferences.ShowHeadingHints);
         RosterControl.SetHintVisibility(_preferences.ShowHeadingHints);
+        _macroDock?.SetHintVisibility(_preferences.ShowHeadingHints);
         _log?.SetHintVisibility(_preferences.ShowHeadingHints);
     }
 
@@ -537,6 +553,14 @@ public partial class MainWindow : Window, IControlPanelHost
         await dialog.ShowDialog(this);
     }
 
+    async void LeagueCloud_Click(object sender, RoutedEventArgs e)
+    {
+        if (_leagueCloud is null) return;
+        var dialog = new LeagueCloudWindow(_leagueCloud, _preferences, _scorebug, _program, _engine);
+        await dialog.ShowDialog(this);
+        _leagueCloud.ApplySettings();
+    }
+
     void Preferences_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SettingsWindow(_preferences) { Owner = this };
@@ -547,6 +571,7 @@ public partial class MainWindow : Window, IControlPanelHost
         ApplyTabVisuals();
         MediaControl.ApplyTheme(_preferences.Theme);
         RosterControl.ApplyTheme(_preferences.Theme);
+        _macroDock?.ApplyTheme(_preferences.Theme);
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.ApplyTheme(_preferences.Theme);
         foreach (var output in _outputs) output.SetBroadcastTheme(_preferences.Theme);
         ApplyHintVisibility();
@@ -561,6 +586,7 @@ public partial class MainWindow : Window, IControlPanelHost
         ApplyTabVisuals();
         // Turning the remote on or changing its password takes effect without a restart.
         StartRemote();
+        _leagueCloud?.ApplySettings();
     }
 
     /// <summary>
@@ -703,6 +729,7 @@ public partial class MainWindow : Window, IControlPanelHost
         foreach (var panel in _controlPanels.Where(panel => panel.IsVisible)) panel.Media.ResetView();
         ResetOutputToCurrentGame();
         RefreshLayoutIndicators();
+        _macroDock?.RefreshView(force: true);
         if (announce) StatusText.Text = $"NEW {_engine.Sport.Name.ToUpperInvariant()} GAME";
     }
 
@@ -749,6 +776,7 @@ public partial class MainWindow : Window, IControlPanelHost
             // element built while the teams had no crests) must take the loaded values.
             _preview?.Rebuild();
             foreach (var output in _outputs) output.Rebuild();
+            _macroDock?.RefreshView(force: true);
             _savedStateJson = _engine.ExportJson();
             _savedDesignJson = DesignJson();
             StatusText.Text = $"GAME LOADED · {System.IO.Path.GetFileName(path)}";
@@ -841,6 +869,8 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         try
         {
+            // A macro being typed is part of the game too; commit it before writing the file.
+            _macroDock?.CommitPendingEdits();
             // The game travels with its screens: every display, every layout and what each one has
             // on air, so opening the file puts the show back exactly where it was left.
             _engine.Save(path, _scorebug.ExportDocument());
@@ -901,7 +931,9 @@ public partial class MainWindow : Window, IControlPanelHost
         _engine.Changed -= Refresh;
         _engine.Changed -= EngineChanged;
         _remote?.Dispose();
+        _leagueCloud?.Dispose();
         _meterTimer.Stop();
+        _macroDock?.CommitPendingEdits();
         _program.Dispose();
         _preview?.Dispose();
         _session.Dispose();

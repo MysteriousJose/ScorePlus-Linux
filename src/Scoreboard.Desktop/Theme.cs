@@ -38,6 +38,15 @@ public sealed class UserPreferences
     public string UpdateFeedUrl { get; set; } = "";
     public bool CheckForUpdates { get; set; } = true;
 
+    /// <summary>Off until a league cloud endpoint is configured.</summary>
+    public bool LeagueCloudEnabled { get; set; }
+    public string LeagueCloudUploadUrl { get; set; } = "";
+    public string LeagueCloudFeedUrl { get; set; } = "";
+    public string LeagueCloudLeagueId { get; set; } = "default";
+    /// <summary>Optional bearer token. It stays on this computer with the other preferences.</summary>
+    public string LeagueCloudApiKey { get; set; } = "";
+    public int LeagueCloudPollSeconds { get; set; } = 15;
+
     /// <summary>
     /// How long the graphic holds an old value before printing the new one, in seconds. 0 is
     /// instant. This is a show-wide timing choice, not a property of one element.
@@ -82,6 +91,12 @@ public sealed class UserPreferences
         RemotePassword = RemotePassword,
         UpdateFeedUrl = UpdateFeedUrl,
         CheckForUpdates = CheckForUpdates,
+        LeagueCloudEnabled = LeagueCloudEnabled,
+        LeagueCloudUploadUrl = LeagueCloudUploadUrl,
+        LeagueCloudFeedUrl = LeagueCloudFeedUrl,
+        LeagueCloudLeagueId = LeagueCloudLeagueId,
+        LeagueCloudApiKey = LeagueCloudApiKey,
+        LeagueCloudPollSeconds = LeagueCloudPollSeconds,
         ValueSwitchDelay = ValueSwitchDelay,
         LastSport = LastSport,
         QuickLayouts = QuickLayouts.Select(binding => new QuickLayoutBinding { Label = binding.Label, DisplayId = binding.DisplayId, LayoutId = binding.LayoutId }).ToList(),
@@ -146,6 +161,12 @@ public static class PreferencesStore
             try { Save(preferences); } catch { }
         }
         if (preferences.Theme is not ("System" or "Dark" or "Light")) preferences.Theme = "System";
+        preferences.LeagueCloudUploadUrl = (preferences.LeagueCloudUploadUrl ?? "").Trim();
+        preferences.LeagueCloudFeedUrl = (preferences.LeagueCloudFeedUrl ?? "").Trim();
+        preferences.LeagueCloudLeagueId = (preferences.LeagueCloudLeagueId ?? "").Trim();
+        if (preferences.LeagueCloudLeagueId.Length == 0) preferences.LeagueCloudLeagueId = "default";
+        preferences.LeagueCloudApiKey = (preferences.LeagueCloudApiKey ?? "").Trim();
+        preferences.LeagueCloudPollSeconds = Math.Clamp(preferences.LeagueCloudPollSeconds, 5, 300);
     }
 
     public static void Save(UserPreferences preferences)

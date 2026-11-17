@@ -60,6 +60,8 @@ internal static class Program
             ShellChecks();
             ControlPanelChecks();
             TickerChecks();
+            LeagueCloudChecks();
+            MacroChecks(temps);
             StudioChecks(temps);
             WindowCatalogChecks(temps);
             ThemeChecks();
@@ -366,6 +368,82 @@ internal static class Program
               && engine.State.TickerNews.SequenceEqual(["League finals tonight"]),
             "ticker rotation keeps the chosen games and headlines");
         window.Close();
+    }
+
+    static void LeagueCloudChecks()
+    {
+        var preferences = new UserPreferences { Theme = "Dark" };
+        var engine = new GameEngine();
+        engine.NewGame("football");
+        engine.SetTeams("Cloud Home", "Cloud Away");
+        engine.SetLeagueGames([new LeagueGame
+        {
+            GameId = "cloud-1",
+            HomeTeam = "Riverside",
+            AwayTeam = "Northside",
+            HomeScore = 21,
+            AwayScore = 14,
+            Period = 3,
+            Clock = "07:42"
+        }]);
+        var service = new LeagueCloudService(engine, preferences);
+        var catalog = new ScorebugCatalog(TempFile([], ".json"));
+        var program = new ProgramSelection(catalog);
+        var window = new LeagueCloudWindow(service, preferences, catalog, program, engine) { Width = 700, Height = 700 };
+        window.Show();
+        window.UpdateLayout();
+        var games = All<ListBox>(window).Single();
+        Check(games.Items.Count == 1, "the league cloud window lists games already received from the feed");
+        games.SelectedIndex = 0;
+        var import = ButtonByContent(window, "Import selected fields")
+            ?? throw new Exception("FAIL: the league cloud window has no import action");
+        Check(All<CheckBox>(window).Any(box => (box.Content as string) == "Home score")
+              && All<CheckBox>(window).Any(box => (box.Content as string) == "Game clock"),
+            "cloud import lets an operator choose individual score and clock fields");
+        foreach (var label in new[] { "Home score", "Game clock" })
+            (All<CheckBox>(window).First(box => (box.Content as string) == label)).IsChecked = true;
+        Click(import);
+        Check(engine.State.HomeScore == 21 && engine.State.ClockSeconds == 462,
+            "importing a cloud game writes only the ticked fields");
+        Check(ButtonByContent(window, "Add league ticker layout") is not null,
+            "the cloud window can create a league ticker layout");
+        Click(ButtonByContent(window, "Add league ticker layout"));
+        Check(catalog.Layouts.Any(layout => layout.Name == "League Ticker")
+              && catalog.Layout.Elements.Any(element => element.Ticker && element.Content == "{{LEAGUE_GAMES}}"),
+            "the created league ticker is a real layout bound to the cloud feed");
+        Check(LeagueCloudImport.TryParseClock("07:42", out var seconds) && seconds == 462,
+            "league cloud clock strings are parsed for import");
+        window.Close();
+        service.Dispose();
+    }
+
+    static void MacroChecks(List<string> temps)
+    {
+        var engine = new GameEngine();
+        engine.NewGame("football");
+        var session = new MediaSession(new UserPreferences());
+        var catalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var published = 0;
+        var dock = new MacroDock(engine, session, "Dark", null, catalog, () => published++);
+        var host = new Window { Width = 1100, Height = 760, Content = dock };
+        host.Show();
+        host.UpdateLayout();
+        Check(ButtonByContent(dock, "+ New macro") is not null, "the macro desk opens with a new-macro action");
+        var macro = new SavedMacro
+        {
+            Label = "Touchdown",
+            Actions = [new MacroAction { Kind = MacroActionKind.Score, Home = true, Amount = 6, BypassOutput = true }]
+        };
+        engine.StoreMacros([macro]);
+        dock.RefreshView(force: true);
+        host.UpdateLayout();
+        var run = All<Button>(dock).FirstOrDefault(button => button.Tag is SavedMacro saved && saved.Id == macro.Id)
+            ?? throw new Exception("FAIL: the macro board did not draw its saved card");
+        Click(run);
+        Check(engine.State.HomeScore == 6 && published == 1,
+            "a macro card runs its ordered steps and publishes a bypassed change");
+        host.Close();
+        session.Dispose();
     }
 
     static void StudioChecks(List<string> temps)

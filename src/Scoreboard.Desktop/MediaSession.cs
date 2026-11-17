@@ -1000,11 +1000,60 @@ public sealed class MediaSession
     void StopCamera()
     {
         if (_camera is null) return;
-        // Only this camera leaves the air; a second feed keeps running for its own element.
-        _liveCameras.RemoveAll(camera => camera.CameraIndex == _camera.CameraIndex);
-        _camera.Stop();
-        _camera = null;
-        Playback.SetLiveCameras(_liveCameras);
+        StopCamera(_camera.CameraIndex);
+    }
+
+    /// <summary>Takes one camera device off air while leaving every other live source alone.</summary>
+    void StopCamera(int index)
+    {
+        _liveCameras.RemoveAll(camera => camera.CameraIndex == index);
+        try { CameraFeed.Get(index).Stop(); } catch { }
+        if (_camera?.CameraIndex == index) _camera = null;
+        if (_liveCameras.Count == 0)
+        {
+            Playback.Stop();
+            if (Current?.IsCamera == true) Current = null;
+            if (CameraEntry?.CameraIndex == index) CameraEntry = null;
+        }
+        else Playback.SetLiveCameras(_liveCameras);
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>True when this exact source or clip is currently on air.</summary>
+    public bool IsOnAir(MediaEntry entry)
+    {
+        if (entry.IsCamera) return IsCameraOnAir(entry);
+        if (entry.IsMicrophone) return IsMicrophoneOnAir(entry);
+        return Current is not null && string.Equals(Current.Path, entry.Path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Puts a source on air, or takes that one source off air when it is already live. Macros use
+    /// this so a "take off air" step can safely target a single camera or microphone without
+    /// stopping every other live source in the show.
+    /// </summary>
+    public bool ToggleOnAir(MediaEntry entry)
+    {
+        if (entry.IsCamera)
+        {
+            if (IsCameraOnAir(entry)) { StopCamera(entry.CameraIndex); return true; }
+            Play(entry);
+            return true;
+        }
+        if (entry.IsMicrophone)
+        {
+            if (IsMicrophoneOnAir(entry)) { StopMicrophone(entry.MicrophoneIndex); return true; }
+            Play(entry);
+            return true;
+        }
+        if (Current is not null && string.Equals(Current.Path, entry.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            Stop();
+            return true;
+        }
+        if (!File.Exists(entry.Path)) return false;
+        Play(entry);
+        return true;
     }
 
     /// <summary>The camera items on air, so the dock can show one as live rather than merely selected.</summary>
@@ -1075,11 +1124,20 @@ public sealed class MediaSession
     void StopMicrophone()
     {
         if (_microphone is null) return;
-        // Other microphones stay on air; each entry owns its own capture and speaker.
-        _liveMicrophones.RemoveAll(entry => entry.MicrophoneIndex == _microphone.Index);
-        _microphone.Stop();
-        _microphone = null;
-        MicrophoneEntry = null;
+        StopMicrophone(_microphone.Index);
+    }
+
+    /// <summary>Takes one microphone off air without silencing the other commentary feeds.</summary>
+    void StopMicrophone(int index)
+    {
+        _liveMicrophones.RemoveAll(entry => entry.MicrophoneIndex == index);
+        if (_microphone?.Index == index)
+        {
+            _microphone.Stop();
+            _microphone = null;
+            MicrophoneEntry = null;
+            if (Current?.IsMicrophone == true && Current.MicrophoneIndex == index) Current = null;
+        }
         StateChanged?.Invoke();
     }
 
