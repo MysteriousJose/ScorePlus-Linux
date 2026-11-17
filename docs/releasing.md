@@ -42,7 +42,7 @@ git push origin b1.1
 | `the AppImage boots before anything is published` | It stays up for 45 seconds under Xvfb. The pass condition is exit status **124** from `timeout`, not 0: a window still drawing means it got past `XOpenDisplay`, missing assemblies and a bad `AppRun`. |
 | `the tarball installs per-user and runs` | `install.sh --silent` into a throwaway `HOME`, then the installed copy boots. |
 | `ship it` | `publish-linux-release.sh <label> --release --skip-build` uploads with the run's own `GITHUB_TOKEN`, so no login step is needed. |
-| `the release page serves what it claims` | Asks the API for the release and fails unless `ScorePlusLinuxSetup.tar.gz` and `SHA256SUMS` are present and every asset finished uploading. |
+| `the release page serves what it claims` | Asks the API for the release and fails unless `ScorePlusLinuxSetup.tar.gz`, `SHA256SUMS` and an `*.AppImage` are present and every asset finished uploading. |
 
 Prerelease is automatic on a tag: `a*` and `b*` publish as pre-release, `v*` as a full release.
 That matches the project's own status — these are alpha and beta drops, and the updater offers
@@ -60,9 +60,10 @@ Actions → **release-linux** → **Run workflow**. Same pipeline, same gates, w
 
 ## Option 3 — publish from your own machine
 
-Needs the .NET 10 SDK, `squashfs-tools`, and the [GitHub CLI](https://cli.github.com/) logged in
+Needs the .NET 10 SDK and the [GitHub CLI](https://cli.github.com/) logged in
 (`gh auth login`). Add `APPIMAGE_EXTRACT_AND_RUN=1` if the machine has no libfuse2 — the AppImage
-then unpacks to a temporary directory instead of mounting.
+then unpacks to a temporary directory instead of mounting. No `squashfs-tools` needed: the
+`appimagetool` the script downloads carries its own `mksquashfs`.
 
 ```sh
 ./scripts/publish-linux-release.sh b1.1 --release --prerelease --notes "Adds X, fixes Y"

@@ -17,9 +17,10 @@
 #   └── ScorePlus-a1.1-x86_64.AppImage   one file, runs on any x86_64 distro
 #
 # Tool requirements: dotnet 10 SDK only for --local/--tar. `dpkg-deb` for the .deb (a pure ar/tar
-# fallback builds a valid .deb without it) and appimagetool + mksquashfs for the AppImage — the
-# script downloads appimagetool into tools/bin when it is missing and curl is present. A missing
-# packager is reported and skipped, never a hard failure, so one absent tool cannot lose the build.
+# fallback builds a valid .deb without it) and appimagetool for the AppImage — the script downloads it
+# into tools/bin when it is missing and curl is present, and the tool carries its own mksquashfs, so
+# squashfs-tools is not needed. A missing packager is reported and skipped, never a hard failure, so
+# one absent tool cannot lose the build.
 
 set -euo pipefail
 
@@ -286,12 +287,10 @@ find_appimagetool() {
 }
 
 build_appimage() {
-  if ! command -v mksquashfs >/dev/null 2>&1; then
-    echo "    SKIPPED AppImage: appimagetool needs mksquashfs (squashfs-tools)."
-    echo "      sudo pacman -S squashfs-tools   /   sudo apt install squashfs-tools"
-    echo "      then re-run with --appimage"
-    return 0
-  fi
+  # No mksquashfs guard here: the appimagetool AppImage carries its own squashfs-tools, so demanding
+  # the distro package skipped the AppImage on hosts that could build it fine — which is exactly how
+  # a1.4L went out without one. A tool that really cannot write the squashfs fails below with its log.
+
   # AppRun + a .desktop + icon in the root is the whole contract. Everything real lives under usr/.
   mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
     "$APPDIR/usr/share/icons/hicolor/256x256/apps"
@@ -326,8 +325,8 @@ APPRUN
 
   local tool; if ! tool="$(find_appimagetool)"; then
     echo "    SKIPPED AppImage: no appimagetool."
-    echo "      install the parts it needs:  sudo pacman -S squashfs-tools   (Ubuntu/Debian: sudo apt install squashfs-tools)"
-    echo "      then re-run with --appimage, or set APPIMAGETOOL=/path/to/appimagetool"
+    echo "      it downloads into tools/bin when curl is present; otherwise install appimagetool,"
+    echo "      or set APPIMAGETOOL=/path/to/appimagetool and re-run with --appimage"
     return 0
   fi
   # appimagetool does not reliably name its output after the AppDir folder: newer builds apply their
@@ -342,6 +341,7 @@ APPRUN
     grep -vE '^(Determining|Skipping)' "$log" | sed 's/^/      /' || true
   else
     tail -12 "$log" | sed 's/^/      /'; echo "    (full log: $log)" >&2
+    command -v mksquashfs >/dev/null 2>&1 || echo "      (no system mksquashfs; install squashfs-tools if this tool wanted one)" >&2
   fi
   if [[ ! -f "$produced" ]]; then
     local stray

@@ -806,7 +806,7 @@ dist/ScorePlus-linux-x64-b1.0/
 
 Labels behave exactly as they do on Windows: `b1.0` is the tag, and the assembly version becomes `1.0.0`, because the updater compares numbers rather than labels.
 
-The .NET 10 SDK alone is enough for the tarball. The other packages need optional tools, and a missing tool is reported and skipped rather than failing the whole build: `dpkg-deb` for the `.deb` — without it the script assembles the package with `ar` and `tar`, which still installs on any Debian-family box — and `squashfs-tools` plus `appimagetool` for the AppImage, which the script downloads into `tools/bin` when it is missing.
+The .NET 10 SDK alone is enough for the tarball. The other packages need optional tools, and a missing tool is reported and skipped rather than failing the whole build: `dpkg-deb` for the `.deb` — without it the script assembles the package with `ar` and `tar`, which still installs on any Debian-family box — and `appimagetool` for the AppImage, which the script downloads into `tools/bin` when it is missing and which carries its own `mksquashfs`, so `squashfs-tools` is not required.
 
 To ship it:
 

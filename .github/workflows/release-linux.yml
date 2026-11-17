@@ -137,9 +137,11 @@ jobs:
             "https://api.github.com/repos/$repo/releases/tags/$VERSION" -o "$RUNNER_TEMP/rel.json"
           jq -r '"release \(.tag_name)  prerelease=\(.prerelease)  draft=\(.draft)"' "$RUNNER_TEMP/rel.json"
           jq -r '.assets[] | "   \(.name)  \(.size / 1000000 | round)MB  \(.state)"' "$RUNNER_TEMP/rel.json"
-          # Every asset finished uploading, and the two names that matter are both there.
+          # Every asset finished uploading, and every name that matters is really there. The AppImage
+          # is on that list because a1.4L shipped without one and this step said the release was fine.
           jq -e '([.assets[].name] | index("ScorePlusLinuxSetup.tar.gz"))
                  and ([.assets[].name] | index("SHA256SUMS"))
+                 and ([.assets[].name] | any(startswith("ScorePlus-") and endswith(".AppImage")))
                  and ([.assets[] | select(.state != "uploaded")] | length == 0)' \
             "$RUNNER_TEMP/rel.json" > /dev/null \
             || { echo "the published release is missing an asset"; exit 1; }
