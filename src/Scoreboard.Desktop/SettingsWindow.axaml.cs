@@ -228,7 +228,7 @@ public partial class SettingsWindow : Window
     /// Save is the window's default button, so without this a stray Enter mid-edit saved and
     /// dismissed the whole page. Enter anywhere else still reaches its own control.
     /// </summary>
-    void InterceptEnterKey(object sender, KeyEventArgs e)
+    void InterceptEnterKey(object? sender, KeyEventArgs e)
     {
         // Avalonia reports the keystroke source as Source (WPF's OriginalSource).
         if (e.Key != Key.Enter || e.Source is not (TextBox or PasswordBox)) return;

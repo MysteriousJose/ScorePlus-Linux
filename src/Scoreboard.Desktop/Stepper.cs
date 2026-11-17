@@ -143,7 +143,7 @@ public sealed class Stepper : Grid
         }
     }
 
-    void Value_KeyDown(object sender, KeyEventArgs e)
+    void Value_KeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
         {

@@ -275,7 +275,7 @@ public partial class SportProfileWindow : Window
     /// Enter in a field settles that field instead of dismissing the whole profile page: Save is the
     /// window's default button, so without this a stray Enter threw away the edit being typed.
     /// </summary>
-    void InterceptEnterKey(object sender, KeyEventArgs e)
+    void InterceptEnterKey(object? sender, KeyEventArgs e)
     {
         // Avalonia reports the keystroke source as Source (WPF's OriginalSource).
         if (e.Key != Key.Enter || e.Source is not TextBox) return;
