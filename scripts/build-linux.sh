@@ -202,22 +202,26 @@ INSTALL
 
 build_deb() {
   local root data ctrl
-  root="$STAGE/deb"; data="$root/data"; ctrl="$root/DEBIAN"
+  # dpkg-deb takes the directory holding DEBIAN/ as the package root: everything in it becomes a
+  # path on the target system. So the payload has to sit directly in $root (usr/bin, not data/usr/bin)
+  # or the package installs to /data/usr/bin and /usr/bin/scoreplus never exists.
+  root="$STAGE/deb"; data="$root"; ctrl="$root/DEBIAN"
   rm -rf "$root"; mkdir -p "$data/usr/bin" "$data/usr/share/applications" \
-    "$data/usr/share/icons/hicolor/256x256/apps" "$data/usr/share/doc/scoreplus" "$ctrl"
+    "$data/usr/share/icons/hicolor/256x256/apps" "$data/usr/share/pixmaps" \
+    "$data/usr/share/doc/scoreplus" "$ctrl"
   install -m 0755 "$BIN" "$data/usr/bin/scoreplus"
   # The updater's marker, shipped in the package: an installed-from-deb copy may update itself too.
   printf '{ "version": "%s", "installDir": "/usr/bin", "channel": "linux" }\n' "$NUMERIC" \
     > "$data/usr/bin/install.json"
   install -m 0644 "$LOGO" "$data/usr/share/icons/hicolor/256x256/apps/scoreplus.png"
-  install -m 0644 "$LOGO" "$data/usr/share/pixmaps/scoreplus.png" 2>/dev/null || true
+  install -m 0644 "$LOGO" "$data/usr/share/pixmaps/scoreplus.png"
   desktop_file "$data/usr/share/applications/scoreplus.desktop"
   cp "$ROOT/README.md" "$data/usr/share/doc/scoreplus/README.md" 2>/dev/null || true
   gzip -9nc "$ROOT/README.md" > "$data/usr/share/doc/scoreplus/README.md.gz" 2>/dev/null || true
 
   local maintainer size
   maintainer="$(git -C "$ROOT" config user.name 2>/dev/null || true)"; [[ -n "$maintainer" ]] || maintainer="ScorePlus Linux"
-  size="$(du -sk "$data" | cut -f1)"
+  size="$(du -sk "$data/usr" | cut -f1)"
   # ffmpeg/pulse/v4l2 are how video, audio routing and cameras work; without them the app still runs
   # and scorekeeps, it just reports the missing feature instead of drawing it.
   cat > "$ctrl/control" <<CONTROL
@@ -240,7 +244,10 @@ Description: Live production scoreboard and scorebug graphics
  and PulseAudio, so those features report their status instead of failing when
  the tools are missing.
 CONTROL
-  ( cd "$data" && find . -type f -printf '%P\0' | sort -z | xargs -0 md5sum ) > "$ctrl/md5sums"
+  # Only the payload: md5sums lists paths as installed, so DEBIAN/ is pruned and usr/bin/... keeps
+  # its prefix (%P is relative to the search root, which is the package root here).
+  ( cd "$data" && find . -path ./DEBIAN -prune -o -type f -printf '%P\0' | sort -z | xargs -0 md5sum ) \
+    > "$ctrl/md5sums"
 
   local deb="$OUT/scoreplus_${NUMERIC}_amd64.deb"
   if command -v dpkg-deb >/dev/null 2>&1; then
@@ -249,7 +256,7 @@ CONTROL
     # A .deb is just an ar archive of three members. Built by hand it installs with dpkg/apt on any
     # Debian-family box even when the build host (Arch, Fedora) has no dpkg at all.
     echo "    (no dpkg-deb here — assembling the .deb with ar instead)"
-    local tmp="$root/tarballs"; mkdir -p "$tmp"
+    local tmp="$STAGE/deb-ar"; rm -rf "$tmp"; mkdir -p "$tmp"
     tar -C "$ctrl" --owner=0 --group=0 --numeric-owner -czf "$tmp/control.tar.gz" control md5sums
     tar -C "$data" --owner=0 --group=0 --numeric-owner -czf "$tmp/data.tar.gz" ./usr
     printf '2.0\n' > "$tmp/debian-binary"

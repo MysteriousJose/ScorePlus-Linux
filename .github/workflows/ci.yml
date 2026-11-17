@@ -125,6 +125,13 @@ jobs:
           deb="dist/ScorePlus-linux-x64-$LABEL/scoreplus_${LABEL%%-ci}_amd64.deb"
           dpkg-deb --info "$deb"
           dpkg-deb --contents "$deb" | head -20
+          # dpkg-deb takes the directory holding DEBIAN/ as the package root, so the payload must be
+          # there directly: /usr/bin/scoreplus. Nested one level down the package installs cleanly
+          # and then cannot start, which is exactly how this passed before and failed at boot.
+          dpkg-deb --contents "$deb" | grep -q ' \./usr/bin/scoreplus$'
+          if dpkg-deb --contents "$deb" | grep -q '\./data/'; then
+            echo "deb payload is nested under data/ instead of the package root"; exit 1
+          fi
           sudo dpkg -i "$deb"
           code=0
           pkill -x scoreplus || true
