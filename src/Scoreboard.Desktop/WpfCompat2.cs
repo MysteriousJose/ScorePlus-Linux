@@ -20,8 +20,8 @@ namespace Scoreboard.Desktop
 public static class Keyboard
 {
     static Avalonia.Controls.Window? Main => (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
-    public static object? FocusedElement => Main is { } w ? w.FocusManager.GetFocusedElement() : null; // dirty: scoped to main window
-    public static void ClearFocus() { if (Main is { } w) w.FocusManager.ClearFocus(); }
+    public static object? FocusedElement => Main is { } w ? w.FocusManager?.GetFocusedElement() : null; // dirty: scoped to main window
+    public static void ClearFocus() { if (Main is { } w) w.FocusManager?.ClearFocus(); }
 }
 
 // ---------- VisualTreeHelper (WPF static helper; Avalonia uses VisualTree extensions) ----------

@@ -42,7 +42,7 @@ public partial class RosterDock : UserControl
     public void ApplyTheme(string theme)
     {
         RosterPalette.Apply(theme, Resources);
-        Background = (Brush)Resources["RosterPanelBrush"];
+        if (Resources["RosterPanelBrush"] is Brush backdrop) Background = backdrop;
         AwayPanel.ApplyTheme(theme);
         HomePanel.ApplyTheme(theme);
         UpdateTabs();

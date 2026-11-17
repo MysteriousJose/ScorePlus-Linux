@@ -33,7 +33,8 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, args) => LogCrash(args.ExceptionObject as Exception);
 
         // AppBuilder created the lifetime; this app only ends when the main window goes away.
-        desktop = (ClassicDesktopStyleApplicationLifetime) ApplicationLifetime;
+        desktop = ApplicationLifetime as ClassicDesktopStyleApplicationLifetime
+            ?? throw new InvalidOperationException("ScorePlus requires the classic desktop lifetime.");
         desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         // The main window opens first and stays locked behind the launch box, so the operator can

@@ -99,7 +99,7 @@ public sealed class AudiencePreview : Grid
             _displayId = resolved.Id;
             var index = _catalog.Displays.IndexOf(resolved);
             if (_displayPicker.SelectedIndex != index) _displayPicker.SelectedIndex = index;
-            if (_view is null || !_host.Content.Equals(_view)) BuildView();
+            if (_view is null || _host.Content is not { } content || !content.Equals(_view)) BuildView();
             else _view.Rebuild();
         }
         finally { _sync = false; }

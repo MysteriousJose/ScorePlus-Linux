@@ -127,7 +127,7 @@ public sealed class ScorebugCanvasView : Grid
             Canvas.SetLeft(host,item.X);Canvas.SetTop(host,item.Y);host.ZIndex = zIndex++;;
             _visuals[item.Id]=(host,content);
             // A rebuilt view starts from what it draws right now, so a delay never blanks the graphic.
-            if(content is ScorebugTextBlock shown) _shownText[item.Id]=shown.Text;
+            if(content is ScorebugTextBlock shown) _shownText[item.Id]=shown.Text ?? "";
             if(!_canvas.Children.Contains(host))_canvas.Children.Add(host);
             live.Add(host);
             ApplyAnimation(item,host);

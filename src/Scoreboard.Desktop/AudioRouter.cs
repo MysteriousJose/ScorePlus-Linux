@@ -38,7 +38,7 @@ public sealed class AudioRouter : IDisposable
         try
         {
             using var enumerator = new MMDeviceEnumerator();
-            return enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia).FriendlyName;
+            return enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)?.FriendlyName;
         }
         catch { return null; }
     }

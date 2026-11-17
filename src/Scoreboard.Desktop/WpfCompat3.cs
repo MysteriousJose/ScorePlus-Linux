@@ -125,7 +125,7 @@ public class PasswordBox : TextBox
 {
     public string Password
     {
-        get => Text;
+        get => Text ?? "";
         set => Text = value;
     }
 
@@ -178,7 +178,12 @@ public sealed class WebView2 : Avalonia.Controls.Control
 public class CoreWebView2
 {
     public CoreWebView2Settings Settings => throw new PlatformNotSupportedException();
-    public event EventHandler<CoreWebView2NavigationCompletedEventArgs>? NavigationCompleted;
+    // Never raised: WebView2 has no Linux runtime, so HTML elements stay placeholders.
+    public event EventHandler<CoreWebView2NavigationCompletedEventArgs>? NavigationCompleted
+    {
+        add { }
+        remove { }
+    }
     public void NavigateToString(string html) => throw new PlatformNotSupportedException();
     public System.Threading.Tasks.Task CapturePreviewAsync(object format, System.IO.Stream stream) => throw new PlatformNotSupportedException();
 }

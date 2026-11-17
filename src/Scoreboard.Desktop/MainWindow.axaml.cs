@@ -157,7 +157,7 @@ public partial class MainWindow : Window, IControlPanelHost
                 e.Handled = true;
                 return;
             }
-            if (_panel.TryHandleKey(key, e.KeyModifiers)) { e.Handled = true; return; }
+            if (_panel?.TryHandleKey(key, e.KeyModifiers) == true) { e.Handled = true; return; }
         }), RoutingStrategies.Tunnel);
 
         _panel = new ControlPanelView(_engine, this);
@@ -456,7 +456,9 @@ public partial class MainWindow : Window, IControlPanelHost
             _meterLit = lit;
             var unlit = new SolidColorBrush(Color.Parse("#1B2430"));
             for (var index = 0; index < _meterBars.Length; index++)
-                _meterBars[index].Background = index < lit ? new SolidColorBrush((Color)_meterBars[index].Tag) : unlit;
+                _meterBars[index].Background = index < lit && _meterBars[index].Tag is Color barColor
+                    ? new SolidColorBrush(barColor)
+                    : unlit;
         }
         SoundLevelText.Text = level <= 0
             ? (SoundLevelMeter.Available ? "−∞ dB" : "no output")

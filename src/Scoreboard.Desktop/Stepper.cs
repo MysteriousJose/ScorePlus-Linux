@@ -98,7 +98,7 @@ public sealed class Stepper : Grid
 
     public string Text
     {
-        get => _value.Text;
+        get => _value.Text ?? "";
         set
         {
             _text = value;
