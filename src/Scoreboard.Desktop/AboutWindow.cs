@@ -11,14 +11,16 @@ namespace Scoreboard.Desktop;
 /// The small About box. It deliberately carries only the logo, product name, running release and
 /// the project credit, so it stays a quick identity check rather than another settings page.
 /// </summary>
-public sealed class AboutWindow : Window
+public sealed class AboutWindow : Avalonia.Controls.Window
 {
     public AboutWindow(string theme)
     {
         Title = "About ScorePlus";
         Width = 360;
         SizeToContent = SizeToContent.Height;
-        ResizeMode = ResizeMode.NoResize;
+        CanResize = false;
+        CanMinimize = false;
+        CanMaximize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
         FontFamily = new FontFamily("Segoe UI");
@@ -31,7 +33,7 @@ public sealed class AboutWindow : Window
             Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center
         };
-        RenderOptions.SetBitmapScalingMode(logo, BitmapScalingMode.HighQuality);
+        Avalonia.Media.RenderOptions.SetBitmapInterpolationMode(logo, BitmapInterpolationMode.HighQuality);
         var logoPlate = new Border
         {
             Background = new SolidColorBrush(Color.FromRgb(0x0A, 0x0F, 0x16)),
@@ -47,7 +49,7 @@ public sealed class AboutWindow : Window
         {
             Text = "ScorePlus",
             FontSize = 24,
-            FontWeight = FontWeights.Bold,
+            FontWeight = FontWeight.Bold,
             Margin = new Thickness(0, 0, 0, 4)
         });
         root.Children.Add(new TextBlock
@@ -61,7 +63,7 @@ public sealed class AboutWindow : Window
         {
             Text = "CREDITS",
             FontSize = 10,
-            FontWeight = FontWeights.Bold,
+            FontWeight = FontWeight.Bold,
             Opacity = 0.6,
             Margin = new Thickness(0, 0, 0, 4)
         });
@@ -69,7 +71,7 @@ public sealed class AboutWindow : Window
         {
             Text = "LHUltimate",
             FontSize = 13,
-            FontWeight = FontWeights.SemiBold
+            FontWeight = FontWeight.SemiBold
         });
 
         var close = new Button

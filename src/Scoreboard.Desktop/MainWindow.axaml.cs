@@ -523,10 +523,10 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void AnimationMaker_Click(object sender, RoutedEventArgs e) => OpenMotionMaker(MotionKind.Animation);
 
-    void Info_Click(object sender, RoutedEventArgs e)
+    async void Info_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new AboutWindow(_preferences.Theme) { Owner = this };
-        dialog.ShowDialog();
+        var dialog = new AboutWindow(_preferences.Theme);
+        await dialog.ShowDialog(this);
     }
 
     void Preferences_Click(object sender, RoutedEventArgs e)

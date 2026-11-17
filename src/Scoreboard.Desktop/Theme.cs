@@ -198,7 +198,7 @@ public static class ThemeManager
         return "Dark";
     }
 
-    public static void Apply(Window window, string theme)
+    public static void Apply(Avalonia.Controls.Window window, string theme)
     {
         var light = Resolve(theme) == "Light";
         var background = light ? "#FFF3F5F8" : "#FF000000";
@@ -237,7 +237,7 @@ public static class ThemeManager
             ApplyAccent(window, accent, secondary);
         }
         window.Loaded += (_, _) => ApplyTheme();
-        if (window.IsLoaded) window.Dispatcher.BeginInvoke(ApplyTheme);
+        if (window.IsLoaded) Avalonia.Threading.Dispatcher.UIThread.Post(ApplyTheme);
     }
 
     static Brush Brush(string color) => new SolidColorBrush(Color.Parse(color));
