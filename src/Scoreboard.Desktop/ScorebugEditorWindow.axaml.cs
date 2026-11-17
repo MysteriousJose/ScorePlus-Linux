@@ -1889,7 +1889,7 @@ public partial class ScorebugEditorWindow : Window
         LoadProperties();
     }
 
-    void Element_MouseDown(object sender,PointerEventArgs e)
+    void Element_MouseDown(object? sender,PointerEventArgs e)
     {
         if(_resizing||sender is not Border host||host.Tag is not ScorebugElement item)return;
         var id=item.Id;
@@ -1933,7 +1933,7 @@ public partial class ScorebugEditorWindow : Window
         e.Handled=true;
     }
 
-    void Element_MouseMove(object sender,PointerEventArgs e)
+    void Element_MouseMove(object? sender,PointerEventArgs e)
     {
         if(_resizing||_dragElement is null||e.LeftButton!=MouseButtonState.Pressed)return;
         var p=e.GetPosition(DesignCanvas);
@@ -1956,7 +1956,7 @@ public partial class ScorebugEditorWindow : Window
         }
     }
 
-    void Element_MouseUp(object sender,PointerEventArgs e)
+    void Element_MouseUp(object? sender,PointerEventArgs e)
     {
         if(_resizing)return;
         if(sender is Border host)host.ReleaseMouseCapture();
@@ -1992,7 +1992,7 @@ public partial class ScorebugEditorWindow : Window
         SaveDrag();
     }
 
-    void Resize_MouseDown(object sender,PointerEventArgs e)
+    void Resize_MouseDown(object? sender,PointerEventArgs e)
     {
         if(sender is not Border handle||handle.Tag is not ScorebugElement item)return;
         _dragElement=item; _resizing=true;
@@ -2008,7 +2008,7 @@ public partial class ScorebugEditorWindow : Window
         e.Handled=true;
     }
 
-    void Resize_MouseMove(object sender,PointerEventArgs e)
+    void Resize_MouseMove(object? sender,PointerEventArgs e)
     {
         if(_dragElement is null||!_resizing||e.LeftButton!=MouseButtonState.Pressed)return;
         var p=e.GetPosition(DesignCanvas);
@@ -2052,7 +2052,7 @@ public partial class ScorebugEditorWindow : Window
         e.Handled=true;
     }
 
-    void Resize_MouseUp(object sender,PointerEventArgs e)
+    void Resize_MouseUp(object? sender,PointerEventArgs e)
     {
         if(sender is Border handle)handle.ReleaseMouseCapture();
         if(_dragElement is { } item)
@@ -2065,16 +2065,16 @@ public partial class ScorebugEditorWindow : Window
         e.Handled=true;
     }
 
-    void Layers_MouseDown(object sender,PointerEventArgs e)=>_listStart=e.GetPosition(null);
+    void Layers_MouseDown(object? sender,PointerEventArgs e)=>_listStart=e.GetPosition(null);
 
-    void Layers_MouseMove(object sender,PointerEventArgs e)
+    void Layers_MouseMove(object? sender,PointerEventArgs e)
     {
         if(e.LeftButton!=MouseButtonState.Pressed||Layers.SelectedItem is not LayerItem item)return;
         var p=e.GetPosition(null);
         if(Math.Abs(p.X-_listStart.X)>8||Math.Abs(p.Y-_listStart.Y)>8)WpfDragDrop.DoDragDrop(Layers,item.Element.Id,DragDropEffects.Move);
     }
 
-    void Layers_Drop(object sender,DragEventArgs e)
+    void Layers_Drop(object? sender,DragEventArgs e)
     {
         if(e.Data.GetData(typeof(string)) is not string movedId)return;
         var p=e.GetPosition(Layers);
