@@ -4,8 +4,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
-using Avalonia.Media;
-using Avalonia.Media;
 using Avalonia.Controls.Shapes; // dirty port: WPF shapes live under Avalonia.Controls.Shapes
 using Avalonia.Threading;
 using Microsoft.Win32;

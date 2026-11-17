@@ -427,8 +427,8 @@ public static class WpfAnimationExtensions
 /// <summary>WPF's Slider value-change args; Avalonia handlers adapt to these at the wire sites.</summary>
 public sealed class RoutedPropertyChangedEventArgs<T> : EventArgs
 {
-    public T OldValue { get; init; }
-    public T NewValue { get; init; }
+    public T OldValue { get; init; } = default!;
+    public T NewValue { get; init; } = default!;
 }
 
 // ---------- NAudio stand-ins (WASAPI does not exist on Linux; real path = pw-play/ffmpeg) ----------
