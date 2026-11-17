@@ -1166,8 +1166,8 @@ public partial class ScorebugEditorWindow : Window
                 }
                 target.Width=Math.Max(16,targetW); target.Height=Math.Max(16,targetH);
                 if(fOk)target.FontSize=f;
-                if(foregroundOk)target.Foreground=ColorInput.Text;
-                if(backgroundOk)target.Background=BackgroundInput.Text;
+                if(foregroundOk)target.Foreground=ColorInput.Text ?? "";
+                if(backgroundOk)target.Background=BackgroundInput.Text ?? "";
                 if(animationClip is not null)target.MotionAnimation=animationClip.Clip.Snapshot();
                 else if(animation is not null){target.Animation=animation.Value;target.MotionAnimation=null;}
                 if(transitionClip is not null)target.MotionTransition=transitionClip.Clip.Snapshot();
@@ -1190,7 +1190,7 @@ public partial class ScorebugEditorWindow : Window
                 if(backgroundSource is not null)target.BackgroundSource=backgroundSource.Value;
                 target.BackgroundGradient=gradient;
                 if(gradientSource is not null)target.BackgroundSource2=gradientSource.Value;
-                if(gradientColorOk)target.BackgroundColor2=GradientColorInput.Text;
+                if(gradientColorOk)target.BackgroundColor2=GradientColorInput.Text ?? "";
                 if(gradientAngleOk)target.GradientAngle=Math.Clamp(gradientAngle,-360,360);
                 if(opacityOk)target.Opacity=Math.Clamp(opacity,0,1);
                 target.TextOpacity=textOpacity;
@@ -1199,7 +1199,7 @@ public partial class ScorebugEditorWindow : Window
                 if(logoSide is not null)target.LogoSide=logoSide.Value;
                 if(rotationOk)target.Rotation=Math.Clamp(rotation,-360,360);
                 if(borderWidthOk)target.BorderThickness=Math.Clamp(borderWidth,0,40);
-                if(borderColorOk)target.BorderColor=BorderColorInput.Text;
+                if(borderColorOk)target.BorderColor=BorderColorInput.Text ?? "";
                 if(borderSource is not null)target.BorderSource=borderSource.Value;
                 if(transitionSpeedOk)target.TransitionSeconds=Math.Clamp(transitionSpeed,0,5);
                 if(target.Kind==ScorebugElementKind.Logo&&target.LogoSide==ScorebugLogoSide.None)target.LogoSide=ScorebugLogoSide.Home;

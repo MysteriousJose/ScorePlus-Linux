@@ -74,7 +74,7 @@ public sealed class ColorPickerWindow : Window
         use.Click += (_, _) =>
         {
             if (!TryParse(_hex.Text, out _)) return;
-            SelectedHex = Normalize(_hex.Text);
+            SelectedHex = Normalize(_hex.Text ?? "");
             DialogResult = true;
             Close();
         };
