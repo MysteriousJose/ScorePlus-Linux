@@ -728,7 +728,7 @@ public partial class MediaDock : UserControl
         return tile;
     }
 
-    void HighlightDrop(object sender, DragEventArgs e)
+    void HighlightDrop(object? sender, DragEventArgs e)
     {
         var files = e.Data.GetDataPresent(DataFormats.FileDrop);
         if (!files && !e.Data.GetDataPresent(ClipFormat)) return;
@@ -1337,13 +1337,13 @@ public partial class MediaDock : UserControl
 
     void Stop_Click(object sender, RoutedEventArgs e) => _session?.Stop();
 
-    void Scrub_Start(object sender, PointerEventArgs e)
+    void Scrub_Start(object? sender, PointerEventArgs e)
     {
         _scrubbing = true;
         _session?.BeginScrub();
     }
 
-    void Scrub_End(object sender, PointerEventArgs e)
+    void Scrub_End(object? sender, PointerEventArgs e)
     {
         if (_session is null) { _scrubbing = false; return; }
         if (_session.IsReplaying) _session.SeekReplay(Math.Max(0, ScrubBar.Maximum - ScrubBar.Value));

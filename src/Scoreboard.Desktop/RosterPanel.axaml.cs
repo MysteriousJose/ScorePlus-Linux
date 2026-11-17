@@ -710,7 +710,7 @@ public partial class RosterPanel : UserControl
         StatPresetBox.Text = "";
     }
 
-    void RemoveStat_Click(object sender, RoutedEventArgs e)
+    void RemoveStat_Click(object? sender, RoutedEventArgs e)
     {
         if (_roster is null || sender is not Button { Tag: string name }) return;
         foreach (var player in _roster.Players)
@@ -718,7 +718,7 @@ public partial class RosterPanel : UserControl
         SaveAndReload();
     }
 
-    void StatValue_KeyDown(object sender, KeyEventArgs e)
+    void StatValue_KeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter) return;
         CommitStat(sender);
@@ -726,7 +726,7 @@ public partial class RosterPanel : UserControl
         e.Handled = true;
     }
 
-    void StatValue_LostFocus(object sender, Avalonia.Interactivity.RoutedEventArgs e) => CommitStat(sender);
+    void StatValue_LostFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => CommitStat(sender);
 
     void CommitStat(object sender)
     {

@@ -1383,7 +1383,7 @@ public sealed class MotionMakerWindow : Window
     /// <summary>Where the selected phase begins on the whole clip's ruler.</summary>
     double PhaseStart => _clip.Phases.Take(Math.Max(0, _phaseIndex)).Sum(phase => phase.Seconds);
 
-    void TimelineDown(object sender, PointerEventArgs e)
+    void TimelineDown(object? sender, PointerEventArgs e)
     {
         if (CurrentPhase is null) return;
         _ticker.Stop();
@@ -1410,7 +1410,7 @@ public sealed class MotionMakerWindow : Window
         e.Handled = true;
     }
 
-    void TimelineMove(object sender, PointerEventArgs e)
+    void TimelineMove(object? sender, PointerEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed) { EndDrag(); return; }
         var point = e.GetPosition(_timeline);
@@ -1426,7 +1426,7 @@ public sealed class MotionMakerWindow : Window
         if (_scrubbing) ScrubTo(point);
     }
 
-    void TimelineUp(object sender, PointerEventArgs e)
+    void TimelineUp(object? sender, PointerEventArgs e)
     {
         if (_dragKey is not null && _dragTrack is not null)
         {
