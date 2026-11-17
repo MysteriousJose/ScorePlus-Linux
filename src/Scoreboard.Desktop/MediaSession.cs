@@ -6,6 +6,9 @@ using Avalonia;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Scoreboard.Core;
+using Avalonia.Layout;
+using Avalonia.Interactivity;
+using Avalonia.Controls.Primitives;
 
 namespace Scoreboard.Desktop;
 

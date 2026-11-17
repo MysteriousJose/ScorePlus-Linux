@@ -12,6 +12,8 @@ public partial class OutputWindow : Window
     readonly ScorebugCatalog _catalog;
     GameState _displayState;
     readonly ScorebugCanvasView _scorebugView;
+    readonly AnnotationBoard _annotationBoard;
+    readonly TelestratorOverlay _annotationInk;
     // Which display this window is the audience output for. Only that display's published layout
     // is ever drawn here, so two screens can be on air with completely different designs.
     readonly string _displayId;
@@ -25,7 +27,42 @@ public partial class OutputWindow : Window
         _displayId=(catalog.FindDisplay(displayId)??catalog.Displays[0]).Id;
         // The audience only ever sees the layout that was published, never the one being designed.
         _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState,playback,muteVideo:false,layoutProvider:()=>_catalog.PublishedLayoutOf(_displayId),displayId:_displayId);
-        ScorebugHost.Children.Add(_scorebugView); _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update();
+        ScorebugHost.Children.Add(_scorebugView);
+        var saved = PreferencesStore.Load();
+        _annotationBoard = AnnotationBoard.ForDisplay(_displayId, TimeSpan.FromSeconds(saved.AnnotationFadeSeconds));
+        _annotationInk = new TelestratorOverlay(_annotationBoard) { IsVisible = false };
+        ScorebugHost.Children.Add(_annotationInk);
+        _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update();
+    }
+
+    /// <summary>True while the operator is drawing on this output.</summary>
+    public bool AnnotationToolsOpen => _annotationBoard.IsOpen;
+
+    /// <summary>Shows the pen layer and lets the operator draw over the live graphic.</summary>
+    public void OpenAnnotationTools()
+    {
+        _annotationBoard.Open();
+        _annotationInk.IsVisible = true;
+        _annotationInk.IsHitTestVisible = true;
+        _annotationInk.InvalidateVisual();
+        _annotationInk.Focus();
+    }
+
+    /// <summary>Shows existing ink read-only, for a projector that should not draw.</summary>
+    public void ShowAudienceInk()
+    {
+        _annotationBoard.Open();
+        _annotationInk.IsVisible = true;
+        _annotationInk.IsHitTestVisible = false;
+        _annotationInk.InvalidateVisual();
+    }
+
+    /// <summary>Ends the draw session and clears the ink from every output for this display.</summary>
+    public void CloseAnnotationTools()
+    {
+        _annotationBoard.Dismiss();
+        _annotationInk.IsVisible = false;
+        _annotationInk.InvalidateVisual();
     }
 
     /// <summary>The display this window shows.</summary>
@@ -195,6 +232,18 @@ public partial class OutputWindow : Window
             e.Handled = true;
             return;
         }
+        if (e.Key == Avalonia.Input.Key.T)
+        {
+            if (AnnotationToolsOpen) CloseAnnotationTools(); else OpenAnnotationTools();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Avalonia.Input.Key.Escape && AnnotationToolsOpen)
+        {
+            CloseAnnotationTools();
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Avalonia.Input.Key.Escape && _full)
         {
             ToggleFullscreen();
@@ -203,5 +252,5 @@ public partial class OutputWindow : Window
         }
         base.OnKeyDown(e);
     }
-    protected override void OnClosed(EventArgs e) { _engine.Changed-=Update; _engine.Changed-=_scorebugView.Refresh; _catalog.Changed-=Publish; _scorebugView.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { _engine.Changed-=Update; _engine.Changed-=_scorebugView.Refresh; _catalog.Changed-=Publish; _annotationBoard.EndStroke(); _scorebugView.Dispose(); base.OnClosed(e); }
 }

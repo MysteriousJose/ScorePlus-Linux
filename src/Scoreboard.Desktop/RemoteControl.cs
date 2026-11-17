@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Avalonia.Threading;
 using Scoreboard.Core;
 
@@ -15,6 +16,16 @@ namespace Scoreboard.Desktop;
 /// administrator URL reservation; a socket needs nothing, so the feature works out of the box.
 /// Every action runs on the UI thread through the same control-panel code the on-screen buttons use.
 /// </summary>
+/// <summary>What a host must offer for the remote to switch between program displays.</summary>
+public interface IRemoteDisplayHost
+{
+    IReadOnlyList<(string Id, string Name)> RemoteDisplays { get; }
+    string RemoteDisplayId { get; }
+    string RemoteLayoutLabel(string displayId);
+    void RemoteSelectDisplay(string displayId);
+    void RemoteShiftLayout(string displayId, int delta);
+}
+
 public sealed class RemoteControlServer : IDisposable
 {
     const int MaxRequestBytes = 32 * 1024;
@@ -47,6 +58,74 @@ public sealed class RemoteControlServer : IDisposable
 
     public bool Running => _listener is not null;
 
+    /// <summary>
+    /// What <c>/watch</c> draws: the layout and state going out on the program display right now.
+    /// Set by the main window, because the server only knows the control panel — the program
+    /// selection belongs to the studio.
+    /// </summary>
+    public static Func<(ScorebugLayout Layout, GameState State)?>? WatchSource { get; set; }
+
+    /// <summary>
+    /// The program graphic as a PNG, rendered by the app's own scorebug view. <c>/watch</c> used to
+    /// rebuild the layout in HTML, which lost the real fonts, the palette colours and the made
+    /// icons; a picture of the actual graphic cannot drift from what the audience sees.
+    /// The number is a version the page watches so it only downloads a frame that changed.
+    /// </summary>
+    public static Func<string?, (byte[] Png, long Version)?>? WatchImage { get; set; }
+
+    /// <summary>A specific multiview layout rendered by the app, so a browser program tile shows
+    /// the chosen layout even when it is not the one on air.</summary>
+    public static Func<string?, string?, (byte[] Png, long Version)?>? WatchLayoutImage { get; set; }
+
+    /// <summary>True while the operator has locked the desk; every remote edit is refused until it clears.</summary>
+    public static Func<bool>? LockState { get; set; }
+
+    /// <summary>The browser camera wall's current state, selected camera and replay metadata.</summary>
+    public static Func<string, string?>? CameraWallState { get; set; }
+
+    /// <summary>A JPEG frame for the browser wall: live by default, or the selected replay when asked.</summary>
+    public static Func<string, int, bool, byte[]?>? CameraWallFrame { get; set; }
+
+    /// <summary>Browser commands for the camera walls: select, seek, step, play, pause and labels.</summary>
+    public static Func<string, Dictionary<string, string>, bool>? CameraWallAction { get; set; }
+
+    /// <summary>
+    /// The wall board page. It shows one picture of the program graphic and swaps that picture when
+    /// the version changes, so nothing is rebuilt in the browser and no font or colour can be lost.
+    /// </summary>
+    const string WatchPage = """
+        <!doctype html><html lang="en"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>ScorePlus — Program</title><style>
+        html,body{margin:0;height:100%;background:#000;overflow:hidden}
+        #shot{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;image-rendering:auto}
+        #wait{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7C8A9C;font:600 14px/1.4 'Segoe UI',Arial,sans-serif;text-align:center;padding:24px}
+        </style></head><body>
+        <img id="shot" alt="ScorePlus program graphic">
+        <div id="wait">Nothing is on the program output yet. Press Update Output in ScorePlus.</div>
+        <script>(function(){
+          var shot=document.getElementById('shot'),wait=document.getElementById('wait'),now='';
+          // ?display=1 is the first display, ?display=Program matches a name, and no key follows
+          // the desktop window's current display.
+          var display=new URLSearchParams(location.search).get('display')||'';
+          function url(path,version){
+            var query=new URLSearchParams();
+            if(display)query.set('display',display);
+            if(version)query.set('v',version);
+            var suffix=query.toString();
+            return suffix?path+'?'+suffix:path;
+          }
+          function tick(){
+            fetch(url('/api/watch/version'),{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})
+              .then(function(v){if(!v||!v.version)return;var next=String(v.version);if(next===now)return;now=next;
+                shot.onload=function(){shot.style.display='block';wait.style.display='none';};
+                shot.src=url('/watch.png',next);}).catch(function(){})
+              .then(function(){setTimeout(tick,1000);});
+          }
+          tick();
+        })();</script></body></html>
+        """;
+
     /// <summary>The addresses an operator can type on a phone on the same network.</summary>
     public static IReadOnlyList<string> Urls(int port)
     {
@@ -71,7 +150,7 @@ public sealed class RemoteControlServer : IDisposable
             _cancel = new CancellationTokenSource();
             var token = _cancel.Token;
             _ = Task.Run(() => AcceptLoop(token), token);
-            Status?.Invoke($"REMOTE ON · {Urls(_port).LastOrDefault()} · password required");
+            Status?.Invoke($"REMOTE ON · {Urls(_port).LastOrDefault()} · password required · /watch is the program feed");
         }
         catch (Exception ex)
         {
@@ -121,7 +200,7 @@ public sealed class RemoteControlServer : IDisposable
         }
     }
 
-    sealed record RemoteRequest(string Method, string Path, Dictionary<string, string> Headers, string Body);
+    sealed record RemoteRequest(string Method, string Path, Dictionary<string, string> Headers, string Body, string Query);
 
     static async Task<RemoteRequest?> ReadRequest(NetworkStream stream, CancellationToken token)
     {
@@ -161,11 +240,22 @@ public sealed class RemoteControlServer : IDisposable
             var query = string.Empty;
             var q = path.IndexOf('?');
             if (q >= 0) { query = path[(q + 1)..]; path = path[..q]; }
-            if (query.Length > 0) body = body.Length > 0 ? body + "&" + query : query;
-            return new RemoteRequest(start[0].ToUpperInvariant(), path, headers, body);
+            return new RemoteRequest(start[0].ToUpperInvariant(), path, headers, body, query);
         }
         return null;
     }
+
+    /// <summary>
+    /// The phone's Media and Roster tabs read through these, so the server never keeps a copy of the
+    /// library: the phone always shows what the desktop shows.
+    /// </summary>
+    public static Func<string>? MediaJson { get; set; }
+    public static Func<string, string, bool>? MediaAction { get; set; }
+    public static Func<string>? RosterJson { get; set; }
+    public static Func<string, string, string, string, string, bool>? RosterAction { get; set; }
+
+    /// <summary>The phone's flag card: raise or clear a penalty, and pick what it was for and who.</summary>
+    public static Func<string, string, string, bool>? PenaltyAction { get; set; }
 
     async Task Handle(NetworkStream stream, RemoteRequest request, CancellationToken token)
     {
@@ -183,6 +273,45 @@ public sealed class RemoteControlServer : IDisposable
             var logo = LogoBytes.Value;
             if (logo is null) { await Write(stream, 404, "text/plain; charset=utf-8", "No logo."); return; }
             await WriteBytes(stream, 200, "image/png", logo);
+            return;
+        }
+        if (request.Path == "/watch" && request.Method == "GET")
+        {
+            // The program feed: a page any phone, tablet or spare screen on the same network can
+            // open. Read-only and public, because it is exactly what the audience is already
+            // seeing; there is nothing here to control.
+            await Write(stream, 200, "text/html; charset=utf-8", WatchPage);
+            return;
+        }
+        if (request.Path == "/watch.png" && request.Method == "GET")
+        {
+            // The picture itself, drawn by the app's own scorebug view. This is what makes the wall
+            // board look like the broadcast: real fonts, real palette colours, real logos.
+            var frame = WatchImage?.Invoke(Form(request.Query).GetValueOrDefault("display"));
+            if (frame is null) { await Write(stream, 404, "text/plain; charset=utf-8", "Nothing is on the program output yet."); return; }
+            await WriteBytes(stream, 200, "image/png", frame.Value.Png);
+            return;
+        }
+        if (request.Path == "/api/watch/version" && request.Method == "GET")
+        {
+            // The page polls this, never the picture: a wall screen only downloads a new frame when
+            // the graphic actually changed, and never reloads the page between changes.
+            var frame = WatchImage?.Invoke(Form(request.Query).GetValueOrDefault("display"));
+            var version = frame is null ? string.Empty : frame.Value.Version.ToString();
+            await Write(stream, 200, "application/json; charset=utf-8", $"{{\"version\":\"{version}\"}}");
+            return;
+        }
+        if ((request.Path == "/replay" || request.Path == "/multiview") && request.Method == "GET")
+        {
+            // These pages show camera pictures and clock history, so they stay behind the same
+            // password as the remote console instead of being public like /watch.
+            if (!authorized)
+            {
+                await Write(stream, 200, "text/html; charset=utf-8", RemotePage.Login(Html(RemotePage.ProductName), "Sign in to open the camera wall."));
+                return;
+            }
+            var page = request.Path == "/replay" ? CameraWallPage.ReplayBooth() : CameraWallPage.Multiview();
+            await Write(stream, 200, "text/html; charset=utf-8", page);
             return;
         }
         if (request.Path == "/login" && request.Method == "POST")
@@ -209,9 +338,59 @@ public sealed class RemoteControlServer : IDisposable
         }
         if (!authorized) { await Write(stream, 401, "text/plain; charset=utf-8", "Sign in first."); return; }
 
+        if (request.Method == "POST" && LockState?.Invoke() == true)
+        {
+            await Write(stream, 423, "application/json; charset=utf-8",
+                JsonSerializer.Serialize(new { ok = false, locked = true, message = "ScorePlus is locked on the desktop. Ask the operator to unlock it." }));
+            return;
+        }
+
         if (request.Path == "/api/state" && request.Method == "GET")
         {
             await Write(stream, 200, "application/json; charset=utf-8", Snapshot());
+            return;
+        }
+        if (request.Path == "/api/camera-wall" && request.Method == "GET")
+        {
+            var mode = Form(request.Query).GetValueOrDefault("mode", "replay");
+            var state = _dispatcher.Invoke(() => CameraWallState?.Invoke(mode)) ?? "{}";
+            await Write(stream, 200, "application/json; charset=utf-8", state);
+            return;
+        }
+        if (request.Path == "/api/camera-wall/frame" && request.Method == "GET")
+        {
+            var query = Form(request.Query);
+            var mode = query.GetValueOrDefault("mode", "replay");
+            if (!int.TryParse(query.GetValueOrDefault("camera", "-1"), out var camera)) camera = -1;
+            var replay = string.Equals(query.GetValueOrDefault("replay", ""), "1", StringComparison.Ordinal);
+            var picture = _dispatcher.Invoke(() => CameraWallFrame?.Invoke(mode, camera, replay));
+            if (picture is null || picture.Length == 0)
+            {
+                await Write(stream, 404, "text/plain; charset=utf-8", "No camera picture yet.");
+                return;
+            }
+            await WriteBytes(stream, 200, "image/jpeg", picture);
+            return;
+        }
+        if (request.Path == "/api/camera-wall/layout" && request.Method == "GET")
+        {
+            var query = Form(request.Query);
+            var frame = _dispatcher.Invoke(() => WatchLayoutImage?.Invoke(
+                query.GetValueOrDefault("display"), query.GetValueOrDefault("layout")));
+            if (frame is null || frame.Value.Png.Length == 0)
+            {
+                await Write(stream, 404, "text/plain; charset=utf-8", "No layout picture yet.");
+                return;
+            }
+            await WriteBytes(stream, 200, "image/png", frame.Value.Png);
+            return;
+        }
+        if (request.Path == "/api/camera-wall/action" && request.Method == "POST")
+        {
+            var form = Form(request.Body);
+            var mode = form.GetValueOrDefault("mode", "replay");
+            var ok = _dispatcher.Invoke(() => CameraWallAction?.Invoke(mode, form) ?? false);
+            await Write(stream, ok ? 200 : 400, "application/json; charset=utf-8", JsonSerializer.Serialize(new { ok }));
             return;
         }
         if (request.Path == "/api/action" && request.Method == "POST")
@@ -219,6 +398,44 @@ public sealed class RemoteControlServer : IDisposable
             var form = Form(request.Body);
             var result = Execute(form);
             await Write(stream, result.Ok ? 200 : 400, "application/json; charset=utf-8", JsonSerializer.Serialize(new { ok = result.Ok, message = result.Message }));
+            return;
+        }
+        if (request.Path == "/api/media" && request.Method == "GET")
+        {
+            await Write(stream, 200, "application/json; charset=utf-8", _dispatcher.Invoke(() => MediaJson?.Invoke()) ?? "{}");
+            return;
+        }
+        if (request.Path == "/api/rosters" && request.Method == "GET")
+        {
+            await Write(stream, 200, "application/json; charset=utf-8", _dispatcher.Invoke(() => RosterJson?.Invoke()) ?? "{}");
+            return;
+        }
+        if (request.Path == "/api/media/action" && request.Method == "POST")
+        {
+            var form = Form(request.Body);
+            var ok = _dispatcher.Invoke(() => MediaAction?.Invoke(form.GetValueOrDefault("a", string.Empty), form.GetValueOrDefault("id", string.Empty)) ?? false);
+            var message = ok ? string.Empty : "That media button is not available.";
+            await Write(stream, ok ? 200 : 400, "application/json; charset=utf-8", JsonSerializer.Serialize(new { ok, message }));
+            return;
+        }
+        if (request.Path == "/api/penalty/action" && request.Method == "POST")
+        {
+            var form = Form(request.Body);
+            var ok = _dispatcher.Invoke(() => PenaltyAction?.Invoke(form.GetValueOrDefault("a", string.Empty), form.GetValueOrDefault("type", string.Empty), form.GetValueOrDefault("side", "home")) ?? false);
+            await Write(stream, ok ? 200 : 400, "application/json; charset=utf-8", JsonSerializer.Serialize(new { ok }));
+            return;
+        }
+        if (request.Path == "/api/roster/action" && request.Method == "POST")
+        {
+            var form = Form(request.Body);
+            var ok = _dispatcher.Invoke(() => RosterAction?.Invoke(
+                form.GetValueOrDefault("a", string.Empty),
+                form.GetValueOrDefault("side", "home"),
+                form.GetValueOrDefault("id", string.Empty),
+                form.GetValueOrDefault("stat", string.Empty),
+                form.GetValueOrDefault("value", string.Empty)) ?? false);
+            var message = ok ? string.Empty : "That roster button is not available.";
+            await Write(stream, ok ? 200 : 400, "application/json; charset=utf-8", JsonSerializer.Serialize(new { ok, message }));
             return;
         }
         await Write(stream, 404, "text/plain; charset=utf-8", "Not found.");
@@ -299,8 +516,16 @@ public sealed class RemoteControlServer : IDisposable
                         var id = form.GetValueOrDefault("id", string.Empty);
                         _engine.SetStatText(id, form.GetValueOrDefault("value", string.Empty));
                         return (true, string.Empty);
-                    case "layout.next": _host.ShiftLayout(1); return (true, string.Empty);
-                    case "layout.prev": _host.ShiftLayout(-1); return (true, string.Empty);
+                    case "display.select":
+                        if (_host is IRemoteDisplayHost displayHost && !string.IsNullOrWhiteSpace(form.GetValueOrDefault("display")))
+                            displayHost.RemoteSelectDisplay(form.GetValueOrDefault("display", string.Empty));
+                        return (true, string.Empty);
+                    case "layout.next":
+                        ShiftRemoteLayout(form.GetValueOrDefault("display", string.Empty), 1);
+                        return (true, string.Empty);
+                    case "layout.prev":
+                        ShiftRemoteLayout(form.GetValueOrDefault("display", string.Empty), -1);
+                        return (true, string.Empty);
                     case "output.publish": _host.PublishOutput(); return (true, string.Empty);
                     case "live.on": _host.LiveScoreClock = true; return (true, string.Empty);
                     case "live.off": _host.LiveScoreClock = false; return (true, string.Empty);
@@ -314,9 +539,24 @@ public sealed class RemoteControlServer : IDisposable
         catch (Exception ex) { return (false, ex.Message); }
     }
 
+    /// <summary>Moves any display's staged layout when the host supports it, or the previewed one otherwise.</summary>
+    void ShiftRemoteLayout(string displayId, int delta)
+    {
+        if (_host is IRemoteDisplayHost displayHost) displayHost.RemoteShiftLayout(displayId, delta);
+        else _host.ShiftLayout(delta);
+    }
+
     string Snapshot() => _dispatcher.Invoke(() =>
     {
         var s = _engine.State;
+        // Some saved games predate stored sport controls. Fall back to the active sport's control
+        // definitions so SPORT VALUES is never an empty card on a fresh or restored game.
+        var controls = s.Controls.Count > 0 ? s.Controls : _engine.Sport.Controls.ToList();
+        var remote = _host as IRemoteDisplayHost;
+        var displays = remote is null
+            ? new[] { new { id = "", name = "Current display", layout = _host.LayoutLabel } }
+            : remote.RemoteDisplays.Select(display => new { id = display.Id, name = display.Name, layout = remote.RemoteLayoutLabel(display.Id) }).ToArray();
+        var displayId = remote?.RemoteDisplayId ?? "";
         var state = new
         {
             ok = true,
@@ -343,7 +583,7 @@ public sealed class RemoteControlServer : IDisposable
             sportId = s.SportId,
             sportName = _engine.Sport.Name,
             scoring = s.ScoringOptions,
-            controls = s.Controls.Select(c => new
+            controls = controls.Select(c => new
             {
                 id = c.Id,
                 label = c.Label,
@@ -353,10 +593,15 @@ public sealed class RemoteControlServer : IDisposable
                 min = c.Min,
                 max = c.Max
             }),
-            stats = s.Stats.Select(x => new { id = x.Id, name = x.Name, display = x.Display }),
-            layout = _host.LayoutLabel,
+            stats = s.Stats.Select(x => new { id = x.Id, name = string.IsNullOrWhiteSpace(x.Name) ? "Custom value" : x.Name, display = x.Display }),
+            penalty = new { active = s.PenaltyActive, type = s.PenaltyType, home = s.PenaltyHome },
+            penaltyTypes = GameEngine.PenaltyTypesFor(s.SportId),
+            layout = remote is null ? _host.LayoutLabel : remote.RemoteLayoutLabel(displayId),
+            displayId,
+            displays,
             staged = _host.HasStagedChanges,
-            live = _host.LiveScoreClock
+            live = _host.LiveScoreClock,
+            locked = LockState?.Invoke() == true
         };
         return JsonSerializer.Serialize(state);
     });
@@ -431,8 +676,8 @@ public sealed class RemoteControlServer : IDisposable
     {
         try
         {
-            // avares:// is assembly-qualified first: the remote can be hosted by a test harness whose
-            // entry assembly is not ScorePlus, and a bare URI resolves against the entry assembly.
+            // Assembly-qualified first: the remote can be hosted by a test harness whose entry
+            // assembly is not ScorePlus, and a plain pack URI resolves against the entry assembly.
             using var source = Avalonia.Platform.AssetLoader.Open(new Uri("avares://ScorePlus/Assets/logo.png"));
             using var buffer = new MemoryStream();
             source.CopyTo(buffer);
@@ -458,7 +703,7 @@ public sealed class RemoteControlServer : IDisposable
 
     static async Task Write(NetworkStream stream, int status, string contentType, string body, string? extraHeaders = null)
     {
-        var reason = status switch { 200 => "OK", 303 => "See Other", 400 => "Bad Request", 401 => "Unauthorized", 404 => "Not Found", 429 => "Too Many Requests", _ => "OK" };
+        var reason = status switch { 200 => "OK", 303 => "See Other", 400 => "Bad Request", 401 => "Unauthorized", 404 => "Not Found", 423 => "Locked", 429 => "Too Many Requests", _ => "OK" };
         var bytes = Encoding.UTF8.GetBytes(body ?? string.Empty);
         var head = new StringBuilder()
             .Append($"HTTP/1.1 {status} {reason}\r\n")

@@ -165,8 +165,11 @@ public sealed class FfmpegVideoDecoder : IDisposable
     public bool IsRunning => _process is { HasExited: false };
 
     /// <summary>Starts (or restarts) decoding at a point in the file.</summary>
-    public void Open(string path, double startSeconds = 0, double fps = 30)
+    string? _videoFilter;
+
+    public void Open(string path, double startSeconds = 0, double fps = 30, string? videoFilter = null)
     {
+        _videoFilter = videoFilter;
         Stop();
         if (MediaProbe.Ffmpeg is null) { Failed?.Invoke("ffmpeg is not installed or not on PATH"); return; }
         var info = MediaFiles.Probe(path);
@@ -200,7 +203,7 @@ public sealed class FfmpegVideoDecoder : IDisposable
             "-ss", Math.Max(0, start).ToString("0.###", CultureInfo.InvariantCulture),
             "-i", path,
             "-an",
-            "-vf", $"scale={_width}:{_height}:force_original_aspect_ratio=decrease,pad={_width}:{_height}:(ow-iw)/2:(oh-ih)/2",
+            "-vf", (_videoFilter is null ? "" : _videoFilter + ",") + $"scale={_width}:{_height}:force_original_aspect_ratio=decrease,pad={_width}:{_height}:(ow-iw)/2:(oh-ih)/2",
             "-r", _fps.ToString("0.###", CultureInfo.InvariantCulture),
             "-f", "rawvideo", "-pix_fmt", "bgra", "-");
         _process = Process.Start(info);

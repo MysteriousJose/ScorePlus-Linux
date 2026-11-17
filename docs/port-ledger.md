@@ -29,8 +29,8 @@ here and is not named in this file with an `excluded` or `deferred` status.
 | WPF motion name converter | `src/Scoreboard.Desktop/MotionNameConverter.cs` | excluded | Avalonia binds the model labels directly. |
 | Video playback | `src/Scoreboard.Desktop/LinuxMedia.cs` | ported | ffmpeg decodes frames into an Avalonia `WriteableBitmap`; ffprobe supplies duration. |
 | Camera/replay recording | `src/Scoreboard.Desktop/WpfCompat.cs` (ffmpeg-backed capture/writer) | ported | `VideoCapture`/`VideoWriter` shell out to ffmpeg; OpenCV is no longer required. |
-| Chroma key | `src/Scoreboard.Desktop/ChromaKeyEffect.cs`, `Assets/ChromaKey.ps` | deferred | The shader path is Windows-only; ffmpeg `colorkey` is the planned replacement. |
-| Telestrator | `src/Scoreboard.Desktop/AnnotationBoard.cs` | deferred | WPF Ink has no Avalonia equivalent; needs a native canvas pointer implementation. |
+| Chroma key | `src/Scoreboard.Desktop/ChromaKeyEffect.cs`, `Assets/ChromaKey.ps` | ported | The shader is replaced by an ffmpeg `colorkey` filter in the decoder; the studio colour and tolerance reach score videos and video surfaces. |
+| Telestrator | `src/Scoreboard.Desktop/AnnotationBoard.cs` | ported | Native Avalonia pointer canvas, one ink board per display, hold fade and dismiss; `T` opens it on the audience window. |
 | Windows installer | `src/ScorePlus.Setup/**` | excluded | Replaced by AppImage, `.deb` and tar.gz packaging. |
 | Marketing site | `site/**`, `.github/workflows/pages.yml` | excluded | Not application code. |
 | WebView2 HTML surface | `src/Scoreboard.Desktop/HtmlSurface.cs` | excluded | No WebView2 on Linux; inert stand-in is pinned by the HTML suite. |

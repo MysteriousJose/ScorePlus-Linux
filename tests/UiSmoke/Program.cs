@@ -905,7 +905,13 @@ internal static class Program
         Check(stack.Orientation == global::Avalonia.Layout.Orientation.Horizontal, "timeout bars sit in a row");
         engine.Timeout(true);
         view.Update();
-        Check(All<Rectangle>(view).Count() == engine.State.HomeTimeouts, "the timeout icon follows a used timeout");
+        var timeoutBars = All<Rectangle>(view).ToList();
+        Check(engine.State.HomeTimeoutLimit > engine.State.HomeTimeouts
+              && timeoutBars.Count == engine.State.HomeTimeoutLimit,
+            "the timeout icon keeps the full allotment after a timeout");
+        Check(timeoutBars.Skip(engine.State.HomeTimeouts)
+              .All(bar => (bar.Fill as ISolidColorBrush)?.Color == Color.FromRgb(0x9A, 0xA5, 0xB2)),
+            "a used timeout turns grey");
 
         var dotItem = new ScorebugElement { Name = "Possession", Content = "{{POSSESSION}}", Kind = ScorebugElementKind.Text, Icon = ScorebugIcon.PossessionDot, Width = 200, Height = 60, FontSize = 24 };
         var dotView = new ScorebugIconView(dotItem, () => engine.State);
@@ -1355,6 +1361,31 @@ internal static class Program
         Check(UpdateChecker.ParseReleases(feed, InstallKind.Folder) is null
               && UpdateChecker.VersionFromTag("a1.4L") == "1.4.0",
             "a folder build is offered nothing, and a release label maps to a comparable version");
+
+        // Chroma key is applied in the decoder, so the ffmpeg filter carries the layout's colour
+        // and tolerance rather than sitting in a Windows-only shader.
+        var chroma = new ChromaKeyEffect { KeyColor = Color.FromRgb(0, 177, 64), Tolerance = 0.25 };
+        Check(chroma.Filter == "colorkey=0x00B140:0.25:0.1",
+            "a chroma key becomes an ffmpeg colorkey filter");
+
+        // The telestrator owns one ink board per display and clears it on dismiss.
+        var sharedA = AnnotationBoard.ForDisplay("smoke-display", TimeSpan.FromSeconds(2));
+        var sharedB = AnnotationBoard.ForDisplay("smoke-display");
+        Check(ReferenceEquals(sharedA, sharedB) && sharedA.Hold == TimeSpan.FromSeconds(2),
+            "every window on a display shares one telestrator board");
+        var board = new AnnotationBoard(TimeSpan.FromSeconds(1));
+        board.Open();
+        board.BeginStroke();
+        var stroke = new AnnotationStroke { Width = 3 };
+        stroke.Points.Add(new Point(1, 1));
+        stroke.Points.Add(new Point(5, 5));
+        board.Strokes.Add(stroke);
+        board.EndStroke();
+        Check(board.IsOpen && !board.IsDrawing && board.Strokes.Count == 1,
+            "the telestrator records a finished stroke");
+        board.Dismiss();
+        Check(!board.IsOpen && board.Strokes.Count == 0,
+            "dismissing the telestrator clears the display's ink");
     }
 
     // ---------------------------------------------------------------- helpers

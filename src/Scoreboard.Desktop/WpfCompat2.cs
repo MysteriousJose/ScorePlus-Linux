@@ -30,6 +30,7 @@ public readonly struct DpiInformation
 {
     public double DpiScaleX { get; }
     public double DpiScaleY { get; }
+    public double PixelsPerDip => DpiScaleX;
     public DpiInformation(double x, double y) { DpiScaleX = x; DpiScaleY = y; }
 }
 

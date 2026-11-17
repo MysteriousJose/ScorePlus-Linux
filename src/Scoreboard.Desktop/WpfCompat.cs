@@ -83,6 +83,9 @@ public class BitmapSource : Avalonia.Media.IImage
 public sealed class BitmapImage : BitmapSource
 {
     Avalonia.Media.Imaging.Bitmap? _decoded;
+
+    /// <summary>The Avalonia bitmap behind the WPF-shaped loader, for image brushes and masks.</summary>
+    public Avalonia.Media.Imaging.Bitmap? Decoded => _decoded;
     public BitmapCacheOption CacheOption { get; set; } = BitmapCacheOption.OnLoad;
     public Uri? UriSource
     {
@@ -192,6 +195,7 @@ public class MediaPlayer : IDisposable
     }
 
     public bool ScrubbingEnabled { get; set; }
+    public bool IsMuted { get; set; }
     public double Volume { get => _audioVolume; set { _audioVolume = Math.Clamp(value, 0, 1); _audio.SetVolume(_audioVolume); } }
     double _audioVolume = 1;
 
@@ -324,6 +328,7 @@ public sealed class MediaElement : Avalonia.Controls.Image, IDisposable
         set { _volume = Math.Clamp(value, 0, 1); _audio?.SetVolume(_volume); }
     }
     public bool ScrubbingEnabled { get; set; }
+    public ChromaKeyEffect? ChromaKey { get; set; }
     public new Uri? Source
     {
         get => _path is null ? null : new Uri(_path);
@@ -363,7 +368,7 @@ public sealed class MediaElement : Avalonia.Controls.Image, IDisposable
             var failure = new MediaFailedEventArgsStub { ErrorException = new InvalidOperationException(message) };
             MediaFailed(this, failure);
         };
-        _decoder.Open(_path, 0, info.Fps > 0 ? info.Fps : 30);
+        _decoder.Open(_path, 0, info.Fps > 0 ? info.Fps : 30, ChromaKey?.Filter);
         _decoder.Pause();
         MediaOpened(this, EventArgs.Empty);
     }
@@ -494,6 +499,8 @@ public sealed class DoubleAnimation : WpfAnimation
     public IEasingFunction? EasingFunction { get; set; }
     public DoubleAnimation(double from, double to, TimeSpan duration)
     { From = from; To = to; Duration = duration; }
+    public DoubleAnimation(double to, TimeSpan duration)
+    { From = 0; To = to; Duration = duration; }
     public DoubleAnimation(object fromValue, object toValue, TimeSpan duration)
     { From = Convert.ToDouble(fromValue); To = Convert.ToDouble(toValue); Duration = duration; }
     internal override bool TryFinal(out object value) { value = To; return true; }
