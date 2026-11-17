@@ -8,9 +8,9 @@ name: tests
 
 on:
   push:
-    branches: [linux, dev, main]
+    branches: [linux, linux-dev]
   pull_request:
-    branches: [linux, dev, main]
+    branches: [linux, linux-dev]
   workflow_dispatch:
 
 permissions:
