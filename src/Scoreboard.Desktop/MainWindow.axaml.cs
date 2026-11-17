@@ -531,6 +531,12 @@ public partial class MainWindow : Window, IControlPanelHost
         await dialog.ShowDialog(this);
     }
 
+    async void Ticker_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new TickerWindow(_engine, _preferences.Theme);
+        await dialog.ShowDialog(this);
+    }
+
     void Preferences_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SettingsWindow(_preferences) { Owner = this };

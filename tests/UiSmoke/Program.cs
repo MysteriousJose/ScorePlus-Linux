@@ -59,6 +59,7 @@ internal static class Program
             PaintTextureChecks(temps);
             ShellChecks();
             ControlPanelChecks();
+            TickerChecks();
             StudioChecks(temps);
             WindowCatalogChecks(temps);
             ThemeChecks();
@@ -335,6 +336,36 @@ internal static class Program
         step.Close();
         panel.Close();
         Console.WriteLine("PASS: control panel actions, keybinds, steppers, stats and clocks all behave");
+    }
+
+    static void TickerChecks()
+    {
+        var engine = new GameEngine();
+        engine.NewGame("basketball");
+        engine.SetLeagueGames([
+            new LeagueGame
+            {
+                GameId = "ticker-a", HomeTeam = "Eagles", AwayTeam = "Tigers",
+                HomeScore = 54, AwayScore = 51, PeriodLabel = "Q3", Clock = "4:12", Status = "live"
+            },
+            new LeagueGame
+            {
+                GameId = "ticker-b", HomeTeam = "Bears", AwayTeam = "Wolves",
+                HomeScore = 40, AwayScore = 38, PeriodLabel = "Q2", Clock = "1:03", Status = "live"
+            }
+        ]);
+        var window = new TickerWindow(engine, "Dark");
+        window.Show();
+        window.UpdateLayout();
+        var news = All<TextBox>(window).FirstOrDefault(box => box.AcceptsReturn)
+            ?? throw new Exception("FAIL: ticker rotation has no news box");
+        news.Text = "League finals tonight";
+        Click(ButtonByContent(window, "Save"));
+        Check(engine.State.TickerGamesChosen
+              && engine.State.TickerGameIds.SequenceEqual(["ticker-a", "ticker-b"])
+              && engine.State.TickerNews.SequenceEqual(["League finals tonight"]),
+            "ticker rotation keeps the chosen games and headlines");
+        window.Close();
     }
 
     static void StudioChecks(List<string> temps)

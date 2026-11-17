@@ -66,6 +66,7 @@
           <Button Classes="header-button icon-button" Content="▶" Click="Output_Click" ToolTip.Tip="Audience output — choose a display and open its window (F11 fills the screen)"/>
           <Button Classes="header-button icon-button" Content="☰" Click="EventLog_Click" ToolTip.Tip="Event log — open it in its own window"/>
           <Button Classes="header-button icon-button" Content="▦" Click="GameReport_Click" ToolTip.Tip="Game report — export a printable HTML summary"/>
+          <Button Classes="header-button icon-button" Content="⇄" Click="Ticker_Click" ToolTip.Tip="Ticker rotation — choose league games, headlines and score alerts"/>
           <Button Classes="header-button" Content="Save Game" Click="Save_Click"/>
           <Button Classes="header-button" Content="Open Game" Click="Open_Click"/>
         </StackPanel>
