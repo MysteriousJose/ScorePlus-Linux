@@ -26,7 +26,7 @@ public sealed class AboutWindow : Window
         var root = new StackPanel { Margin = new Thickness(24, 22, 24, 18) };
         var logo = new Image
         {
-            Source = new BitmapImage(new Uri("pack://application:,,,/ScorePlus;component/Assets/logo.png")),
+            Source = new Bitmap(AssetLoader.Open(new Uri("avares://ScorePlus/Assets/logo.png"))),
             Height = 58,
             Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center
