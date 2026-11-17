@@ -10,7 +10,7 @@ public static class ClockFormat
     }
 
     /// <summary>Parses "MM:SS", "M:SS", or a whole number of seconds.</summary>
-    public static bool TryParse(string text, out int seconds)
+    public static bool TryParse(string? text, out int seconds)
     {
         seconds = 0;
         var value = (text ?? "").Trim();

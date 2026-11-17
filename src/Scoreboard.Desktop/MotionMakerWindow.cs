@@ -734,7 +734,7 @@ public sealed class MotionMakerWindow : Window
     {
         if (SelectedPiece is not { } piece) { _status.Text = "Select a temporary piece first."; return; }
         piece.Name = string.IsNullOrWhiteSpace(_pieceName.Text) ? piece.Name : _pieceName.Text?.Trim() ?? "";
-        piece.Text = _pieceText.Text;
+        piece.Text = _pieceText.Text ?? "";
         piece.Width = Number(_pieceWidth.Text, piece.Width, 4, 7680);
         piece.Height = Number(_pieceHeight.Text, piece.Height, 4, 7680);
         piece.X = Number(_pieceX.Text, piece.X, -7680, 7680);

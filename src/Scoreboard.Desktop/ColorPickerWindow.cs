@@ -135,11 +135,11 @@ public sealed class ColorPickerWindow : Window
         _updating = false;
     }
 
-    static bool TryParse(string text, out Color color)
+    static bool TryParse(string? text, out Color color)
     {
         try
         {
-            color = (Color)ColorConverter.ConvertFromString(text.Trim())!;
+            color = (Color)ColorConverter.ConvertFromString((text ?? "").Trim())!;
             return true;
         }
         catch { color = Colors.White; return false; }
@@ -148,9 +148,9 @@ public sealed class ColorPickerWindow : Window
     static string Normalize(string text) => text.Trim().ToUpperInvariant();
 
     /// <summary>Shows the picker and returns the chosen hex color, or null when cancelled.</summary>
-    public static string? Pick(Window owner, string initial)
+    public static string? Pick(Window owner, string? initial)
     {
-        var dialog = new ColorPickerWindow(initial) { Owner = owner };
+        var dialog = new ColorPickerWindow(initial ?? "") { Owner = owner };
         return dialog.ShowDialog() == true ? dialog.SelectedHex : null;
     }
 }

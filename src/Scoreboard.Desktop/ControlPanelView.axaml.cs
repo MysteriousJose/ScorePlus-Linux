@@ -133,7 +133,7 @@ public partial class ControlPanelView : UserControl
     /// <summary>The steppers the tests and the host inspect.</summary>
     public string HomeScoreText => _homeScore.Text;
     public string AwayScoreText => _awayScore.Text;
-    public string PlayClockText => PlayClockValue.Text;
+    public string PlayClockText => PlayClockValue.Text ?? "";
     public Stepper HomeScore => _homeScore;
     public Stepper AwayScore => _awayScore;
     public Stepper BallOn => _ballOn;
@@ -827,6 +827,7 @@ public partial class ControlPanelView : UserControl
     {
         if (_engine.State.SportId != "football") return;
         var owner = Window.GetWindow(this);
+        if (owner is null) return;
         if (_engine.State.Down == 4
             && !ConfirmWindow.Ask(owner, PreferencesStore.Load().Theme, "NEW SERIES",
                 "Fourth down: start a new series and reset distance?", "Start new series"))
@@ -880,7 +881,7 @@ public partial class ControlPanelView : UserControl
         var hints = _keybinds.Bindings;
         foreach (var button in FindTaggedButtons(this))
         {
-            var id = (string)button.Tag;
+            if (button.Tag is not string id) continue;
             var label = ControlActions.LabelFor(id);
             button.ToolTip = hints.TryGetValue(id, out var gesture) ? $"{label}  ·  {gesture}" : label;
         }
