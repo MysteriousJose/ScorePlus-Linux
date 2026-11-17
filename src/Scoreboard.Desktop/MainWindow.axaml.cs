@@ -570,8 +570,8 @@ public partial class MainWindow : Window, IControlPanelHost
     /// </summary>
     async Task CheckForUpdatesAsync()
     {
-        if (!_preferences.CheckForUpdates || !AppInfo.IsInstalled) return;
-        var manifest = await UpdateChecker.CheckAsync(_preferences.UpdateFeedUrl);
+        if (!_preferences.CheckForUpdates || !AppInfo.CanUpdate) return;
+        var manifest = await UpdateChecker.CheckAsync(_preferences.UpdateFeedUrl, AppInfo.Kind);
         if (manifest is null) return;
         var detail = $"Version {manifest.Version} is ready (this build is {AppInfo.Version}). " +
                      (string.IsNullOrWhiteSpace(manifest.Notes) ? "Download and install it now?" : $"{manifest.Notes}\n\nDownload and install it now?");
@@ -584,10 +584,10 @@ public partial class MainWindow : Window, IControlPanelHost
             NoticeWindow.Tell(this, "UPDATE FAILED", error ?? "The update could not be downloaded.", warning: true);
             return;
         }
-        if (!UpdateChecker.Run(path))
+        if (UpdateChecker.Run(path) is string failure)
         {
             StatusText.Text = "UPDATE COULD NOT START";
-            NoticeWindow.Tell(this, "UPDATE COULD NOT START", $"The new version was downloaded to {path}, but Windows did not start the installer.", warning: true);
+            NoticeWindow.Tell(this, "UPDATE COULD NOT START", failure, warning: true);
             return;
         }
         _closingAfterPrompt = true;

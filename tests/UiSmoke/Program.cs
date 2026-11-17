@@ -68,6 +68,7 @@ internal static class Program
             GameWindowChecks(temps);
             LayoutChecks(temps);
             DisplayChecks(temps);
+            UpdateChannelChecks();
 
             Console.WriteLine();
             Console.WriteLine("ALL UI CHECKS PASSED");
@@ -1083,6 +1084,47 @@ internal static class Program
               && reopened.LinkTarget(reopened.Displays[0].Id, 0) is not null,
             "displays and layout links persist in the saved design");
         Console.WriteLine("PASS: displays, independent windows and layout links behave");
+    }
+
+    /// <summary>
+    /// The updater must fetch the asset that matches how this copy was installed: handing a tarball
+    /// install the .deb would replace nothing it can use, and an AppImage must never receive the
+    /// tarball. Detection lives in AppInfo, selection here, so this pins the pairing.
+    /// </summary>
+    static void UpdateChannelChecks()
+    {
+        Check(UpdateFeed.IsAssetFor(InstallKind.Tarball, "ScorePlusLinuxSetup.tar.gz")
+              && !UpdateFeed.IsAssetFor(InstallKind.Tarball, "scoreplus_1.5.0_amd64.deb"),
+            "a tarball install looks for the stable tarball asset only");
+        Check(UpdateFeed.IsAssetFor(InstallKind.AppImage, "ScorePlus-a1.5L-x86_64.AppImage")
+              && !UpdateFeed.IsAssetFor(InstallKind.AppImage, "ScorePlusLinuxSetup.tar.gz"),
+            "an AppImage install looks for its own AppImage asset only");
+        Check(UpdateFeed.IsAssetFor(InstallKind.SystemPackage, "scoreplus_1.5.0_amd64.deb")
+              && !UpdateFeed.IsAssetFor(InstallKind.SystemPackage, "ScorePlus-a1.5L-x86_64.AppImage"),
+            "a .deb install looks for the package asset only");
+
+        const string feed = """
+        [
+          {
+            "tag_name": "a1.5L",
+            "name": "ScorePlus a1.5L (Linux)",
+            "draft": false,
+            "assets": [
+              { "name": "ScorePlus-a1.5L-x86_64.AppImage", "browser_download_url": "https://example.test/appimage", "state": "uploaded" },
+              { "name": "scoreplus_1.5.0_amd64.deb", "browser_download_url": "https://example.test/deb", "state": "uploaded" },
+              { "name": "ScorePlusLinuxSetup.tar.gz", "browser_download_url": "https://example.test/tarball", "state": "uploaded" }
+            ]
+          }
+        ]
+        """;
+
+        Check(UpdateChecker.ParseReleases(feed, InstallKind.Tarball)?.Url == "https://example.test/tarball"
+              && UpdateChecker.ParseReleases(feed, InstallKind.AppImage)?.Url == "https://example.test/appimage"
+              && UpdateChecker.ParseReleases(feed, InstallKind.SystemPackage)?.Url == "https://example.test/deb",
+            "each install kind resolves the release asset built for it");
+        Check(UpdateChecker.ParseReleases(feed, InstallKind.Folder) is null
+              && UpdateChecker.VersionFromTag("a1.4L") == "1.4.0",
+            "a folder build is offered nothing, and a release label maps to a comparable version");
     }
 
     // ---------------------------------------------------------------- helpers

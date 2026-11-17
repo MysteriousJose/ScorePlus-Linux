@@ -180,7 +180,7 @@ ln -sf "$DEST/scoreplus" "$BINHOME/scoreplus"
 # The marker is what tells the app it may update itself: a copy run out of a downloads folder never
 # replaces itself over a working file. install.json sits beside the binary, which is where the app looks.
 VERSION="$(sed -E 's/.*scoreplus-([^-]+)-linux-x64.*/\1/' <<< "$HERE")"
-printf '{ "version": "%s", "installDir": "%s", "channel": "linux" }\n' "${VERSION:-unknown}" "$DEST" > "$DEST/install.json"
+printf '{ "version": "%s", "installDir": "%s", "channel": "tarball" }\n' "${VERSION:-unknown}" "$DEST" > "$DEST/install.json"
 cp "$HERE/README.md" "$DEST/README.md" 2>/dev/null || true
 
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS" 2>/dev/null || true
@@ -212,7 +212,7 @@ build_deb() {
     "$data/usr/share/doc/scoreplus" "$ctrl"
   install -m 0755 "$BIN" "$data/usr/bin/scoreplus"
   # The updater's marker, shipped in the package: an installed-from-deb copy may update itself too.
-  printf '{ "version": "%s", "installDir": "/usr/bin", "channel": "linux" }\n' "$NUMERIC" \
+  printf '{ "version": "%s", "installDir": "/usr/bin", "channel": "deb" }\n' "$NUMERIC" \
     > "$data/usr/bin/install.json"
   install -m 0644 "$LOGO" "$data/usr/share/icons/hicolor/256x256/apps/scoreplus.png"
   install -m 0644 "$LOGO" "$data/usr/share/pixmaps/scoreplus.png"

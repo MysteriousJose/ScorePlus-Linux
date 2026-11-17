@@ -831,7 +831,7 @@ The flow:
 
 1. The app reads the newest release's tag and compares it with its own build number.
 2. If the tag is newer, it offers the update.
-3. On your confirmation it downloads `ScorePlusSetup.exe`, verifies the SHA-256 that GitHub computed for the asset, and runs it. The installer replaces the app in place, and your preferences, rosters, sport profiles, layouts and keybinds are untouched.
+3. On your confirmation it downloads the update asset for **how this copy was installed**, verifies the SHA-256 that GitHub computed for it, and applies it the same way: a per-user tarball install goes through `install.sh --silent`, a `.AppImage` is replaced in place, and a `.deb` is handed to the package manager. A helper waits for the app to close and relaunches the new build. Your preferences, rosters, sport profiles, layouts and keybinds are untouched.
 
 Things worth knowing:
 
@@ -840,7 +840,7 @@ Things worth knowing:
 - **Release numbers must increase.** `a1.3` reads as 1.3.0, and the highest published number wins — not the most recent upload. Watch out for `a1.03`: it parses to the same 1.03 → 1.3.0 as `a1.3`, so it isn't "newer" to an a1.3 install.
 - **Prefer a custom host?** Preferences → Updates can point at a JSON manifest elsewhere. See [docs/updates.md](docs/updates.md).
 
-On Linux the marker rule is the same — `install.sh` and the `.deb` both write `install.json` beside the binary, an AppImage carries none — but the download-and-run half is still Windows-shaped: the built-in feed is the Windows project's releases, and what it downloads is a `.exe`. Until the Linux half of the updater lands, point **Preferences → Updates** at this repository's releases feed to see what is current, and install it with the commands in [Install and Run](#install-and-run).
+On Linux the updater detects the install kind rather than assuming one: `install.sh` writes `"channel": "tarball"` and the `.deb` writes `"channel": "deb"` into `install.json`, while an AppImage identifies itself through the `APPIMAGE` environment variable it was started with. Each channel fetches its own asset from this repository's releases (`MysteriousJose/ScorePlus-Linux`) — the stable tarball, `scoreplus_*_amd64.deb`, or `ScorePlus-*_x86_64.AppImage` — and applies it the way that channel expects, including `pkexec` for a package. A copy run out of a folder has no marker and never checks. See [docs/updates.md](docs/updates.md).
 
 ---
 
@@ -893,7 +893,7 @@ Replay is staged in the preview until **Start replay**. The audience and the aud
 Each clip's position is preserved while the studio is edited. If a clip was re-imported or replaced, it starts from the beginning. Seek with the bar rather than waiting through a clip.
 
 **The update prompt never appears.**
-Only installed copies check, and the release must be published (not a draft), tagged with a higher number, and carry an asset named `ScorePlusSetup.exe` — `ScorePlusLinuxSetup.tar.gz` on Linux, where in-app install is still Windows-shaped (see [Install and Run](#install-and-run)). Portable builds and AppImages never update.
+Only installed copies and AppImages check, and the release must be published (not a draft), tagged with a higher number, and carry the asset for your install kind — `ScorePlusLinuxSetup.tar.gz`, `scoreplus_*_amd64.deb`, or `ScorePlus-*_x86_64.AppImage` (see [Install and Run](#install-and-run)). Folder builds never update. If an update appears to do nothing, read `/tmp/scoreplus-update.log`.
 
 **A new game opened an old game.**
 It shouldn't — New Game wipes to a blank slate. If you see stale data, check you're on the latest build; the launch box's autosave list is the most common mix-up, since those load a game you chose.
