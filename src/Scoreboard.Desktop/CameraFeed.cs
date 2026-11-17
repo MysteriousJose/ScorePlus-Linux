@@ -293,16 +293,22 @@ public sealed class CameraFeed : IDisposable
                     catch { names.Add($"Camera {names.Count + 1}"); }
                     finally
                     {
-                        if (bag is not null) Marshal.ReleaseComObject(bag);
-                        if (moniker is not null) Marshal.ReleaseComObject(moniker);
+                        if (OperatingSystem.IsWindows())
+                        {
+                            if (bag is not null) Marshal.ReleaseComObject(bag);
+                            if (moniker is not null) Marshal.ReleaseComObject(moniker);
+                        }
                     }
                 }
             }
-            finally { Marshal.ReleaseComObject(monikers); }
+            finally
+            {
+                if (OperatingSystem.IsWindows()) Marshal.ReleaseComObject(monikers);
+            }
         }
         finally
         {
-            if (deviceEnumerator is not null) Marshal.ReleaseComObject(deviceEnumerator);
+            if (OperatingSystem.IsWindows() && deviceEnumerator is not null) Marshal.ReleaseComObject(deviceEnumerator);
         }
         return names;
     }
