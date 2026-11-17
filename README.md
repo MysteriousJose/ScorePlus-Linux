@@ -329,7 +329,7 @@ Below the staged preview sits a second, smaller thumbnail: the **audience view**
 
 Under the preview is a **sound level meter** with the peak level the machine is putting out, next to the on-air display and layout, so you can see at a glance what is live and whether audio is actually flowing.
 
-Above the meter sit **eight quick-layout buttons**, navy in every theme. Each one can point at any layout on **any display** — a scorebug, a lower third, a sponsor board — and every detached panel carries the same eight. Right-click a button to reassign it, or to **clear** it so the button does nothing until it is assigned again. By default a press only **stages** the layout, so Update Output still sends it; **Preferences → Quick layout buttons also update output** makes the same press go straight to air. The assignment and that switch are stored in preferences, so they follow the operator, not the game.
+Above the meter sit **twelve quick-layout buttons**, navy in every theme. Each one can point at any layout on **any display** — a scorebug, a lower third, a sponsor board — and every detached panel carries the same twelve. Right-click a button to reassign it, or to **clear** it so the button does nothing until it is assigned again. By default a press only **stages** the layout, so Update Output still sends it; **Preferences → Quick layout buttons also update output** makes the same press go straight to air. The assignment and that switch are stored in preferences, so they follow the operator, not the game.
 
 ### Linking Displays Together
 
