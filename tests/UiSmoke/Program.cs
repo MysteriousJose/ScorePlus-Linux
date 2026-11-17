@@ -230,10 +230,11 @@ internal static class Program
         Check(published == 1, "Update Output raises the publish request");
 
         var statsHost = (WrapPanel)panel.Panel.FindName("StatsHost")!;
-        engine.AddStat("Turnovers");
+        var statsBefore = engine.State.Stats.Count;
+        var takeaways = engine.AddStat("Takeaways");
         panel.UpdateLayout();
-        Check(statsHost.Children.Count == 1, "custom stats render as console rows");
-        engine.AdjustStat(engine.State.Stats[0].Id, 3);
+        Check(statsHost.Children.Count == statsBefore + 1, "custom stats render as console rows");
+        engine.AdjustStat(takeaways.Id, 3);
         panel.UpdateLayout();
         Check(panel.Panel.HomeScoreText == engine.State.HomeScore.ToString(),
             "the console refreshes after a stat change");
@@ -566,8 +567,8 @@ internal static class Program
         ((TextBox)profile.FindName("ScoringInput")!).Text = "2, 3, 7";
         Click((Button)profile.FindName("SaveButton")!);
         var saved = profileCatalog.Find("football")!;
-        Check(saved.Timeouts == 6 && saved.ScoringOptions.SequenceEqual([2, 3, 7]) && profileCatalog.IsOverridden("football"),
-            "editing a built-in sport profile saves the timeout count and scoring buttons");
+        Check(saved.Timeouts == 3 && saved.ScoringOptions.SequenceEqual([2, 3, 7]) && profileCatalog.IsOverridden("football"),
+            "editing a built-in sport profile clamps football timeouts and saves scoring buttons");
         profile.Close();
 
         var logEngine = new GameEngine();
@@ -628,7 +629,7 @@ internal static class Program
         delayBox.Text = "2.5";
         // Enter is intercepted on the window's tunnel route, so it has to enter through the
         // focused window rather than being raised on the box itself.
-        delayWindow.KeyPress(Key.Enter, RawInputModifiers.None);
+        delayWindow.KeyPressQwerty(PhysicalKey.Enter, RawInputModifiers.None);
         Check(delayWindow.IsVisible, "Enter in a preference field does not close the page");
         Check(Math.Abs(delayPrefs.ValueSwitchDelay - 2.5) < 0.001, "Enter in a preference field saves the typed value");
         delayWindow.Close();
@@ -869,12 +870,13 @@ internal static class Program
         main.PublishOutput();
         main.StartNewGame("football");
         main.UpdateLayout();
-        Check(main.Engine.State.HomeScore == 0 && main.Engine.State.Down == 1 && main.Engine.State.Stats.Count == 0,
-            "New Game clears the previous game's state");
+        Check(main.Engine.State.HomeScore == 0 && main.Engine.State.Down == 1
+              && main.Engine.State.Stats.Select(stat => stat.Name).SequenceEqual(CommonStats.DefaultsFor("football")),
+            "New Game resets the previous game to the sport's starting stats");
         Check(main.PublishedState.HomeScore == 0 && main.PublishedState.Down == 1 && main.PublishedState.HomeTeam != "Old Home",
             "New Game leaves nothing of the previous game on air");
         Check(main.Scorebug.Layouts.Count == 1, "New Game starts again with one layout");
-        Check(((TextBox)dock.FindName("SearchBox")!).Text.Length == 0, "New Game clears the media search box");
+        Check(string.IsNullOrEmpty(((TextBox)dock.FindName("SearchBox")!).Text), "New Game clears the media search box");
         var preview = All<ScorebugCanvasView>(main).FirstOrDefault() ?? throw new Exception("FAIL: the main window has no program preview");
         var previewText = All<TextBlock>(preview).Select(text => text.Text ?? "").ToArray();
         Check(!previewText.Any(text => text.Contains("Old Home", StringComparison.Ordinal) || text.Contains("Old Away", StringComparison.Ordinal) || text == "21"),
