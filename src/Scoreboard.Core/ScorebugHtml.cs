@@ -55,13 +55,31 @@ public static class ScorebugHtml
         html.AppendLine(".sp-text{display:flex;align-items:center;justify-content:center;text-align:center;width:100%;height:100%;white-space:pre-wrap;line-height:1.05;word-break:break-word;}");
         html.AppendLine(".sp-shape-circle{border-radius:50%;}");
         html.AppendLine(".sp-triangle{clip-path:polygon(50% 0%,100% 100%,0% 100%);}");
+        html.AppendLine(".sp-parallelogram{clip-path:polygon(24% 0,100% 0,76% 100%,0 100%);}");
         html.AppendLine(".sp-logo{width:100%;height:100%;object-fit:contain;}");
-        html.AppendLine(".sp-media{display:flex;align-items:center;justify-content:center;width:100%;height:100%;font:600 12px/1.2 'Segoe UI',Arial,sans-serif;letter-spacing:.08em;opacity:.55;}");
-        html.AppendLine(".sp-bars{display:flex;align-items:center;justify-content:center;gap:6%;width:100%;height:100%;}");
+        html.AppendLine(".sp-media{display:flex;align-items:center;justify-content:center;width:100%;height:100%;font:600 12px/1.2 'Segoe UI',Arial,sans-serif;letter-spacing:.08em;opacity:.55;}");        html.AppendLine(".sp-bars{display:flex;align-items:center;justify-content:center;gap:6%;width:100%;height:100%;}");
+        html.AppendLine(".sp-bars.vertical{flex-direction:column;gap:6% 0;}");
+        html.AppendLine(".sp-bars.vertical .sp-bar{width:62%;height:auto;min-height:2px;flex:1 1 0;}");
         html.AppendLine(".sp-bar{height:14%;min-height:3px;flex:1 1 0;border-radius:2px;background:currentColor;}");
+        html.AppendLine(".sp-bar.used{background:var(--sp-used,#9AA5B2);}");
         html.AppendLine(".sp-dot{position:absolute;top:50%;width:12%;padding-top:12%;border-radius:50%;transform:translateY(-50%);background:currentColor;}");
+        html.AppendLine(".sp-arrow{position:absolute;top:15%;height:70%;width:18%;background:currentColor;clip-path:polygon(0 0,100% 50%,0 100%);}");
+        html.AppendLine(".sp-arrow.in{left:2%;}");
+        html.AppendLine(".sp-arrow.out{right:2%;}");
+        html.AppendLine(".sp-arrow.flip{clip-path:polygon(100% 0,0 50%,100% 100%);}");
+        html.AppendLine(".sp-arrow.down{left:50%;top:auto;bottom:2%;width:34%;height:38%;transform:translateX(-50%);clip-path:polygon(0 0,100% 0,50% 100%);}");
+        html.AppendLine(".sp-dots{display:flex;align-items:center;justify-content:center;gap:8%;width:100%;height:100%;}");
+        html.AppendLine(".sp-pip{width:14%;padding-top:14%;border-radius:50%;background:currentColor;}");
+        html.AppendLine(".sp-pip.used{background:var(--sp-used,#9AA5B2);}");
+        // Referee cards: the colours are the point, so they never follow the element's text colour.
+        html.AppendLine(".sp-card{position:absolute;left:50%;top:50%;width:42%;height:62%;border-radius:6%;transform:translate(-50%,-50%) rotate(-8deg);box-shadow:0 0 0 2px rgba(0,0,0,.22);}");
+        html.AppendLine(".sp-card.yellow{background:#F2C230;}");
+        html.AppendLine(".sp-card.red{background:#E23B3B;}");
         html.AppendLine(".sp-bases{position:absolute;inset:0;display:block;}");
         html.AppendLine(".sp-base{position:absolute;width:26%;padding-top:26%;border:2px solid currentColor;box-sizing:border-box;transform:rotate(45deg);}");
+        html.AppendLine(".sp-flag{position:absolute;left:50%;top:8%;width:44%;height:78%;transform:translateX(-50%);}");
+        html.AppendLine(".sp-flagpole{position:absolute;left:22%;top:0;width:8%;height:100%;background:currentColor;}");
+        html.AppendLine(".sp-flagcloth{position:absolute;left:30%;top:0;width:62%;height:52%;background:#F2C230;clip-path:polygon(0 0,100% 50%,0 100%);}");
         html.AppendLine(".sp-base.on{background:currentColor;}");
         html.AppendLine("@keyframes sp-pulse{0%,100%{opacity:1}50%{opacity:.62}}");
         html.AppendLine("@keyframes sp-drift{0%,100%{transform:translate(0,0)}50%{transform:translate(14px,7px)}}");
@@ -108,14 +126,17 @@ public static class ScorebugHtml
         // The box behind the artwork: shapes and logos draw themselves, exactly like the studio.
         if (!item.TransparentBackground && item.Kind is not (ScorebugElementKind.Shape or ScorebugElementKind.Logo))
             style.Append($"background:{Background(item, state)};");
-        if (item.BorderThickness > 0)
+        // A parallelogram draws its outline in its own SVG; a CSS border on the box would be square.
+        var svgShape = item.Kind == ScorebugElementKind.Shape && item.Shape == ScorebugShape.Parallelogram;
+        if (item.BorderThickness > 0 && !svgShape)
             style.Append(CultureInfo.InvariantCulture, $"border:{Num(item.BorderThickness)}px solid {ResolveBorder(item, state)};");
         if (item.Kind == ScorebugElementKind.Shape && item.Shape == ScorebugShape.Rectangle)
-            style.Append("border-radius:8px;");
+            style.Append(CultureInfo.InvariantCulture, $"border-radius:{Num(Math.Clamp(item.CornerRadius, 0, 200))}px;");
 
         var classes = new StringBuilder("sp-el");
         if (item.Kind == ScorebugElementKind.Shape && item.Shape == ScorebugShape.Circle) classes.Append(" sp-shape-circle");
         if (item.Kind == ScorebugElementKind.Shape && item.Shape == ScorebugShape.Triangle) classes.Append(" sp-triangle");
+        if (item.Kind == ScorebugElementKind.Shape && item.Shape == ScorebugShape.Parallelogram) classes.Append(" sp-parallelogram");
         if (item.Animation == ScorebugAnimation.Pulse) classes.Append(" sp-pulse");
         if (item.Animation == ScorebugAnimation.Drift) classes.Append(" sp-drift");
 
@@ -127,13 +148,22 @@ public static class ScorebugHtml
         {
             case ScorebugElementKind.Shape:
                 // A transparent shape is an outline only; the triangle and circle clip their own fill.
-                inner.Append($"<div style=\"width:100%;height:100%;background:{(item.TransparentBackground ? "transparent" : Background(item, state))};{(item.Shape == ScorebugShape.Circle ? "border-radius:50%;" : string.Empty)}\"></div>");
+                if (item.Shape == ScorebugShape.Parallelogram)
+                    inner.Append(ParallelogramHtml(item, state));
+                else
+                    inner.Append($"<div style=\"width:100%;height:100%;background:{(item.TransparentBackground ? "transparent" : Background(item, state))};{(item.Shape == ScorebugShape.Circle ? "border-radius:50%;" : string.Empty)}\"></div>");
                 break;
             case ScorebugElementKind.Logo:
                 inner.Append(LogoHtml(item, state));
                 break;
+            case ScorebugElementKind.Image:
+                inner.Append(ImageHtml(item, state, colour));
+                break;
             case ScorebugElementKind.Video:
                 inner.Append($"<div class=\"sp-media\" style=\"color:{colour};background:rgba(255,255,255,.06);\">{WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.MediaTag) ? "VIDEO" : $"VIDEO · {item.MediaTag}")}</div>");
+                break;
+            case ScorebugElementKind.Layout:
+                inner.Append($"<div class=\"sp-media\" style=\"color:{colour};background:rgba(255,255,255,.06);\">LIVE LAYOUT</div>");
                 break;
             default:
                 inner.Append(TextHtml(item, state, colour));
@@ -144,10 +174,54 @@ public static class ScorebugHtml
         return $"<div class=\"{classes}\" style=\"{style}\"{token}>{inner}</div>";
     }
 
+    /// <summary>
+    /// A parallelogram as one SVG polygon. CSS clip-path cuts a clean fill but cannot draw a border
+    /// along the slanted edges, which is what made an outlined shape look broken; SVG strokes the
+    /// same geometry with round joins, and scales smoothly to any audience resolution.
+    /// </summary>
+    static string ParallelogramHtml(ScorebugElement item, GameState? state)
+    {
+        var gradientId = "sp-pg-" + string.Concat(item.Id.Where(char.IsLetterOrDigit));
+        var fill = item.TransparentBackground ? "none" : $"url(#{gradientId})";
+        var stroke = item.BorderThickness > 0 ? ResolveBorder(item, state) : "none";
+        var defs = new StringBuilder();
+        if (!item.TransparentBackground)
+        {
+            if (item.BackgroundGradient)
+            {
+                var first = Css(state?.ColorFor(item.BackgroundSource) ?? item.Background);
+                var second = Css(state?.ColorFor(item.BackgroundSource2) ?? item.BackgroundColor2);
+                defs.Append($"<defs><linearGradient id=\"{gradientId}\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\" gradientTransform=\"rotate({Num(item.GradientAngle)} .5 .5)\">")
+                    .Append($"<stop offset=\"0\" stop-color=\"{first}\"/><stop offset=\"1\" stop-color=\"{second}\"/></linearGradient></defs>");
+            }
+            else
+            {
+                defs.Append($"<defs><linearGradient id=\"{gradientId}\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"><stop offset=\"0\" stop-color=\"{Css(state?.ColorFor(item.BackgroundSource) ?? item.Background)}\"/><stop offset=\"1\" stop-color=\"{Css(state?.ColorFor(item.BackgroundSource) ?? item.Background)}\"/></linearGradient></defs>");
+            }
+        }
+        return $"<svg width=\"100%\" height=\"100%\" viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" style=\"display:block;overflow:visible;\">{defs}"
+               + $"<polygon points=\"24,0 100,0 76,100 0,100\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{Num(item.BorderThickness)}\" stroke-linejoin=\"round\" vector-effect=\"non-scaling-stroke\"/></svg>";
+    }
+
+    /// <summary>A still image or a player's uploaded portrait, embedded in the page.</summary>
+    static string ImageHtml(ScorebugElement item, GameState? state, string colour)
+    {
+        var path = item.ImagePath;
+        if (item.PlayerPhotoSide != ScorebugPlayerPhotoSide.None)
+        {
+            var player = item.PlayerPhotoSide == ScorebugPlayerPhotoSide.Home ? state?.HomePlayer : state?.AwayPlayer;
+            if (!string.IsNullOrWhiteSpace(player?.PhotoPath)) path = player.PhotoPath;
+        }
+        var data = DataUri(path);
+        if (data is not null) return $"<img class=\"sp-logo\" alt=\"\" src=\"{data}\">";
+        if (item.PlayerPhotoSide == ScorebugPlayerPhotoSide.None) return string.Empty;
+        return $"<div class=\"sp-text\" style=\"color:{colour};font-family:{FontFamily(item.FontFamily)};font-size:{Num(item.FontSize)}px;\">PLAYER PHOTO</div>";
+    }
+
     static string TextHtml(ScorebugElement item, GameState? state, string colour)
     {
         var text = state is not null
-            ? ScoreboardTemplates.Bind(item.Content ?? string.Empty, state, item.PeriodFormat)
+            ? ScoreboardTemplates.Bind(item.Content ?? string.Empty, state, item.PeriodFormat, item.DownCaps, item.PlayClockColon, item.GameClockLeadingZero)
             : item.Content ?? string.Empty;
         var font = FontFamily(item.FontFamily);
         var weight = item.Bold ? "font-weight:700;" : "font-weight:400;";
@@ -156,7 +230,20 @@ public static class ScorebugHtml
         if (item.Underline) decorations.Append("underline ");
         if (item.StrikeThrough) decorations.Append("line-through ");
         var decoration = decorations.Length > 0 ? $"text-decoration:{decorations.ToString().Trim()};" : string.Empty;
-        return $"<div class=\"sp-text\" style=\"color:{colour};font-family:{font};font-size:{Num(item.FontSize)}px;{weight}{italic}{decoration}\">{WebUtility.HtmlEncode(text)}</div>";
+        // A drop shadow is what keeps white lettering readable over a photograph of a crowd. The
+        // shadow falls along its own angle, so a light source in the artwork can be matched.
+        var radians = (double.IsFinite(item.TextShadowAngle) ? item.TextShadowAngle : 45) * Math.PI / 180;
+        var shadow = item.TextShadow
+            ? $"text-shadow:{Num(Math.Cos(radians) * item.TextShadowOffset)}px {Num(Math.Sin(radians) * item.TextShadowOffset)}px {Num(item.TextShadowSoftness)}px {Css(item.TextShadowColor)};"
+            : string.Empty;
+        // The line itself and the block inside the plate both follow the element's alignment.
+        var align = item.TextAlign switch
+        {
+            ScorebugTextAlign.Left => "text-align:left;justify-content:flex-start;",
+            ScorebugTextAlign.Right => "text-align:right;justify-content:flex-end;",
+            _ => "text-align:center;justify-content:center;"
+        };
+        return $"<div class=\"sp-text\" style=\"color:{colour};font-family:{font};font-size:{Num(item.FontSize)}px;{weight}{italic}{decoration}{shadow}{align}\">{WebUtility.HtmlEncode(text)}</div>";
     }
 
     static string LogoHtml(ScorebugElement item, GameState? state)
@@ -169,33 +256,143 @@ public static class ScorebugHtml
             ? item.Content
             : $"{item.LogoSide.ToString().ToUpperInvariant()} LOGO";
         return $"<div class=\"sp-text\" style=\"color:{ResolveForeground(item, state)};font-family:{FontFamily(item.FontFamily)};font-size:{Num(item.FontSize)}px;\">{WebUtility.HtmlEncode(label ?? string.Empty)}</div>";
+    }    /// <summary>
+    /// The icon on the exported graphic, honouring the value it follows, its own colour and its
+    /// offset — the studio draws these, so the browser must draw them the same way rather than
+    /// leaving a flag mark on screen after the flag was cleared.
+    /// </summary>
+    static string IconHtml(ScorebugElement item, GameState? state, string colour)
+    {
+        if (item.Icon != ScorebugIcon.None && state is not null && !string.IsNullOrWhiteSpace(item.IconToken))
+        {
+            var bound = ScoreboardTemplates.Bind(item.IconToken, state, item.PeriodFormat, item.DownCaps, item.PlayClockColon, item.GameClockLeadingZero).Trim();
+            if (bound.Length == 0
+                || bound == "0"
+                || bound.Equals("false", StringComparison.OrdinalIgnoreCase)
+                || bound.Equals("no", StringComparison.OrdinalIgnoreCase))
+                return string.Empty;
+        }
+        if (!string.IsNullOrWhiteSpace(item.IconColor)) colour = Css(item.IconColor);
+        var html = IconInner(item, state, colour);
+        if (html.Length == 0) return string.Empty;
+        if (Math.Abs(item.IconOffsetX) >= 0.01 || Math.Abs(item.IconOffsetY) >= 0.01)
+            html = $"<span style=\"display:block;transform:translate({Num(item.IconOffsetX)}px,{Num(item.IconOffsetY)}px);\">{html}</span>";
+        // The icon's own chrome is separate from the element's plate and outline. It sits behind the
+        // artwork and carries its own background, outline and opacity.
+        var opacity = Math.Clamp(item.IconOpacity, 0, 1);
+        // The icon outline is drawn by each piece of artwork below; this wrapper only carries the
+        // optional plate background and opacity, so a dot does not get a rectangle around its box.
+        var hasChrome = !string.IsNullOrWhiteSpace(item.IconBackground) || opacity < 0.999;
+        if (!hasChrome) return html;
+        var chrome = new StringBuilder("display:block;position:relative;box-sizing:border-box;width:100%;height:100%;");
+        chrome.Append(CultureInfo.InvariantCulture, $"opacity:{Num(opacity)};");
+        if (!string.IsNullOrWhiteSpace(item.IconBackground)) chrome.Append($"background:{Css(item.IconBackground)};");
+        return $"<span style=\"{chrome}\">{html}</span>";
+    }
+
+    /// <summary>A hard outer outline for one piece of web artwork, matching the studio's icon border.</summary>
+    static string IconOutline(ScorebugElement item)
+    {
+        var thickness = Math.Clamp(item.IconBorderThickness, 0, 40);
+        return thickness > 0.01
+            ? $"box-shadow:0 0 0 {Num(thickness)}px {Css(item.IconBorderColor)};"
+            : "";
     }
 
     /// <summary>The live-data artwork: timeout bars, a possession dot, or the three baseball bases.</summary>
-    static string IconHtml(ScorebugElement item, GameState? state, string colour)
+    static string IconInner(ScorebugElement item, GameState? state, string colour)
     {
         if (item.Icon == ScorebugIcon.None || state is null) return string.Empty;
         switch (item.Icon)
-        {
-            case ScorebugIcon.TimeoutBars:
-                var count = Math.Clamp(item.IconVisitors ? state.AwayTimeouts : state.HomeTimeouts, 0, 12);
-                if (count == 0) return string.Empty;
-                var bars = new StringBuilder($"<div class=\"sp-bars\" style=\"color:{colour};\">");
-                for (var i = 0; i < count; i++) bars.Append("<span class=\"sp-bar\"></span>");
+        {            case ScorebugIcon.TimeoutBars:
+                var remaining = Math.Clamp(item.IconVisitors ? state.AwayTimeouts : state.HomeTimeouts, 0, 12);
+                var total = Math.Clamp(Math.Max(remaining, item.IconVisitors ? state.AwayTimeoutLimit : state.HomeTimeoutLimit), 0, 12);
+                if (total == 0) return string.Empty;
+                var vertical = item.IconVertical ? " vertical" : string.Empty;
+                var used = Css(string.IsNullOrWhiteSpace(item.IconUsedColor) ? "#FF9AA5B2" : item.IconUsedColor);
+                var barOutline = IconOutline(item);
+                var bars = new StringBuilder($"<div class=\"sp-bars{vertical}\" style=\"color:{colour};--sp-used:{used};\">");
+                for (var i = 0; i < total; i++)
+                    bars.Append(i < remaining
+                        ? $"<span class=\"sp-bar\" style=\"{barOutline}\"></span>"
+                        : $"<span class=\"sp-bar used\" style=\"{barOutline}\"></span>");
                 bars.Append("</div>");
                 return bars.ToString();
             case ScorebugIcon.PossessionDot:
                 var onLeft = state.HomePossession ^ item.IconFlipped;
                 var dotStyle = onLeft ? "left:2%;" : "right:2%;";
-                return $"<span class=\"sp-dot\" style=\"{dotStyle}color:{colour};\"></span>";
+                return $"<span class=\"sp-dot\" style=\"{dotStyle}color:{colour};{IconOutline(item)}\"></span>";
+            case ScorebugIcon.PossessionArrow:
+                // The arrow belongs to one team's plate and only shows while that team has the ball;
+                // on the away plate it points inward from the right, mirrored by Flipped.
+                var homePlate = !item.IconVisitors;
+                if (state.HomePossession != homePlate) return string.Empty;
+                if (item.IconArrowDown)
+                    return $"<span class=\"sp-arrow down\" style=\"color:{colour};{IconOutline(item)}\"></span>";
+                var flip = (!homePlate) ^ item.IconFlipped;
+                return $"<span class=\"sp-arrow {(homePlate ? "in" : "out")}{(flip ? " flip" : string.Empty)}\" style=\"color:{colour};{IconOutline(item)}\"></span>";            case ScorebugIcon.TimeoutDots:
+                var remainingPips = Math.Clamp(item.IconVisitors ? state.AwayTimeouts : state.HomeTimeouts, 0, 12);
+                var totalPips = Math.Clamp(Math.Max(remainingPips, item.IconVisitors ? state.AwayTimeoutLimit : state.HomeTimeoutLimit), 0, 12);
+                if (totalPips == 0) return string.Empty;
+                var usedPips = Css(string.IsNullOrWhiteSpace(item.IconUsedColor) ? "#FF9AA5B2" : item.IconUsedColor);
+                var pipOutline = IconOutline(item);
+                var dots = new StringBuilder($"<div class=\"sp-dots\" style=\"color:{colour};--sp-used:{usedPips};\">");
+                for (var i = 0; i < totalPips; i++)
+                    dots.Append(i < remainingPips
+                        ? $"<span class=\"sp-pip\" style=\"{pipOutline}\"></span>"
+                        : $"<span class=\"sp-pip used\" style=\"{pipOutline}\"></span>");
+                dots.Append("</div>");
+                return dots.ToString();
+            case ScorebugIcon.YellowCard:
+            case ScorebugIcon.RedCard:
+                // A card is its own colour, not the plate's: a yellow card has to read yellow.
+                var cardKind = item.Icon == ScorebugIcon.RedCard ? "sp-card red" : "sp-card yellow";
+                var cardOutline = item.IconBorderThickness > 0.01
+                    ? $"box-shadow:0 0 0 2px rgba(0,0,0,.22),0 0 0 {Num(Math.Clamp(item.IconBorderThickness, 0, 40))}px {Css(item.IconBorderColor)};"
+                    : "";
+                return $"<span class=\"{cardKind}\" style=\"{cardOutline}\"></span>";
+            case ScorebugIcon.Custom:
+            {
+                // The maker's icon is self-contained markup, so an exported graphic needs nothing else.
+                var custom = CustomIconStore.Find(item.CustomIconId);
+                if (custom is null) return string.Empty;
+                var look = custom.Resolve(state);
+                var plate = look.Plate.Length == 9 && look.Plate.StartsWith("#00", StringComparison.OrdinalIgnoreCase)
+                    ? "transparent"
+                    : Css(look.Plate);
+                var radius = look.Round ? "50%" : "16%";
+                var iconColour = string.IsNullOrWhiteSpace(item.IconColor) ? look.Color : item.IconColor;
+                var transform = $"translate({Num(look.OffsetX)}px,{Num(look.OffsetY)}px) scale({Num(look.Scale)}) rotate({Num(look.Rotation)}deg)";
+                var iconSize = Math.Clamp(Math.Min(item.Width, item.Height) * 0.62, 8, 260);
+                // A state can carry a photo instead of a glyph. Embed it like a logo, so the
+                // exported HTML is still one self-contained file.
+                var picture = DataUri(look.ImagePath);
+                var inner = picture is null
+                    ? System.Net.WebUtility.HtmlEncode(look.Glyph)
+                    : $"<img src=\"{picture}\" alt=\"\" style=\"width:100%;height:100%;object-fit:contain;display:block;\">";
+                return "<span style=\"display:flex;align-items:center;justify-content:center;width:100%;height:100%;"
+                       + $"font-size:{Num(iconSize)}px;font-weight:700;line-height:1;color:{Css(iconColour)};background:{plate};border-radius:{radius};"
+                       + $"opacity:{Num(Math.Clamp(look.Opacity, 0, 1))};transform:{transform};transform-origin:center;{IconOutline(item)}\">"
+                       + inner + "</span>";
+            }
+            case ScorebugIcon.PenaltyFlag:
+                var flagOutline = IconOutline(item);
+                var cloth = string.IsNullOrWhiteSpace(item.IconColor) ? "#F2C230" : Css(item.IconColor);
+                return $"<span class=\"sp-flag\" style=\"color:{colour};\">"
+                       + $"<span class=\"sp-flagpole\" style=\"{flagOutline}\"></span>"
+                       + $"<span class=\"sp-flagcloth\" style=\"background:{cloth};{flagOutline}\"></span>"
+                       + "</span>";
             case ScorebugIcon.Bases:
                 var first = SportValues.Read(state, "baseball.first") != 0;
                 var second = SportValues.Read(state, "baseball.second") != 0;
                 var third = SportValues.Read(state, "baseball.third") != 0;
+                var baseOutline = item.IconBorderThickness > 0.01
+                    ? $"border:{Num(Math.Clamp(item.IconBorderThickness, 0, 40))}px solid {Css(item.IconBorderColor)};"
+                    : "";
                 return $"<span class=\"sp-bases\" style=\"color:{colour};\">" +
-                       $"<span class=\"sp-base{(second ? " on" : string.Empty)}\" style=\"left:37%;top:2%;\"></span>" +
-                       $"<span class=\"sp-base{(third ? " on" : string.Empty)}\" style=\"left:68%;top:37%;\"></span>" +
-                       $"<span class=\"sp-base{(first ? " on" : string.Empty)}\" style=\"left:6%;top:37%;\"></span>" +
+                       $"<span class=\"sp-base{(second ? " on" : string.Empty)}\" style=\"left:37%;top:2%;{baseOutline}\"></span>" +
+                       $"<span class=\"sp-base{(third ? " on" : string.Empty)}\" style=\"left:68%;top:37%;{baseOutline}\"></span>" +
+                       $"<span class=\"sp-base{(first ? " on" : string.Empty)}\" style=\"left:6%;top:37%;{baseOutline}\"></span>" +
                        "</span>";
             default:
                 return string.Empty;

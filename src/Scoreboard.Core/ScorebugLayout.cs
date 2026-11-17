@@ -3,13 +3,16 @@ using System.Text.Json.Nodes;
 
 namespace Scoreboard.Core;
 
-public enum ScorebugElementKind { Text, Logo, Shape, Video, Html, Image }
+public enum ScorebugElementKind { Text, Logo, Shape, Video, Html, Image, Layout }
 
 /// <summary>
 /// How one layout hands over to the next on the audience output when a display switches. The
 /// duration lives beside it on the display, so a slow dissolve and a hard cut are one setting apart.
 /// </summary>
-public enum LayoutTransition { Cut, Fade, SlideLeft, SlideRight, SlideUp, SlideDown, Zoom }
+public enum LayoutTransition { Cut, Fade, SlideLeft, SlideRight, SlideUp, SlideDown, Zoom, Move }
+
+/// <summary>Where a value sits inside its box: its own text lines, and the block inside the plate.</summary>
+public enum ScorebugTextAlign { Left, Center, Right }
 
 /// <summary>Ambient motion that runs all the time, whatever the value is.</summary>
 public enum ScorebugAnimation { None, Pulse, Drift }
@@ -32,10 +35,83 @@ public enum ScorebugTransition
     Flip,
     Zoom,
     Pop,
-    Drop
+    Drop,
+    /// <summary>Shrink, count through the values, then grow back to full size.</summary>
+    ShrinkWheel,
+    /// <summary>Jump up, flip through a full turn while changing value, then drop back.</summary>
+    JumpFlip
 }
 
-public enum ScorebugShape { Rectangle, Circle, Triangle }
+/// <summary>The axis and direction of a JumpFlip's full turn.</summary>
+public enum ScorebugJumpDirection
+{
+    /// <summary>A side-to-side turn, moving left to right. The default.</summary>
+    LeftToRight,
+    /// <summary>A side-to-side turn in the opposite direction.</summary>
+    RightToLeft,
+    /// <summary>A top-to-bottom turn, moving down to up.</summary>
+    DownToUp,
+    /// <summary>A top-to-bottom turn in the opposite direction.</summary>
+    UpToDown
+}
+
+/// <summary>
+/// A video played as a score celebration. It is stored on the layout, so a touchdown, field goal or
+/// correction can be a green-screen clip, and the clip keeps its own chroma key when the layout is
+/// exported or the game is reopened.
+/// </summary>
+public sealed class ScoreVideo
+{
+    public string Path { get; set; } = "";
+    public string ChromaKeyColor { get; set; } = "";
+    public double ChromaKeyTolerance { get; set; } = 0.16;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsEmpty => string.IsNullOrWhiteSpace(Path);
+
+    public ScoreVideo Copy() => new()
+    {
+        Path = Path,
+        ChromaKeyColor = ChromaKeyColor,
+        ChromaKeyTolerance = ChromaKeyTolerance
+    };
+
+    public void Normalize()
+    {
+        Path = (Path ?? "").Trim();
+        ChromaKeyColor = (ChromaKeyColor ?? "").Trim();
+        ChromaKeyTolerance = Math.Clamp(double.IsFinite(ChromaKeyTolerance) ? ChromaKeyTolerance : 0.16, 0, 1);
+    }
+}
+
+/// <summary>
+/// One score-triggered clip. Amount is the signed change actually applied to the score: +6 for a
+/// touchdown, -6 for removing one, +3 for a field goal, -2 for a correction, and so on. The clip is
+/// independent of which team scored, so the same value can play for either side.
+/// </summary>
+public sealed class ScoreVideoRule
+{
+    public int Amount { get; set; }
+    public ScoreVideo Video { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsEmpty => Amount == 0 || Video is null || Video.IsEmpty;
+
+    public ScoreVideoRule Copy() => new()
+    {
+        Amount = Amount,
+        Video = (Video ?? new ScoreVideo()).Copy()
+    };
+
+    public void Normalize()
+    {
+        Amount = Math.Clamp(Amount, -999, 999);
+        Video ??= new ScoreVideo();
+        Video.Normalize();
+    }
+}
+
+public enum ScorebugShape { Rectangle, Circle, Triangle, Parallelogram }
 
 /// <summary>Where an element's colour comes from: a fixed colour, or one of the team palette slots.</summary>
 public enum ScorebugColorSource
@@ -50,6 +126,9 @@ public enum ScorebugColorSource
 /// <summary>Which team's logo a logo element shows; set in the control panel, not the studio.</summary>
 public enum ScorebugLogoSide { None, Home, Away }
 
+/// <summary>Which selected player's uploaded portrait an image element follows.</summary>
+public enum ScorebugPlayerPhotoSide { None, Home, Away }
+
 /// <summary>Artwork drawn by an element in addition to (or instead of) its bound text.</summary>
 public enum ScorebugIcon
 {
@@ -59,7 +138,23 @@ public enum ScorebugIcon
     /// <summary>A dot on the left or right edge, on the side of the team with the ball.</summary>
     PossessionDot,
     /// <summary>The three baseball bases: filled when a runner is on, a faint outline when empty.</summary>
-    Bases
+    Bases,
+    /// <summary>
+    /// A solid arrow pointing into the plate of the team with the ball, the classic possession mark
+    /// beside a name or score. It shows only while that team has possession; Visitors picks the away
+    /// plate and Flipped turns the arrow around.
+    /// </summary>
+    PossessionArrow,
+    /// <summary>One round pip per timeout left, for a plate that reads softer than timeout bars.</summary>
+    TimeoutDots,
+    /// <summary>A yellow card: a caution, shown as the referee's angled yellow rectangle.</summary>
+    YellowCard,
+    /// <summary>A red card: a sending-off, shown as the referee's angled red rectangle.</summary>
+    RedCard,
+    /// <summary>An American-football flag: a yellow pennant on a short pole.</summary>
+    PenaltyFlag,
+    /// <summary>An icon made in the Icon Creator: a glyph, its colour and its plate.</summary>
+    Custom
 }
 
 public sealed class ScorebugElement
@@ -68,8 +163,26 @@ public sealed class ScorebugElement
     public string Name { get; set; } = "Element";
     public ScorebugElementKind Kind { get; set; } = ScorebugElementKind.Text;
     public ScorebugShape Shape { get; set; } = ScorebugShape.Rectangle;
+
+    /// <summary>Corner radius for a rectangle shape, in design pixels. Zero gives square corners.</summary>
+    public double CornerRadius { get; set; } = 8;
     public string Content { get; set; } = "TEXT";
     public string? ImagePath { get; set; }
+
+    /// <summary>
+    /// For a live-layout element: the layout drawn inside this box. The source layout remains the
+    /// one being edited, so the feed follows it and can be resized without duplicating its artwork.
+    /// </summary>
+    public string? NestedLayoutId { get; set; }
+
+    /// <summary>For a live-layout element: keep the source layout's shape instead of stretching it.</summary>
+    public bool NestedPreserveAspect { get; set; } = true;
+
+    /// <summary>For image elements: follow the selected home or visitors player's uploaded photo.</summary>
+    public ScorebugPlayerPhotoSide PlayerPhotoSide { get; set; }
+
+    /// <summary>Which icon from the icon library a <see cref="ScorebugIcon.Custom"/> element draws.</summary>
+    public string? CustomIconId { get; set; }
 
     /// <summary>
     /// Set on a part copied out of another layout: every element sharing this id is the same
@@ -88,6 +201,38 @@ public sealed class ScorebugElement
 
     /// <summary>The picture's width ÷ height while <see cref="PreserveVideoAspect"/> is on. 16:9 by default.</summary>
     public double VideoAspect { get; set; } = 16.0 / 9.0;
+
+    // Fractions trimmed from each edge of a video before it is painted. Zero means the whole
+    // picture; 0.1 removes ten percent. Keeping four edges makes the crop understandable in a
+    // saved layout and lets the studio offer percentage fields rather than pixel guessing.
+    public double VideoCropLeft { get; set; }
+    public double VideoCropTop { get; set; }
+    public double VideoCropRight { get; set; }
+    public double VideoCropBottom { get; set; }
+
+    /// <summary>
+    /// For a text element: scroll the text as a bottom-screen ticker instead of holding it still.
+    /// Separate items with a vertical bar; the ticker joins them with a dot separator.
+    /// </summary>
+    public bool Ticker { get; set; }
+
+    /// <summary>The ticker's travel speed in design pixels per second.</summary>
+    public double TickerSpeed { get; set; } = 80;
+
+    /// <summary>Reverse the ticker's travel, so it enters from the left instead of the right.</summary>
+    public bool TickerReverse { get; set; }
+
+    /// <summary>
+    /// For video elements: a colour made transparent in the picture, so a green or blue screen
+    /// can sit over the scorebug. Empty turns the key off.
+    /// </summary>
+    public string ChromaKeyColor { get; set; } = "";
+
+    /// <summary>
+    /// How far a pixel may be from <see cref="ChromaKeyColor"/> and still be keyed, 0–1. A little
+    /// tolerance covers uneven studio lighting and video compression; zero keys only an exact match.
+    /// </summary>
+    public double ChromaKeyTolerance { get; set; } = 0.16;
 
     /// <summary>
     /// For video elements: which speaker this element's clip plays through (a WASAPI render device
@@ -111,7 +256,7 @@ public sealed class ScorebugElement
     public string Foreground { get; set; } = "#FFFFFFFF";
     public string Background { get; set; } = "#CC141D28";
 
-    /// <summary>Clockwise rotation of the element's content, in degrees. Mainly for slanted text.</summary>
+    /// <summary>Clockwise rotation of the whole element, in degrees: plate, artwork and text.</summary>
     public double Rotation { get; set; }
 
     /// <summary>Outline drawn around the element. Zero hides the border entirely.</summary>
@@ -152,11 +297,40 @@ public sealed class ScorebugElement
     /// <summary>How long a value change takes, in seconds: 0 snaps, 5 is a slow dissolve.</summary>
     public double TransitionSeconds { get; set; } = 0.2;
 
+    /// <summary>A readable starting speed for the two large special crossings. Their old default
+    /// was the generic 0.2 seconds, which turned a full jump-flip or a multi-number wheel into a
+    /// blur. It is only a starting value; any speed the operator types is kept.</summary>
+    public const double ReadableSpecialTransitionSeconds = 1.0;
+
+    /// <summary>For <see cref="ScorebugTransition.ShrinkWheel"/>: how small the value shrinks, 0–1.</summary>
+    public double TransitionShrink { get; set; } = 0.82;
+
+    /// <summary>For <see cref="ScorebugTransition.JumpFlip"/>: how far the value jumps up, in design pixels.</summary>
+    public double TransitionJumpHeight { get; set; } = 40;
+
+    /// <summary>For <see cref="ScorebugTransition.JumpFlip"/>: which way the full turn travels.</summary>
+    public ScorebugJumpDirection TransitionJumpDirection { get; set; } = ScorebugJumpDirection.LeftToRight;
+
+    /// <summary>A different crossing for a value that falls. Null uses <see cref="Transition"/> both ways.</summary>
+    public ScorebugTransition? TransitionDown { get; set; }
+
+    /// <summary>How long the falling crossing takes; null uses <see cref="TransitionSeconds"/>.</summary>
+    public double? TransitionDownSeconds { get; set; }
+
     /// <summary>Which team logo a logo element draws. Configured in the control panel.</summary>
     public ScorebugLogoSide LogoSide { get; set; } = ScorebugLogoSide.None;
 
-    /// <summary>How this element prints a quarter: "Full", "Short", "Number", or null for the game default.</summary>
+    /// <summary>How this element prints a quarter: "Full", "Short", "Number", "Ordinal", or null for the game default.</summary>
     public string? PeriodFormat { get; set; }
+
+    /// <summary>Print the words in this element's down line in full caps, e.g. 1st &amp; GOAL.</summary>
+    public bool DownCaps { get; set; }
+
+    /// <summary>Print {{PLAY_CLOCK}} with a leading colon, e.g. :22, on this element.</summary>
+    public bool PlayClockColon { get; set; }
+
+    /// <summary>Print {{GAME_CLOCK}} as 09:59. Off prints 9:59 and :59 under a minute on this element.</summary>
+    public bool GameClockLeadingZero { get; set; } = true;
 
     /// <summary>Optional artwork from live data: timeout bars or a possession dot.</summary>
     public ScorebugIcon Icon { get; set; } = ScorebugIcon.None;
@@ -175,6 +349,44 @@ public sealed class ScorebugElement
 
     /// <summary>For the possession dot: mirror it, putting the home side on the left.</summary>
     public bool IconFlipped { get; set; }
+
+    /// <summary>For timeout bars: scale the bars and their gaps. 1 is the box's natural size.</summary>
+    public double IconScale { get; set; } = 1;
+
+    /// <summary>For timeout bars: stack the bars downward instead of in one row.</summary>
+    public bool IconVertical { get; set; }
+
+    /// <summary>For the possession arrow: point down at the plate instead of sideways into it.</summary>
+    public bool IconArrowDown { get; set; }
+
+    /// <summary>The colour of a timeout bar or pip that has already been used.</summary>
+    public string IconUsedColor { get; set; } = "#FF9AA5B2";
+
+    /// <summary>Outline drawn around the icon artwork, separate from the element's border.</summary>
+    public double IconBorderThickness { get; set; }
+
+    /// <summary>The icon outline's fixed colour.</summary>
+    public string IconBorderColor { get; set; } = "#FFFFFFFF";
+
+    /// <summary>Fill painted behind the icon artwork, independent of the element's background.</summary>
+    public string IconBackground { get; set; } = "";
+
+    /// <summary>How solid the icon artwork is, independent of the element's opacity.</summary>
+    public double IconOpacity { get; set; } = 1;
+
+    /// <summary>
+    /// A value the icon follows, written as a token — <c>{{PENALTY_TYPE}}</c>, <c>{{STAT:Turnovers}}</c>.
+    /// The icon is on the graphic only while that value is set, so a flag icon appears when a flag is
+    /// down and disappears when it is cleared, with no key press in the studio.
+    /// </summary>
+    public string IconToken { get; set; } = "";
+
+    /// <summary>Where the icon sits relative to its box, in design pixels.</summary>
+    public double IconOffsetX { get; set; }
+    public double IconOffsetY { get; set; }
+
+    /// <summary>The icon's own colour. Empty follows the element's text colour.</summary>
+    public string IconColor { get; set; } = "";
 
     /// <summary>
     /// A gradient painted through the text itself, with any number of stops. Off leaves the text in
@@ -202,6 +414,27 @@ public sealed class ScorebugElement
 
     /// <summary>How solid the outline is, on its own.</summary>
     public double BorderOpacity { get; set; } = 1;
+
+    /// <summary>A shadow behind the printed value, so lettering stays readable over a busy photo.</summary>
+    public bool TextShadow { get; set; }
+
+    /// <summary>The shadow's colour, alpha included. A hard black is the broadcast default.</summary>
+    public string TextShadowColor { get; set; } = "#CC000000";
+
+    /// <summary>How far the shadow sits down and to the right of the letters, in design pixels.</summary>
+    public double TextShadowOffset { get; set; } = 4;
+
+    /// <summary>How soft the shadow's edge is: 0 is a hard drop, 30 a soft glow.</summary>
+    public double TextShadowSoftness { get; set; }
+
+    /// <summary>
+    /// Which way the shadow falls, in degrees clockwise: 0 sends it right, 90 straight down,
+    /// 180 left and 270 up. 45 is the broadcast down-right default.
+    /// </summary>
+    public double TextShadowAngle { get; set; } = 45;
+
+    /// <summary>How the value sits inside its box: hard left, centred, or hard right.</summary>
+    public ScorebugTextAlign TextAlign { get; set; } = ScorebugTextAlign.Center;
 
     /// <summary>
     /// The hand-over a value plays when it changes: how the old value leaves and the new one
@@ -260,10 +493,17 @@ public sealed class ScorebugLayout
     /// zoom. The hand-over belongs to the incoming layout, so a main scorebug can snap on while a
     /// lower third dissolves in beside it.
     /// </summary>
-    public LayoutTransition Transition { get; set; } = LayoutTransition.Fade;
+    public LayoutTransition Transition { get; set; } = LayoutTransition.Cut;
 
     /// <summary>How long this layout's hand-over takes, in seconds: 0 cuts, 5 is a slow dissolve.</summary>
-    public double TransitionSeconds { get; set; } = 0.5;
+    public double TransitionSeconds { get; set; } = 0;
+
+    /// <summary>
+    /// When true, a hand-over only animates the items that actually changed between the outgoing
+    /// and incoming layouts. Adding one stat window leaves the rest of the graphic still instead of
+    /// sliding the whole canvas, which is what an operator expects from a small edit.
+    /// </summary>
+    public bool OnlyAnimateChanges { get; set; } = true;
 
     /// <summary>
     /// A hand-over built in the transition maker. When it is set it replaces the preset
@@ -271,6 +511,52 @@ public sealed class ScorebugLayout
     /// in an .spl or .spd file and in a saved game.
     /// </summary>
     public MotionClip? TransitionClip { get; set; }
+
+    /// <summary>
+    /// Played when American football records a six-point score. The clip animates the layout's
+    /// items and any temporary pieces it carries; null leaves touchdowns still.
+    /// </summary>
+    public MotionClip? TouchdownAnimation { get; set; }
+
+    /// <summary>
+    /// Played when American football records a three-point score. It is independent of the
+    /// touchdown clip, so a field goal can be a small pulse while a touchdown fills the frame.
+    /// </summary>
+    public MotionClip? FieldGoalAnimation { get; set; }
+
+    // Legacy fixed celebrations. New layouts use ScoreVideos, but these stay readable so old game
+    // and display files keep their touchdown and field-goal clips instead of losing them on load.
+    public ScoreVideo? TouchdownVideo { get; set; }
+    public ScoreVideo? FieldGoalVideo { get; set; }
+
+    /// <summary>
+    /// Videos keyed by the exact signed score change pressed on the console, e.g. +6, -6, +3 or -2.
+    /// This is the current score celebration model; an empty list means no score video.
+    /// </summary>
+    public List<ScoreVideoRule> ScoreVideos { get; set; } = [];
+
+    /// <summary>The clip assigned to one exact signed score change, or null when none is set.</summary>
+    public ScoreVideo? ScoreVideoForAmount(int amount) =>
+        ScoreVideos?.FirstOrDefault(rule => rule.Amount == amount)?.Video;
+
+    /// <summary>
+    /// A video file played as this layout's hand-over, instead of the preset or a motion clip. It
+    /// runs full-frame over the outgoing picture and ends with the new layout showing underneath.
+    /// </summary>
+    public string TransitionVideoPath { get; set; } = "";
+
+    /// <summary>A colour made transparent in the hand-over video. Empty leaves the clip untouched.</summary>
+    public string TransitionVideoChromaKeyColor { get; set; } = "";
+
+    /// <summary>How far a pixel may be from the hand-over video's key colour, 0–1.</summary>
+    public double TransitionVideoChromaKeyTolerance { get; set; } = 0.16;
+
+    /// <summary>
+    /// Seconds after the hand-over video starts before the incoming layout cuts in underneath it.
+    /// 0 cuts as soon as the video's first frame is ready; a positive value keeps the outgoing
+    /// picture underneath for that beat, so the cut can land while the video fills the frame.
+    /// </summary>
+    public double TransitionVideoCutSeconds { get; set; }
 
     /// <summary>
     /// Items that opt out of the arrival motion for this layout. Empty means the whole graphic
@@ -299,7 +585,7 @@ public sealed class ScorebugLayout
             new() { Name="Away team", Content="{{AWAY_TEAM}}", X=906, Y=236, Width=300, Height=54, FontSize=36 },
             new() { Name="Away score", Content="{{AWAY_SCORE}}", X=906, Y=300, Width=300, Height=126, FontSize=102, ForegroundSource=ScorebugColorSource.AwayPrimary },
             new() { Name="Period", Content="{{PERIOD}}", X=470, Y=225, Width=340, Height=52, FontSize=28 },
-            new() { Name="Game clock", Content="{{GAME_CLOCK}}", X=430, Y=300, Width=420, Height=92, FontSize=72, Transition=ScorebugTransition.WheelUp },
+            new() { Name="Game clock", Content="{{GAME_CLOCK}}", X=430, Y=300, Width=420, Height=92, FontSize=72, Transition=ScorebugTransition.Cut },
             new() { Name="Home logo", Kind=ScorebugElementKind.Logo, LogoSide=ScorebugLogoSide.Home, Content="HOME LOGO", X=78, Y=160, Width=120, Height=64, FontSize=20 },
             new() { Name="Away logo", Kind=ScorebugElementKind.Logo, LogoSide=ScorebugLogoSide.Away, Content="AWAY LOGO", X=1082, Y=160, Width=120, Height=64, FontSize=20 }
         ]
@@ -312,8 +598,53 @@ public sealed class ScorebugLayout
         copy.Name = name ?? $"{Name} copy";
         // A duplicate is its own layout: it keeps the link settings but gets a fresh identity.
         copy.Id = Guid.NewGuid().ToString("N");
-        foreach (var element in copy.Elements) element.Id = Guid.NewGuid().ToString("N");
+        var freshIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var element in copy.Elements) freshIds[element.Id] = Guid.NewGuid().ToString("N");
+        foreach (var element in copy.Elements) element.Id = freshIds[element.Id];
+        // Every clip in the layout was keyed against the old ids. Remap them in the same breath, or
+        // per-item keys silently vanish the moment a layout is duplicated or imported.
+        copy.RemapMotionReferences(Id, copy.Id, freshIds);
         return copy;
+    }
+
+    /// <summary>
+    /// Rewrites every motion reference after a copy gives the layout and its elements fresh ids.
+    /// Whole-graphic keys carry an empty piece id and stay empty; temporary pieces keep their own
+    /// clip-local ids. A clip that named this layout now names the copy.
+    /// </summary>
+    public void RemapMotionReferences(string? fromLayoutId, string toLayoutId,
+        IReadOnlyDictionary<string, string> elementIds)
+    {
+        string Map(string? id)
+        {
+            var key = (id ?? "").Trim();
+            return key.Length > 0 && elementIds.TryGetValue(key, out var fresh) ? fresh : key;
+        }
+
+        void Remap(MotionClip? clip)
+        {
+            if (clip is null) return;
+            foreach (var phase in clip.Phases ?? [])
+            {
+                foreach (var track in phase.Tracks ?? []) track.PieceId = Map(track.PieceId);
+                foreach (var track in phase.Colors ?? []) track.PieceId = Map(track.PieceId);
+            }
+            clip.PieceOrder = (clip.PieceOrder ?? []).Select(Map).ToList();
+            if (!string.IsNullOrWhiteSpace(fromLayoutId)
+                && string.Equals(clip.TimelineLayoutId, fromLayoutId, StringComparison.OrdinalIgnoreCase))
+                clip.TimelineLayoutId = toLayoutId;
+        }
+
+        foreach (var element in Elements)
+        {
+            Remap(element.MotionTransition);
+            Remap(element.MotionAnimation);
+        }
+        Remap(TransitionClip);
+        Remap(TouchdownAnimation);
+        Remap(FieldGoalAnimation);
+        foreach (var entry in Handover ?? [])
+            entry.ElementId = Map(entry.ElementId);
     }
 }
 
@@ -332,6 +663,18 @@ public sealed class ScorebugDisplay
 
     /// <summary>The layout this display is currently sending to its audience output.</summary>
     public int PublishedIndex { get; set; }
+
+    /// <summary>
+    /// Extra layouts layered on the same on-air feed. The published layout is always included; these
+    /// ids keep lower thirds, bugs and other items on screen alongside it instead of replacing it.
+    /// </summary>
+    public List<string> PinnedLayoutIds { get; set; } = [];
+
+    /// <summary>
+    /// The node rules that run on this display. They are saved with the display and evaluated against
+    /// the published game state, so a low play clock can recolor a value or switch layouts live.
+    /// </summary>
+    public List<AutomationRule> Automations { get; set; } = [];
 }
 
 /// <summary>What is written to scorebug.json: every display, with its layouts and what is on air.</summary>
@@ -423,6 +766,48 @@ public sealed class ScorebugCatalog
     public ScorebugDisplay? FindDisplay(string? id) =>
         id is null ? null : Displays.FirstOrDefault(display => string.Equals(display.Id, id, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>Finds a layout anywhere in the document, for a live-layout feed.</summary>
+    public ScorebugLayout? FindLayout(string? layoutId)
+    {
+        if (string.IsNullOrWhiteSpace(layoutId)) return null;
+        foreach (var display in Displays)
+        {
+            var layout = display.Layouts.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, layoutId, StringComparison.OrdinalIgnoreCase));
+            if (layout is not null) return layout;
+        }
+        return null;
+    }
+
+    /// <summary>The display that owns a layout, so a nested feed can follow that display's rules.</summary>
+    public ScorebugDisplay? FindDisplayOfLayout(string? layoutId)
+    {
+        if (string.IsNullOrWhiteSpace(layoutId)) return null;
+        return Displays.FirstOrDefault(display => display.Layouts.Any(layout =>
+            string.Equals(layout.Id, layoutId, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// True when putting <paramref name="nestedLayoutId"/> inside <paramref name="hostLayoutId"/> would
+    /// make the feed contain itself, directly or through another live layout.
+    /// </summary>
+    public bool WouldCreateLayoutCycle(string? hostLayoutId, string? nestedLayoutId)
+    {
+        if (string.IsNullOrWhiteSpace(hostLayoutId) || string.IsNullOrWhiteSpace(nestedLayoutId)) return false;
+        if (string.Equals(hostLayoutId, nestedLayoutId, StringComparison.OrdinalIgnoreCase)) return true;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool Reaches(string? id)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return false;
+            if (string.Equals(id, hostLayoutId, StringComparison.OrdinalIgnoreCase)) return true;
+            if (!visited.Add(id)) return false;
+            var source = FindLayout(id);
+            if (source is null) return false;
+            return source.Elements.Any(element => element.Kind == ScorebugElementKind.Layout && Reaches(element.NestedLayoutId));
+        }
+        return Reaches(nestedLayoutId);
+    }
+
     public IReadOnlyList<ScorebugLayout> LayoutsOf(string? displayId) =>
         (FindDisplay(displayId) ?? ActiveDisplay).Layouts;
 
@@ -439,10 +824,98 @@ public sealed class ScorebugCatalog
         return display.Layouts[Math.Clamp(display.PublishedIndex, 0, display.Layouts.Count - 1)];
     }
 
+    /// <summary>Every layout currently on air for a display: the published one plus any pinned layers.</summary>
+    public IReadOnlyList<ScorebugLayout> PublishedLayoutsOf(string? displayId)
+    {
+        var display = FindDisplay(displayId) ?? ActiveDisplay;
+        if (display.Layouts.Count == 0) return [];
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { display.Layouts[Math.Clamp(display.PublishedIndex, 0, display.Layouts.Count - 1)].Id };
+        foreach (var id in display.PinnedLayoutIds ?? []) ids.Add(id);
+        return display.Layouts.Where(layout => ids.Contains(layout.Id)).ToArray();
+    }
+
+    /// <summary>
+    /// A single view of everything on air. With one layout it is that exact layout (so existing
+    /// transitions and previews are untouched); with pinned layers it is a stable composite whose
+    /// elements are drawn together, in display order.
+    /// </summary>
+    public ScorebugLayout PublishedCompositeOf(string? displayId)
+    {
+        var layouts = PublishedLayoutsOf(displayId);
+        if (layouts.Count == 0) return PublishedLayoutOf(displayId);
+        if (layouts.Count == 1) return layouts[0];
+        var first = layouts[0];
+        return new ScorebugLayout
+        {
+            Id = string.Join("+", layouts.Select(layout => layout.Id)),
+            Name = string.Join(" + ", layouts.Select(layout => layout.Name)),
+            Width = first.Width,
+            Height = first.Height,
+            Background = first.Background,
+            Transition = first.Transition,
+            TransitionSeconds = first.TransitionSeconds,
+            OnlyAnimateChanges = first.OnlyAnimateChanges,
+            TransitionClip = first.TransitionClip,
+            TouchdownAnimation = first.TouchdownAnimation,
+            FieldGoalAnimation = first.FieldGoalAnimation,
+            TouchdownVideo = first.TouchdownVideo,
+            FieldGoalVideo = first.FieldGoalVideo,
+            ScoreVideos = first.ScoreVideos,
+            TransitionVideoPath = first.TransitionVideoPath,
+            TransitionVideoChromaKeyColor = first.TransitionVideoChromaKeyColor,
+            TransitionVideoChromaKeyTolerance = first.TransitionVideoChromaKeyTolerance,
+            TransitionVideoCutSeconds = first.TransitionVideoCutSeconds,
+            Handover = first.Handover,
+            Elements = layouts.SelectMany(layout => layout.Elements).ToList()
+        };
+    }
+
     public bool IsPublished(string? displayId, int layoutIndex)
     {
         var display = FindDisplay(displayId);
-        return display is not null && display.PublishedIndex == Math.Clamp(layoutIndex, 0, display.Layouts.Count - 1);
+        if (display is null) return false;
+        var index = Math.Clamp(layoutIndex, 0, display.Layouts.Count - 1);
+        return display.PublishedIndex == index || display.PinnedLayoutIds?.Contains(display.Layouts[index].Id, StringComparer.OrdinalIgnoreCase) == true;
+    }
+
+    public bool IsLayoutPinned(string? displayId, string layoutId)
+    {
+        var display = FindDisplay(displayId);
+        return display is not null && display.PinnedLayoutIds?.Contains(layoutId, StringComparer.OrdinalIgnoreCase) == true;
+    }
+
+    /// <summary>
+    /// Replaces one display's node rules. The window edits a local copy; this is the single point
+    /// that saves the graph, validates it and asks every preview to re-evaluate it.
+    /// </summary>
+    public void UpdateAutomations(string? displayId, IEnumerable<AutomationRule>? rules)
+    {
+        var display = FindDisplay(displayId);
+        if (display is null) return;
+        display.Automations = AutomationRules.Normalize(rules?.Select(rule => rule?.Copy()));
+        Save();
+        Changed?.Invoke();
+    }
+
+    /// <summary>Adds or removes a layout from the layered on-air feed.</summary>
+    public void SetLayoutPinned(string? displayId, string layoutId, bool pinned)
+    {
+        var display = FindDisplay(displayId);
+        if (display is null || display.Layouts.All(layout => !string.Equals(layout.Id, layoutId, StringComparison.OrdinalIgnoreCase))) return;
+        display.PinnedLayoutIds ??= [];
+        var changed = false;
+        if (pinned)
+        {
+            if (!display.PinnedLayoutIds.Contains(layoutId, StringComparer.OrdinalIgnoreCase))
+            {
+                display.PinnedLayoutIds.Add(layoutId);
+                changed = true;
+            }
+        }
+        else changed = display.PinnedLayoutIds.RemoveAll(id => string.Equals(id, layoutId, StringComparison.OrdinalIgnoreCase)) > 0;
+        if (!changed) return;
+        Save();
+        Changed?.Invoke();
     }
 
     /// <summary>
@@ -650,6 +1123,12 @@ public sealed class ScorebugCatalog
             seenDisplays.Add(display.Id);
             display.ActiveIndex = Math.Clamp(display.ActiveIndex, 0, display.Layouts.Count - 1);
             display.PublishedIndex = Math.Clamp(display.PublishedIndex, 0, display.Layouts.Count - 1);
+            // Pinned layers survive an edit only while their layout still exists.
+            display.PinnedLayoutIds ??= [];
+            display.PinnedLayoutIds = display.PinnedLayoutIds
+                .Where(id => display.Layouts.Any(layout => string.Equals(layout.Id, id, StringComparison.OrdinalIgnoreCase)))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            display.Automations = AutomationRules.Normalize(display.Automations);
             foreach (var layout in display.Layouts)
             {
                 if (string.IsNullOrWhiteSpace(layout.Id) || !seenLayouts.Add(layout.Id))
@@ -664,13 +1143,28 @@ public sealed class ScorebugCatalog
                 if (string.IsNullOrWhiteSpace(layout.Name)) layout.Name = "Untitled layout";
                 if (!IsColor(layout.Background)) layout.Background = "#FF091018";
                 layout.TransitionSeconds = Math.Clamp(double.IsFinite(layout.TransitionSeconds) ? layout.TransitionSeconds : 0.5, 0, 5);
-                if (!Enum.IsDefined(layout.Transition)) layout.Transition = LayoutTransition.Fade;
+                if (!Enum.IsDefined(layout.Transition)) layout.Transition = LayoutTransition.Cut;
                 layout.TransitionClip?.Normalize();
+                layout.TouchdownAnimation?.Normalize();
+                layout.FieldGoalAnimation?.Normalize();
+                layout.TouchdownVideo = NormalizeScoreVideo(layout.TouchdownVideo);
+                layout.FieldGoalVideo = NormalizeScoreVideo(layout.FieldGoalVideo);
+                layout.ScoreVideos = NormalizeScoreVideoRules(layout.ScoreVideos);
+                layout.TransitionVideoChromaKeyColor = (layout.TransitionVideoChromaKeyColor ?? "").Trim();
+                if (!string.IsNullOrWhiteSpace(layout.TransitionVideoChromaKeyColor) && !IsColor(layout.TransitionVideoChromaKeyColor))
+                    layout.TransitionVideoChromaKeyColor = "";
+                layout.TransitionVideoChromaKeyTolerance = Math.Clamp(
+                    double.IsFinite(layout.TransitionVideoChromaKeyTolerance) ? layout.TransitionVideoChromaKeyTolerance : 0.16, 0, 1);
+                layout.TransitionVideoCutSeconds = Math.Clamp(
+                    double.IsFinite(layout.TransitionVideoCutSeconds) ? layout.TransitionVideoCutSeconds : 0, 0, 30);
                 layout.Handover ??= [];
                 layout.Handover = layout.Handover.Where(entry => entry is not null).Take(200).ToList();
                 foreach (var entry in layout.Handover) entry.ElementId = (entry.ElementId ?? "").Trim();
                 foreach (var item in layout.Elements)
                 {
+                    item.NestedLayoutId = string.IsNullOrWhiteSpace(item.NestedLayoutId) ? null : item.NestedLayoutId.Trim();
+                    if (item.Kind == ScorebugElementKind.Layout && string.Equals(item.NestedLayoutId, layout.Id, StringComparison.OrdinalIgnoreCase))
+                        item.NestedLayoutId = null;
                     item.X = Math.Clamp(double.IsFinite(item.X) ? item.X : 0, 0, layout.Width);
                     item.Y = Math.Clamp(double.IsFinite(item.Y) ? item.Y : 0, 0, layout.Height);
                     item.Width = Math.Clamp(double.IsFinite(item.Width) ? item.Width : 100, 24, layout.Width);
@@ -680,7 +1174,44 @@ public sealed class ScorebugCatalog
                     item.Rotation = Math.Clamp(double.IsFinite(item.Rotation) ? item.Rotation : 0, -360, 360);
                     item.BorderThickness = Math.Clamp(double.IsFinite(item.BorderThickness) ? item.BorderThickness : 0, 0, 40);
                     item.TransitionSeconds = Math.Clamp(double.IsFinite(item.TransitionSeconds) ? item.TransitionSeconds : 0.2, 0, 5);
+                    // Older layouts saved the generic 0.2-second default onto Jump Flip and Shrink
+                    // Wheel before those presets had a readable default. Promote that untouched
+                    // default once on load; a deliberately different speed is left alone.
+                    if (item.Transition is ScorebugTransition.ShrinkWheel or ScorebugTransition.JumpFlip
+                        && item.TransitionSeconds is > 0.001 and <= 0.201)
+                        item.TransitionSeconds = ScorebugElement.ReadableSpecialTransitionSeconds;
+                    item.TransitionShrink = Math.Clamp(double.IsFinite(item.TransitionShrink) ? item.TransitionShrink : 0.82, 0.2, 1);
+                    item.TransitionJumpHeight = Math.Clamp(double.IsFinite(item.TransitionJumpHeight) ? item.TransitionJumpHeight : 40, 0, 300);
+                    if (!Enum.IsDefined(item.TransitionJumpDirection)) item.TransitionJumpDirection = ScorebugJumpDirection.LeftToRight;
+                    item.IconOpacity = Math.Clamp(double.IsFinite(item.IconOpacity) ? item.IconOpacity : 1, 0, 1);
+                    item.IconBorderThickness = Math.Clamp(double.IsFinite(item.IconBorderThickness) ? item.IconBorderThickness : 0, 0, 40);
+                    item.IconUsedColor = (item.IconUsedColor ?? "").Trim();
+                    item.IconBorderColor = (item.IconBorderColor ?? "").Trim();
+                    item.IconBackground = (item.IconBackground ?? "").Trim();
+                    if (!IsColor(item.IconUsedColor)) item.IconUsedColor = "#FF9AA5B2";
+                    if (!IsColor(item.IconBorderColor)) item.IconBorderColor = "#FFFFFFFF";
+                    if (item.IconBackground.Length > 0 && !IsColor(item.IconBackground)) item.IconBackground = "";
+                    if (item.TransitionDownSeconds is { } downSeconds)
+                    {
+                        downSeconds = Math.Clamp(double.IsFinite(downSeconds) ? downSeconds : 0.2, 0, 5);
+                        if (item.TransitionDown is ScorebugTransition.ShrinkWheel or ScorebugTransition.JumpFlip
+                            && downSeconds is > 0.001 and <= 0.201)
+                            downSeconds = ScorebugElement.ReadableSpecialTransitionSeconds;
+                        item.TransitionDownSeconds = downSeconds;
+                    }
                     item.VideoAspect = Math.Clamp(double.IsFinite(item.VideoAspect) && item.VideoAspect > 0.05 ? item.VideoAspect : 16.0 / 9.0, 0.1, 10);
+                    item.VideoCropLeft = Math.Clamp(double.IsFinite(item.VideoCropLeft) ? item.VideoCropLeft : 0, 0, 0.49);
+                    item.VideoCropTop = Math.Clamp(double.IsFinite(item.VideoCropTop) ? item.VideoCropTop : 0, 0, 0.49);
+                    item.VideoCropRight = Math.Clamp(double.IsFinite(item.VideoCropRight) ? item.VideoCropRight : 0, 0, 0.49);
+                    item.VideoCropBottom = Math.Clamp(double.IsFinite(item.VideoCropBottom) ? item.VideoCropBottom : 0, 0, 0.49);
+                    item.TickerSpeed = Math.Clamp(double.IsFinite(item.TickerSpeed) ? item.TickerSpeed : 80, 10, 600);
+                    if (item.Ticker && item.Kind != ScorebugElementKind.Text) item.Ticker = false;
+                    if (item.VideoCropLeft + item.VideoCropRight > 0.9)
+                        item.VideoCropRight = Math.Max(0, 0.9 - item.VideoCropLeft);
+                    if (item.VideoCropTop + item.VideoCropBottom > 0.9)
+                        item.VideoCropBottom = Math.Max(0, 0.9 - item.VideoCropTop);
+                    item.ChromaKeyColor = (item.ChromaKeyColor ?? "").Trim();
+                    item.ChromaKeyTolerance = Math.Clamp(double.IsFinite(item.ChromaKeyTolerance) ? item.ChromaKeyTolerance : 0.16, 0, 1);
                     item.GradientAngle = Math.Clamp(double.IsFinite(item.GradientAngle) ? item.GradientAngle : 0, -360, 360);
                     item.TextOpacity = Math.Clamp(double.IsFinite(item.TextOpacity) ? item.TextOpacity : 1, 0, 1);
                     item.BackgroundOpacity = Math.Clamp(double.IsFinite(item.BackgroundOpacity) ? item.BackgroundOpacity : 1, 0, 1);
@@ -691,14 +1222,41 @@ public sealed class ScorebugCatalog
                     item.TextTexture?.Normalize();
                     item.MotionTransition?.Normalize();
                     item.MotionAnimation?.Normalize();
+                    item.TextShadowOffset = Math.Clamp(double.IsFinite(item.TextShadowOffset) ? item.TextShadowOffset : 4, 0, 40);
+                    item.TextShadowSoftness = Math.Clamp(double.IsFinite(item.TextShadowSoftness) ? item.TextShadowSoftness : 0, 0, 60);
+                    item.TextShadowAngle = Math.Clamp(double.IsFinite(item.TextShadowAngle) ? item.TextShadowAngle : 45, 0, 360);
+                    if (!Enum.IsDefined(item.TextAlign)) item.TextAlign = ScorebugTextAlign.Center;
+                    if (string.IsNullOrWhiteSpace(item.TextShadowColor)) item.TextShadowColor = "#CC000000";
                     if (string.IsNullOrWhiteSpace(item.BorderColor)) item.BorderColor = "#FFFFFFFF";
+                    // A colour saved as an empty string is not a colour: repairing it here is what
+                    // makes an older element show its plate again instead of a transparent box.
+                    if (!IsColor(item.Background)) item.Background = "#CC141D28";
+                    if (!IsColor(item.Foreground)) item.Foreground = "#FFFFFFFF";
+                    if (!IsColor(item.BackgroundColor2)) item.BackgroundColor2 = "#CC101820";
                     if (string.IsNullOrWhiteSpace(item.BackgroundColor2)) item.BackgroundColor2 = "#CC101820";
-                    if (item.PeriodFormat is not ("Full" or "Short" or "Number")) item.PeriodFormat = null;
+                    if (item.PeriodFormat is not ("Full" or "Short" or "Number" or "Ordinal")) item.PeriodFormat = null;
                     if (string.IsNullOrWhiteSpace(item.FontFamily)) item.FontFamily = "Segoe UI";
                 }
             }
         }
         ActiveDisplayIndex = Math.Clamp(ActiveDisplayIndex, 0, Displays.Count - 1);
+        // A live layout cannot contain itself. Files can be hand-edited or older copies can create a
+        // loop, so break the first back-edge deterministically instead of recursing forever.
+        foreach (var display in Displays)
+        {
+            foreach (var layout in display.Layouts)
+            {
+                foreach (var item in layout.Elements.Where(element => element.Kind == ScorebugElementKind.Layout))
+                {
+                    if (item.NestedLayoutId is not { } nestedId) continue;
+                    var target = FindLayout(nestedId);
+                    if (target is null) continue;
+                    if (string.Equals(nestedId, layout.Id, StringComparison.OrdinalIgnoreCase)
+                        || WouldCreateLayoutCycle(layout.Id, nestedId))
+                        item.NestedLayoutId = null;
+                }
+            }
+        }
         // A link that no longer resolves (a deleted layout, a display that is gone) is dropped rather
         // than left dangling; a layout can only link to another display.
         foreach (var display in Displays)
@@ -722,6 +1280,32 @@ public sealed class ScorebugCatalog
                 }
             }
         }
+    }
+
+    /// <summary>Keeps only usable score videos and stores the chroma key as typed.</summary>
+    static ScoreVideo? NormalizeScoreVideo(ScoreVideo? video)
+    {
+        if (video is null) return null;
+        video.Normalize();
+        if (!string.IsNullOrWhiteSpace(video.ChromaKeyColor) && !IsColor(video.ChromaKeyColor))
+            video.ChromaKeyColor = "";
+        return video.IsEmpty ? null : video;
+    }
+
+    /// <summary>Keeps one rule per signed score value, ordered so the editor is predictable.</summary>
+    static List<ScoreVideoRule> NormalizeScoreVideoRules(IEnumerable<ScoreVideoRule>? rules)
+    {
+        var byAmount = new SortedDictionary<int, ScoreVideoRule>();
+        foreach (var rule in rules ?? [])
+        {
+            if (rule is null) continue;
+            rule.Normalize();
+            if (!string.IsNullOrWhiteSpace(rule.Video.ChromaKeyColor) && !IsColor(rule.Video.ChromaKeyColor))
+                rule.Video.ChromaKeyColor = "";
+            if (rule.IsEmpty) continue;
+            byAmount[rule.Amount] = rule;
+        }
+        return byAmount.Values.ToList();
     }
 
     /// <summary>#RGB, #ARGB, #RRGGBB or #AARRGGBB, so a bad entry can never blank the canvas.</summary>
@@ -802,6 +1386,8 @@ public sealed class ScorebugCatalog
         if (display.Layouts.Count <= 1 || index < 0 || index >= display.Layouts.Count) return false;
         var removed = display.Layouts[index];
         display.Layouts.RemoveAt(index);
+        display.PinnedLayoutIds ??= [];
+        display.PinnedLayoutIds.RemoveAll(id => string.Equals(id, removed.Id, StringComparison.OrdinalIgnoreCase));
         if (display.ActiveIndex >= display.Layouts.Count) display.ActiveIndex = display.Layouts.Count - 1;
         if (display.PublishedIndex >= display.Layouts.Count) display.PublishedIndex = display.Layouts.Count - 1;
         if (display.ActiveIndex > index) display.ActiveIndex--;
@@ -936,6 +1522,10 @@ public sealed class ScorebugCatalog
     {
         var layout = source.Copy(name ?? source.Name);
         if (string.IsNullOrWhiteSpace(layout.Name)) layout.Name = $"Layout {ActiveDisplay.Layouts.Count + 1}";
+        // A single .spl file deliberately carries one layout, not the layouts a live feed points at,
+        // so those references cannot be trusted in this game. The operator can pick a source again.
+        foreach (var element in layout.Elements.Where(element => element.Kind == ScorebugElementKind.Layout))
+            element.NestedLayoutId = null;
         ActiveDisplay.Layouts.Add(layout);
         ActiveDisplay.ActiveIndex = ActiveDisplay.Layouts.Count - 1;
         Validate();
@@ -951,19 +1541,7 @@ public sealed class ScorebugCatalog
     /// </summary>
     public int ImportDisplay(ScorebugDisplay source, string? name = null)
     {
-        var copy = JsonSerializer.Deserialize<ScorebugDisplay>(JsonSerializer.Serialize(source)) ?? new ScorebugDisplay();
-        copy.Id = Guid.NewGuid().ToString("N");
-        if (!string.IsNullOrWhiteSpace(name)) copy.Name = name.Trim();
-        if (copy.Layouts.Count == 0) copy.Layouts.Add(new ScorebugLayout { Name = "Layout 1" });
-        foreach (var layout in copy.Layouts)
-        {
-            layout.Id = Guid.NewGuid().ToString("N");
-            layout.LinkDisplayId = null;
-            layout.LinkLayoutId = null;
-            foreach (var element in layout.Elements) element.Id = Guid.NewGuid().ToString("N");
-        }
-        copy.ActiveIndex = Math.Clamp(copy.ActiveIndex, 0, copy.Layouts.Count - 1);
-        copy.PublishedIndex = Math.Clamp(copy.PublishedIndex, 0, copy.Layouts.Count - 1);
+        var copy = ScorebugFiles.FreshDisplay(source, name);
         Displays.Add(copy);
         ActiveDisplayIndex = Displays.Count - 1;
         Validate();
@@ -1058,6 +1636,91 @@ public sealed class ScorebugCatalog
     public void ApplyTransitionToLayout(MotionClip? clip)
     {
         Update(layout => layout.TransitionClip = clip is null || clip.IsEmpty ? null : clip.Snapshot());
+    }
+
+    /// <summary>
+    /// Assigns the clip played for a football score event. Empty or null clears it, so the
+    /// touchdown and field-goal animations can each be switched off independently.
+    /// </summary>
+    public void ApplyScoreAnimationToLayout(bool touchdown, MotionClip? clip)
+    {
+        Update(layout =>
+        {
+            var stored = clip is null || clip.IsEmpty ? null : clip.Snapshot();
+            if (touchdown)
+            {
+                layout.TouchdownAnimation = stored;
+                if (stored is not null) layout.TouchdownVideo = null;
+            }
+            else
+            {
+                layout.FieldGoalAnimation = stored;
+                if (stored is not null) layout.FieldGoalVideo = null;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Assigns a video celebration to one scoring play. A video and a made animation are
+    /// alternatives, so setting a video clears the animation for that play. Null clears only the
+    /// video, leaving any animation that was set elsewhere alone.
+    /// </summary>
+    public void ApplyScoreVideoToLayout(bool touchdown, ScoreVideo? video)
+    {
+        Update(layout =>
+        {
+            var stored = video is null || video.IsEmpty ? null : video.Copy();
+            if (touchdown)
+            {
+                layout.TouchdownVideo = stored;
+                if (stored is not null) layout.TouchdownAnimation = null;
+            }
+            else
+            {
+                layout.FieldGoalVideo = stored;
+                if (stored is not null) layout.FieldGoalAnimation = null;
+            }
+        });
+    }
+
+    /// <summary>Clears both possible celebrations for one scoring play.</summary>
+    public void ClearScoreCelebration(bool touchdown)
+    {
+        Update(layout =>
+        {
+            if (touchdown)
+            {
+                layout.TouchdownAnimation = null;
+                layout.TouchdownVideo = null;
+            }
+            else
+            {
+                layout.FieldGoalAnimation = null;
+                layout.FieldGoalVideo = null;
+            }
+        });
+    }
+
+    /// <summary>The clip assigned to one exact signed score change, or null when none is set.</summary>
+    public ScoreVideo? ScoreVideoForAmount(int amount) => Layout.ScoreVideoForAmount(amount);
+
+    /// <summary>
+    /// Assigns a video to the exact signed score change. Null or an empty path removes that value's
+    /// clip. The same value may be used for home and visitors; only the displayed change matters.
+    /// </summary>
+    public void ApplyScoreVideoToLayout(int amount, ScoreVideo? video)
+    {
+        if (amount == 0) return;
+        Update(layout =>
+        {
+            layout.ScoreVideos ??= [];
+            layout.ScoreVideos.RemoveAll(rule => rule.Amount == amount);
+            if (video is null || video.IsEmpty) return;
+            var stored = video.Copy();
+            stored.Normalize();
+            layout.ScoreVideos.Add(new ScoreVideoRule { Amount = amount, Video = stored });
+            layout.ScoreVideos = layout.ScoreVideos.OrderBy(rule => rule.Amount).ToList();
+        });
     }
 
     /// <summary>Puts a hand-over on one element, played as its value changes.</summary>

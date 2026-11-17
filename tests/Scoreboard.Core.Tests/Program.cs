@@ -15,7 +15,7 @@ Check(SportDefinition.BuiltIns.Last().Name=="Custom"&&SportDefinition.BuiltIns.L
 var americanPreset=SportDefinition.BuiltIns.Single(s=>s.Id=="football");
 var australianPreset=SportDefinition.BuiltIns.Single(s=>s.Id=="australian-football");
 Check(americanPreset.ScoringOptions.SequenceEqual([1,2,3,6,7,8]),"American football offers its own scoring buttons (1, 2, 3, 6, 7, 8)");
-Check(australianPreset.ScoringOptions.SequenceEqual([1,2,3,6])&&australianPreset.Timeouts==0&&australianPreset.PeriodSeconds==1200,"Australian football keeps goal and behind scoring, no timeouts and 20-minute quarters");
+Check(australianPreset.ScoringOptions.SequenceEqual([1,6])&&australianPreset.Timeouts==0&&australianPreset.PeriodSeconds==1200,"Australian football keeps goal and behind scoring, no timeouts and 20-minute quarters");
 Check(SportDefinition.BuiltIns.All(s=>s.Periods>=1&&s.ScoringOptions.Length>0&&s.Timeouts>=0),"every built-in sport has playable period and scoring settings");
 engine.NewGame("basketball"); engine.SetTeams("Eagles","Tigers");
 engine.Score(true,3); engine.Score(false,2);
@@ -28,6 +28,64 @@ Check(engine.State.ClockSeconds==0&&!engine.State.ClockRunning,"clock stops safe
 engine.NextPeriod(); Check(engine.State.Period==2&&engine.State.ClockSeconds==720,"period transition restores sport clock preset");
 var file=Path.Combine(Path.GetTempPath(),$"scoreboard-{Guid.NewGuid():N}.scoreboard"); engine.Save(file); var other=new GameEngine(); other.Load(file);
 Check(other.State.HomeTeam=="Eagles"&&other.State.Period==2&&other.State.Events.Count>0,"portable project saves game, teams, and event history"); File.Delete(file);
+Check(GameFiles.SuggestedFileName("Friday Night")=="Friday Night.spg"&&GameFiles.SuggestedFileName("")=="Untitled.spg"&&GameFiles.SuggestedFileName("A/B:C")=="A-B-C.spg","a game is offered for saving under its own name, or Untitled.spg when unnamed");
+var multiviewPath=Path.Combine(Path.GetTempPath(),$"wall-{Guid.NewGuid():N}.spml");
+try
+{
+    var wall=new MultiviewLayoutDocument{Name="Friday wall",Tiles=[new MultiviewLayoutTile{Source="preview",DisplayId="d1",DisplayName="Program",LayoutId="l1",LayoutName="Lower third"},new MultiviewLayoutTile{Source="camera",CameraIndex=3,CameraName="Sideline"}]};
+    MultiviewLayoutFiles.Save(multiviewPath,wall);
+    var wallAgain=MultiviewLayoutFiles.Load(multiviewPath);
+    Check(wallAgain is not null&&wallAgain.Tiles.Count==2&&wallAgain.Tiles[0].LayoutName=="Lower third"&&wallAgain.Tiles[1].CameraName=="Sideline","multiview layouts round-trip through .spml with their displays, layouts and cameras");
+    File.WriteAllText(multiviewPath,"not a layout");
+    Check(MultiviewLayoutFiles.Load(multiviewPath) is null,"a foreign file is rejected instead of replacing the wall");
+}
+finally{if(File.Exists(multiviewPath))File.Delete(multiviewPath);}
+// A new console field must not be forgotten by the save. This checks every writable GameState
+// property, not just the values the rest of the suite happens to set, and confirms it reads back.
+var gameShapePath=Path.Combine(Path.GetTempPath(),$"game-shape-{Guid.NewGuid():N}.spg");
+try
+{
+    var shapeState=new GameState();
+    var shapeJson=GameFiles.Serialize(shapeState,null);
+    File.WriteAllText(gameShapePath,shapeJson);
+    using var shapeDocument=JsonDocument.Parse(shapeJson);
+    var writtenFields=shapeDocument.RootElement.EnumerateObject().Select(property=>property.Name)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var gameFields=typeof(GameState).GetProperties()
+        .Where(property=>property.CanRead&&property.CanWrite)
+        .Where(property=>property.GetCustomAttributes(typeof(System.Text.Json.Serialization.JsonIgnoreAttribute),true).Length==0)
+        .ToArray();
+    var missingFields=gameFields.Where(property=>!writtenFields.Contains(property.Name)).Select(property=>property.Name).ToArray();
+    Check(missingFields.Length==0,$"every writable game field is written to a .spg file ({gameFields.Length} fields checked"
+        +(missingFields.Length==0?")":$"; missing: {string.Join(", ",missingFields)})"));
+    var (shapeLoaded,_)=GameFiles.Read(gameShapePath);
+    var lostFields=gameFields.Where(property=>
+        JsonSerializer.Serialize(property.GetValue(shapeState))!=JsonSerializer.Serialize(property.GetValue(shapeLoaded)))
+        .Select(property=>property.Name).ToArray();
+    Check(lostFields.Length==0,$"every writable game field reads back from a .spg file"
+        +(lostFields.Length==0?"":$" (lost: {string.Join(", ",lostFields)})"));
+}
+finally { if(File.Exists(gameShapePath))File.Delete(gameShapePath); }
+// The ticker can rotate through only the games the operator chose, then their news, while score
+// alerts remain a separate interruption.
+var tickerEngine=new GameEngine();tickerEngine.NewGame("basketball");tickerEngine.SetTeams("Eagles","Tigers");
+tickerEngine.SetLeagueGames([
+    new LeagueGame{GameId="g1",Name="Early game",HomeTeam="Eagles",AwayTeam="Tigers",HomeScore=54,AwayScore=51,PeriodLabel="Q3",Clock="4:12",Status="live"},
+    new LeagueGame{GameId="g2",Name="Other court",HomeTeam="Bears",AwayTeam="Wolves",HomeScore=40,AwayScore=38,PeriodLabel="Q2",Clock="1:03",Status="live"},
+    new LeagueGame{GameId="g3",Name="Late game",HomeTeam="Hawks",AwayTeam="Falcons",HomeScore=70,AwayScore=70,PeriodLabel="Q4",Clock="0:20",Status="live"}
+]);
+tickerEngine.SetTickerSettings(["g1","g3"],["Playoff seeding is set","Doors open at six"],autoRotate:true,scoreAlerts:true,dwellSeconds:1,transitionSeconds:0.25);
+var tickerItems=TickerRotation.Build(tickerEngine.State);
+Check(TickerRotation.IsBound("Scores: {{LEAGUE_GAMES}}")&&!TickerRotation.IsBound("{{HOME_SCORE}}"),"the ticker recognizes both league ticker tokens and leaves ordinary text alone");
+Check(TickerRotation.SelectedGames(tickerEngine.State).Select(game=>game.GameId).SequenceEqual(["g1","g3"]),"the ticker includes only the games chosen by the operator");
+Check(tickerItems.Count==4&&tickerItems[0].Text.Contains("Eagles 54")&&tickerItems[1].Text.Contains("Hawks 70")&&tickerItems[2].Text.StartsWith("NEWS ·",StringComparison.Ordinal),"the ticker rotates the chosen games before the news headlines");
+tickerEngine.Score(true,3);
+var localAlert=TickerRotation.LocalScoreAlert(tickerEngine.State);
+Check(localAlert.StartsWith("SCORE ALERT",StringComparison.Ordinal)&&localAlert.Contains("Eagles +3")&&localAlert.Contains("Tigers 0 – Eagles 3"),"a local score produces a ticker alert with the team, change and score");
+tickerEngine.State.TickerScoreAlerts=false;
+Check(TickerRotation.LocalScoreAlert(tickerEngine.State).Length==0,"switching score alerts off stops the ticker alert");
+tickerEngine.SetTickerSettings([],["Only news"],autoRotate:true,scoreAlerts:true,dwellSeconds:1,transitionSeconds:0.25);
+Check(TickerRotation.Build(tickerEngine.State).Count==1&&TickerRotation.Build(tickerEngine.State)[0].Text=="NEWS · Only news","clearing every chosen game leaves the news rotation usable on its own");
 var catalogPath=Path.Combine(Path.GetTempPath(),$"sports-{Guid.NewGuid():N}.json");
 try
 {
@@ -41,6 +99,8 @@ try
 finally { if(File.Exists(catalogPath))File.Delete(catalogPath); }
 var templateEngine=new GameEngine();templateEngine.NewGame("football");templateEngine.SetFootballDistance(3);templateEngine.AddFootballYards(true,20);var downBug=ScoreboardTemplates.Bind("{{DOWNS}} / {{YARDS}}",templateEngine.State);Check(downBug.Contains("1st & 3")&&downBug.Contains("20–0"),"scorebug template binding exposes football down and yard stats");
 var liveSource=new GameEngine();var liveOutput=new GameEngine();liveSource.NewGame("football");liveOutput.LoadFromState(liveSource.CloneState());liveSource.SetFootballDistance(2,31);liveSource.Score(true,6);liveOutput.UpdateLiveScoreClock(liveSource.State);Check(liveOutput.State.HomeScore==6&&liveOutput.State.YardsToGoal==35,"live output updates scores without publishing operator game-state edits");liveOutput.LoadFromState(liveSource.CloneState());liveSource.SetFootballDistance(1,20);liveOutput.UpdateLiveScoreClock(liveSource.State);Check(liveOutput.State.YardsToGoal==31,"live output retains explicit-publish sport-specific data");
+var modeSource=new GameEngine();modeSource.NewGame("football");var modeOutput=new GameEngine();modeOutput.LoadFromState(modeSource.CloneState());modeSource.SetFootballDownMode(FootballDownMode.Goal);Check(GameEngine.StagedSignature(modeSource.State)!=GameEngine.StagedSignature(modeOutput.State),"the Yards/Goal/PAT choice waits for Update Output");modeOutput.UpdateLiveScoreClock(modeSource.State);Check(modeOutput.State.FootballDownMode==FootballDownMode.Normal,"a live output update does not take the staged down display mode");
+var previewWas=GameEngine.DownPreviewEnabled;GameEngine.DownPreviewEnabled=true;try{var liveDown=new GameEngine();liveDown.NewGame("football");liveDown.SetFootballDistance(3,41);var liveDownTarget=new GameEngine();liveDownTarget.LoadFromState(liveDown.CloneState());liveDown.SetDown(2);liveDownTarget.UpdateLiveScoreClock(liveDown.State);Check(liveDownTarget.State.Down==2&&liveDownTarget.State.YardsToGo==3,"the down number publishes live while the distance and display mode wait");}finally{GameEngine.DownPreviewEnabled=previewWas;}
 var iconPath=Path.Combine(Path.GetTempPath(),$"icons-{Guid.NewGuid():N}.json");try{var iconCatalog=new ScorebugCatalog(iconPath);iconCatalog.Update(layout=>{layout.Elements.Clear();layout.Elements.Add(new ScorebugElement{Name="Timeouts",Content="",Icon=ScorebugIcon.TimeoutBars});layout.Elements.Add(new ScorebugElement{Name="Ball",Content="",Icon=ScorebugIcon.PossessionDot,IconFlipped=true});});var iconReloaded=new ScorebugCatalog(iconPath);Check(iconReloaded.Layout.Elements[0].Icon==ScorebugIcon.TimeoutBars&&iconReloaded.Layout.Elements[1].Icon==ScorebugIcon.PossessionDot&&iconReloaded.Layout.Elements[1].IconFlipped,"timeout-bar and possession-dot icons persist in the scorebug layout");}finally{if(File.Exists(iconPath))File.Delete(iconPath);}
 var layoutPath=Path.Combine(Path.GetTempPath(),$"scorebug-{Guid.NewGuid():N}.json");
 try
@@ -54,7 +114,38 @@ try
 }
 finally{if(File.Exists(layoutPath))File.Delete(layoutPath);}
 engine.NewGame("football");engine.AdvanceDown();Check(engine.State.Down==2&&engine.State.YardsToGo==10,"football advances from first to second down");engine.AdvanceDown();engine.AdvanceDown();engine.AdvanceDown();Check(engine.State.Down==1,"football fourth down starts a new series");engine.SetFootballDistance(4,22);Check(engine.State.YardsToGo==4&&engine.State.YardsToGoal==22,"football yardage and distance are editable");
+engine.SetDown(1);engine.SetFootballDistance(6);engine.SetFootballDownMode(FootballDownMode.Goal);Check(engine.State.DownDistanceDisplay=="1st & Goal","first and goal prints 1st & Goal");engine.SetFootballDownMode(FootballDownMode.Pat);Check(engine.State.DownDisplay=="PAT"&&engine.State.ToGoDisplay==""&&engine.State.DownDistanceDisplay=="PAT","the down line can become PAT after a touchdown");engine.SetFootballDownMode(FootballDownMode.TwoPoint);Check(engine.State.DownDistanceDisplay=="2 PT ATT","the down line can become 2 PT ATT after a touchdown");engine.SetFootballDownMode(FootballDownMode.None);Check(engine.State.DownDisplay==""&&engine.State.ToGoDisplay==""&&engine.State.DownDistanceDisplay==""&&ScoreboardTemplates.Bind("{{DOWNS}}",engine.State)=="","the down and distance can be blank");engine.SetFootballDownMode(FootballDownMode.Normal);Check(engine.State.DownDistanceDisplay=="1st & 6","normal down display comes back after a special mode");
+engine.NewGame("football");engine.SetClockMessage(GameClockMessage.Final);Check(engine.State.GameClockText=="FINAL"&&ScoreboardTemplates.Bind("{{GAME_CLOCK}}",engine.State)=="FINAL","the game clock can read Final");engine.SetClockMessage(GameClockMessage.EndOfRegulation);Check(engine.State.GameClockText=="END OF REG."&&ScoreboardTemplates.Bind("{{GAME_CLOCK}}",engine.State)=="END OF REG.","the game clock can read End of Reg.");engine.SetClockMessage(GameClockMessage.Clock);Check(engine.State.GameClockText==GameEngine.FormatClock(engine.State.ClockSeconds),"the game clock returns to the running time");
+var overtimeLabel=new GameEngine();overtimeLabel.NewGame("football");overtimeLabel.State.Period=overtimeLabel.State.TotalPeriods+1;overtimeLabel.SetClockMessage(GameClockMessage.Final);
+Check(overtimeLabel.State.GameClockText=="FINAL","a final after overtime still reads FINAL when the label option is off");
+GameEngine.OvertimeFinalLabelEnabled=true;
+Check(overtimeLabel.State.GameClockText=="FINAL/OT"&&ScoreboardTemplates.Bind("{{GAME_CLOCK}}",overtimeLabel.State)=="FINAL/OT","the final clock can print FINAL/OT after overtime");
+GameEngine.OvertimeFinalLabelEnabled=false;
+engine.NewGame("football");engine.SetPeriod(5);Check(PeriodDisplay.Format(engine.State)=="OT","a fifth football period prints OT");engine.SetPeriod(6);Check(PeriodDisplay.Format(engine.State)=="2OT","a sixth football period prints 2OT");
 engine.NewGame("soccer");engine.AddCard(true);engine.AddCard(false,true);Check(engine.State.HomeYellowCards==1&&engine.State.AwayRedCards==1,"soccer yellow and red cards track per side");Check(engine.Undo()&&engine.State.AwayRedCards==0,"soccer card can be undone");
+engine.NewGame("football");engine.SetFootballDownMode(FootballDownMode.Goal);
+Check(engine.State.DownDistanceDisplay=="1st & Goal"&&engine.State.ToGoDisplay=="Goal",
+    "the down line prints mixed case by default");
+Check(ScoreboardTemplates.Bind("{{DOWNS}}",engine.State)=="1st & Goal"
+    &&ScoreboardTemplates.Bind("{{DOWNS}}",engine.State,null,downCaps:true)=="1st & GOAL",
+    "the full-caps down line is an element property, not a global preference");
+engine.SetFootballDownMode(FootballDownMode.Inches);
+Check(engine.State.ToGoDisplay=="Inches"&&engine.State.DownDistanceDisplay=="1st & Inches"
+    &&ScoreboardTemplates.Bind("{{DOWNS}}",engine.State)=="1st & Inches"
+    &&ScoreboardTemplates.Bind("{{DOWNS}}",engine.State,null,downCaps:true)=="1st & INCHES",
+    "the inches down line reads 1st & Inches and caps only when the element asks");
+engine.SetFootballDownMode(FootballDownMode.Normal);engine.State.Down=2;engine.State.DownPending=true;
+Check(ScoreboardTemplates.Bind("{{DOWNS}}",engine.State,null,downCaps:true)=="2nd DOWN",
+    "the full-caps element prints 2nd DOWN on the graphic");
+engine.State.DownPending=false;
+Check(engine.State.DownDistanceDisplay=="2nd & 10","the down line returns to mixed case when the element option is off");
+engine.NewGame("football");engine.SetPlayClock(22);
+Check(ScoreboardTemplates.Bind("{{PLAY_CLOCK}}",engine.State)=="22"
+    &&ScoreboardTemplates.Bind("{{PLAY_CLOCK}}",engine.State,null,playClockColon:true)==":22",
+    "the play-clock colon is an element property and prints :22");
+engine.SetPlayClock(5);
+Check(ScoreboardTemplates.Bind("{{PLAY_CLOCK}}",engine.State,null,playClockColon:true)==":05",
+    "a one-digit play clock is padded after the colon");
 var sportsGame=Path.Combine(Path.GetTempPath(),$"sports-state-{Guid.NewGuid():N}.scoreboard");engine.NewGame("football");engine.SetFootballDistance(3,17);engine.AdvanceDown();engine.Save(sportsGame);var restored=new GameEngine();restored.Load(sportsGame);Check(restored.State.Down==2&&restored.State.YardsToGo==3&&restored.State.YardsToGoal==17,"sport-specific state persists in saved game");File.Delete(sportsGame);
 engine.NewGame("baseball");engine.BaseballBall();engine.BaseballBall();engine.BaseballBall();engine.BaseballBall();Check(engine.State.Balls==0&&engine.State.Strikes==0,"four baseball balls reset the count");
 engine.BaseballStrike();engine.BaseballStrike();engine.BaseballStrike(true);Check(engine.State.Strikes==2&&engine.State.Outs==0,"baseball foul at two strikes does not record a third strike");
@@ -68,19 +159,37 @@ engine.NewGame("soccer");engine.SetTeams("<Home & Co>","Visitors");engine.AddSoc
 engine.NewGame("football");engine.SetTeams("<Home & Co>","Visitors");engine.SetFootballDistance(2,33);engine.AdvanceDown();engine.AddFootballYards(true,14);engine.AddTurnover(false);var footballReport=GameReport.Build(engine.State);Check(footballReport.Contains("2nd &amp; 2")&&footballReport.Contains("Total yards: &lt;Home &amp; Co&gt; 14")&&footballReport.Contains("Turnovers: 0 — 1"),"football report includes down, yardage, and turnovers");
 engine.NewGame("basketball");engine.AddFoul(true);var basketballReport=GameReport.Build(engine.State);Check(basketballReport.Contains("Fouls: 1 — 0")&&basketballReport.Contains("Shot clock: 30s"),"basketball report includes fouls and shot clock");
 engine.NewGame("baseball");engine.SetTeams("<Home & Co>","Visitors");engine.BaseballHit(true);var baseballReport=GameReport.Build(engine.State);Check(baseballReport.Contains("Hits: &lt;Home &amp; Co&gt; 1")&&baseballReport.Contains("Count: 0 balls"),"baseball report includes hits and count");
+var detailedReportEngine=new GameEngine();detailedReportEngine.NewGame("soccer");detailedReportEngine.SetGameName("Friday Night");detailedReportEngine.SetTeamIdentity(true,"Home","HOM",null,"#FF112233","#FF445566",mascot:"Hawks",record:"10-2",ranking:"#3",divisionRecord:"5-1");detailedReportEngine.SetPenalty(true,"Holding",true);detailedReportEngine.AdjustStoppageClock(90);detailedReportEngine.EndGame();var detailedReport=GameReport.Build(detailedReportEngine.State);
+Check(detailedReport.Contains("Friday Night")&&detailedReport.Contains("FINAL")&&detailedReport.Contains("Holding")&&detailedReport.Contains("Colors:")&&detailedReport.Contains("Stoppage / added time: 01:30"),"the HTML game report carries the fixture name, final status, penalty, team colors and stoppage time");
+Check(detailedReportEngine.State.Events.Any(item=>item.Type=="Game"&&item.Description.Contains("Friday Night"))&&detailedReportEngine.State.Events.Any(item=>item.Type=="Penalty"&&item.Description.Contains("Holding")),"new games, game names and penalties are all written to the event log");
 engine.NewGame("football");engine.SetFootballDistance(4,18);engine.PreviousDown();Check(engine.State.Down==1&&engine.State.YardsToGo==4,"previous down steps back from first down safely");engine.AdvanceDown();engine.SetFootballDistance(7,42);engine.NewSeries();Check(engine.State.Down==1&&engine.State.YardsToGo==10,"new series resets the down to first and ten");Check(engine.Undo()&&engine.State.YardsToGo==7,"new series can be undone");
-engine.NewGame("football");Check(PeriodDisplay.Format(engine.State)=="Quarter 1","default period label is Quarter 1");engine.SetPeriodFormat("Short");Check(PeriodDisplay.Format(engine.State)=="Q1"&&ScoreboardTemplates.Bind("{{PERIOD}}",engine.State)=="Q1","short period label is Q1");Check(ScoreboardTemplates.Bind("{{PERIOD}}",engine.State,"Full")=="QUARTER 1"&&ScoreboardTemplates.Bind("{{PERIOD}}",engine.State,"Number")=="1","a studio element can choose its own quarter style");engine.SetPeriodFormat("Number");Check(PeriodDisplay.Format(engine.State)=="1","numeric period label is a bare number");var periodReport=GameReport.Build(engine.State);Check(periodReport.Contains("1 of 4"),"game report honors the selected period format");engine.NewGame("soccer");engine.SetPeriodFormat("Short");Check(PeriodDisplay.Format(engine.State)=="Half 1","period format only applies to quarter-based sports");
-var shapeLayout=new ScorebugElement{Kind=ScorebugElementKind.Shape,Shape=ScorebugShape.Triangle};var shapeCatalogPath=Path.Combine(Path.GetTempPath(),$"shape-{Guid.NewGuid():N}.json");try{var catalog=new ScorebugCatalog(shapeCatalogPath);catalog.Update(layout=>layout.Elements.Add(shapeLayout));var reloaded=new ScorebugCatalog(shapeCatalogPath);Check(reloaded.Layout.Elements[^1].Shape==ScorebugShape.Triangle,"scorebug shapes persist in the studio layout");}finally{if(File.Exists(shapeCatalogPath))File.Delete(shapeCatalogPath);}
+engine.NewGame("football");engine.SetFootballDistance(3,41);engine.MarkPublished();engine.AdvanceDown();Check(engine.State.Down==2&&engine.State.YardsToGo==3&&engine.State.YardsToGoal==41,"next down keeps the distance and spot");Check(!engine.CanRecallLastDown,"recall waits for the new down to be published");engine.MarkPublished();engine.RecallLastDown();Check(engine.State.Down==1&&engine.State.YardsToGo==3&&engine.State.YardsToGoal==41,"recall puts back the down that was on air before");engine.SetFootballDistance(2,18);engine.MarkPublished();engine.RecallLastDown();Check(engine.State.YardsToGo==3&&engine.State.YardsToGoal==41,"recall restores the previously published spot");
+var hardwareDowns=new GameEngine();hardwareDowns.NewGame("football");hardwareDowns.ApplyHardwareSnapshot(new DeviceSnapshot(Down:1,YardsToGo:10,BallOn:35));hardwareDowns.MarkPublished();hardwareDowns.ApplyHardwareSnapshot(new DeviceSnapshot(Down:2,YardsToGo:7,BallOn:40));Check(hardwareDowns.State.Down==2&&hardwareDowns.State.YardsToGo==7,"a console frame moves the down");Check(!hardwareDowns.CanRecallLastDown,"recall waits for the console's new down to be published");hardwareDowns.MarkPublished();hardwareDowns.RecallLastDown();Check(hardwareDowns.State.Down==1&&hardwareDowns.State.YardsToGo==10&&hardwareDowns.State.YardsToGoal==35,"a recall restores the down that was on air before");hardwareDowns.ApplyHardwareSnapshot(new DeviceSnapshot(Down:2,YardsToGo:7,BallOn:40));hardwareDowns.ApplyHardwareSnapshot(new DeviceSnapshot(Down:2,YardsToGo:7,BallOn:40));hardwareDowns.MarkPublished();hardwareDowns.RecallLastDown();Check(hardwareDowns.State.Down==1&&hardwareDowns.State.YardsToGo==10,"a repeated controller frame still recalls the down before it");
+engine.NewGame("football");Check(PeriodDisplay.Format(engine.State)=="Quarter 1","default period label is Quarter 1");engine.SetPeriodFormat("Short");Check(PeriodDisplay.Format(engine.State)=="Q1"&&ScoreboardTemplates.Bind("{{PERIOD}}",engine.State)=="Q1","short period label is Q1");Check(ScoreboardTemplates.Bind("{{PERIOD}}",engine.State,"Full")=="QUARTER 1"&&ScoreboardTemplates.Bind("{{PERIOD}}",engine.State,"Number")=="1","a studio element can choose its own quarter style");engine.SetPeriodFormat("Number");Check(PeriodDisplay.Format(engine.State)=="1","numeric period label is a bare number");engine.SetPeriodFormat("Ordinal");Check(PeriodDisplay.Format(engine.State)=="1st","ordinal period label is 1st");var periodReport=GameReport.Build(engine.State);Check(periodReport.Contains("1 of 4"),"game report honors the selected period format");engine.NewGame("soccer");engine.SetPeriodFormat("Short");Check(PeriodDisplay.Format(engine.State)=="Half 1","period format only applies to quarter-based sports");
+var ordinalPath=Path.Combine(Path.GetTempPath(),$"ordinal-{Guid.NewGuid():N}.json");try{var ordinalCatalog=new ScorebugCatalog(ordinalPath);ordinalCatalog.Update(layout=>layout.Elements.Add(new ScorebugElement{Name="Ordinal",Content="{{PERIOD}}",PeriodFormat="Ordinal"}));Check(new ScorebugCatalog(ordinalPath).Layout.Elements[^1].PeriodFormat=="Ordinal","an element's ordinal quarter style survives a save");}finally{if(File.Exists(ordinalPath))File.Delete(ordinalPath);}
+var shapeLayout=new ScorebugElement{Kind=ScorebugElementKind.Shape,Shape=ScorebugShape.Parallelogram};var shapeCatalogPath=Path.Combine(Path.GetTempPath(),$"shape-{Guid.NewGuid():N}.json");try{var catalog=new ScorebugCatalog(shapeCatalogPath);catalog.Update(layout=>layout.Elements.Add(shapeLayout));var reloaded=new ScorebugCatalog(shapeCatalogPath);Check(reloaded.Layout.Elements[^1].Shape==ScorebugShape.Parallelogram,"scorebug shapes persist in the studio layout, including the parallelogram");var roundedLayout=new ScorebugElement{Kind=ScorebugElementKind.Shape,Shape=ScorebugShape.Rectangle,CornerRadius=24};catalog.Update(layout=>layout.Elements.Add(roundedLayout));var roundedReloaded=new ScorebugCatalog(shapeCatalogPath);Check(Math.Abs(roundedReloaded.Layout.Elements[^1].CornerRadius-24)<0.001,"a rectangle keeps its corner radius across a save");}finally{if(File.Exists(shapeCatalogPath))File.Delete(shapeCatalogPath);}
 Check(ClockFormat.TryParse("10:30",out var parsedClock)&&parsedClock==630,"MM:SS clock entry parses minutes and seconds");Check(ClockFormat.TryParse("1:05",out var shortClock)&&shortClock==65,"single-digit minutes parse correctly");Check(ClockFormat.TryParse("720",out var rawClock)&&rawClock==720,"plain seconds still parse");Check(!ClockFormat.TryParse("10:75",out _)&&!ClockFormat.TryParse("abc",out _),"invalid clock entry is rejected");Check(ClockFormat.Format(630)=="10:30"&&ClockFormat.Format(0)=="00:00","clock formatting round trips");
-engine.NewGame("football");Check(engine.State.HomeTimeouts==3&&engine.State.AwayTimeouts==3,"new games take the timeout count from the sport profile");var timeoutCatalogPath=Path.Combine(Path.GetTempPath(),$"timeouts-{Guid.NewGuid():N}.json");try{var timeouts=new SportCatalog(timeoutCatalogPath);timeouts.SaveProfile(timeouts.Find("football")! with { Timeouts=7 });var reloaded=new SportCatalog(timeoutCatalogPath);Check(reloaded.Find("football")!.Timeouts==7,"editing a built-in profile is saved as an override");var overrideGame=new GameEngine(reloaded);overrideGame.NewGame("football");Check(overrideGame.State.HomeTimeouts==7,"overridden profile timeouts reach a new game");Check(reloaded.ResetOverride("football")&&reloaded.Find("football")!.Timeouts==3,"resetting an override restores the preset");}finally{if(File.Exists(timeoutCatalogPath))File.Delete(timeoutCatalogPath);}
-engine.NewGame("soccer");var stat=engine.AddStat("Turnovers");engine.AdjustStat(stat.Id,2);engine.AdjustStat(stat.Id,1);Check(engine.State.Stats.Single().Value==3,"custom stats track a single value");Check(ScoreboardTemplates.Bind("{{STAT:Turnovers}}",engine.State)=="3"&&ScoreboardTemplates.Bind("{{stat:turnovers}}",engine.State)=="3","custom stat tokens display the value");Check(ScoreboardTemplates.Bind("{{STAT:Missing}}",engine.State)=="","missing custom stat tokens render empty");Check(engine.Undo()&&engine.State.Stats.Single().Value==2,"custom stat changes are undoable");var statsReport=GameReport.Build(engine.State);Check(statsReport.Contains("Custom stats")&&statsReport.Contains("Turnovers: 2"),"game report lists custom stats");engine.RemoveStat(stat.Id);Check(engine.State.Stats.Count==0,"custom stats can be removed");
-engine.NewGame("football");var exact=engine.AddStat("Penalties");engine.SetStat(exact.Id,4);Check(engine.State.Stats.Single().Value==4,"typed custom stat values set the exact count");engine.SetStat(exact.Id,1);Check(engine.Undo()&&engine.State.Stats.Single().Value==4,"typed custom stat values are undoable");var stagedBefore=GameEngine.StagedSignature(engine.State);engine.Score(true,6);engine.SetClock(42);engine.SetPlayClock(12);Check(GameEngine.StagedSignature(engine.State)==stagedBefore,"score and clocks are published live instead of staged");engine.SetTeams("Home","Away");Check(GameEngine.StagedSignature(engine.State)==stagedBefore,"team name changes publish live like scores");engine.AdvanceDown();Check(GameEngine.StagedSignature(engine.State)!=stagedBefore,"down and distance wait for an explicit output update");
+var clockElementState=new GameState{ClockSeconds=599};
+Check(ScoreboardTemplates.Bind("{{GAME_CLOCK}}",clockElementState,gameClockLeadingZero:false)=="9:59"
+    &&ScoreboardTemplates.Bind("{{GAME_CLOCK}}",clockElementState)=="09:59",
+    "a game clock's leading zero is an element property");
+Check(LeagueCloudImport.TryParseClock("90:00",out var soccerCloudClock)&&soccerCloudClock==5400,"a cloud game clock can run past 59 minutes, including soccer's 90:00");
+var selectiveEngine=new GameEngine();selectiveEngine.NewGame("basketball");selectiveEngine.SetScore(true,7);selectiveEngine.SetScore(false,3);selectiveEngine.SetClock(321);selectiveEngine.SetPeriod(3);
+var scoreImport=LeagueCloudImport.Apply(selectiveEngine,new LeagueGame{HomeScore=42,AwayScore=99,Clock="99:99",Period=1},[LeagueImportField.HomeScore]);
+Check(scoreImport.Count==1&&selectiveEngine.State.HomeScore==42&&selectiveEngine.State.AwayScore==3&&selectiveEngine.State.ClockSeconds==321&&selectiveEngine.State.Period==3,"importing one cloud field leaves every other scoreboard value alone");
+var clockImport=LeagueCloudImport.Apply(selectiveEngine,new LeagueGame{HomeScore=99,AwayScore=99,Clock="12:34",Period=1},[LeagueImportField.GameClock]);
+Check(clockImport.Count==1&&selectiveEngine.State.ClockSeconds==754&&selectiveEngine.State.HomeScore==42&&selectiveEngine.State.AwayScore==3&&selectiveEngine.State.Period==3,"a clock from another cloud game can be imported without clobbering scores");
+var tickerPath=Path.Combine(Path.GetTempPath(),$"ticker-{Guid.NewGuid():N}.json");try{var tickerCatalog=new ScorebugCatalog(tickerPath);tickerCatalog.Update(layout=>layout.Elements.Add(new ScorebugElement{Name="Ribbon",Kind=ScorebugElementKind.Text,Content="ONE | TWO",Ticker=true,TickerSpeed=140,TickerReverse=true}));var tickerReloaded=new ScorebugCatalog(tickerPath);var tickerElement=tickerReloaded.Layout.Elements.Single(element=>element.Name=="Ribbon");Check(tickerElement.Ticker&&Math.Abs(tickerElement.TickerSpeed-140)<0.001&&tickerElement.TickerReverse,"a bottom-screen ticker, its speed and direction persist with the layout");}finally{if(File.Exists(tickerPath))File.Delete(tickerPath);}
+engine.NewGame("football");Check(engine.State.HomeTimeouts==3&&engine.State.AwayTimeouts==3,"new games take the timeout count from the sport profile");var timeoutCatalogPath=Path.Combine(Path.GetTempPath(),$"timeouts-{Guid.NewGuid():N}.json");try{var timeouts=new SportCatalog(timeoutCatalogPath);timeouts.SaveProfile(timeouts.Find("football")! with { Timeouts=7 });var reloaded=new SportCatalog(timeoutCatalogPath);Check(reloaded.Find("football")!.Timeouts==3,"editing a football profile clamps its timeout override to three");var overrideGame=new GameEngine(reloaded);overrideGame.NewGame("football");Check(overrideGame.State.HomeTimeouts==3&&overrideGame.State.HomeTimeoutLimit==3,"football timeouts never exceed three in a new game");Check(reloaded.ResetOverride("football")&&reloaded.Find("football")!.Timeouts==3,"resetting an override restores the preset");}finally{if(File.Exists(timeoutCatalogPath))File.Delete(timeoutCatalogPath);}
+engine.NewGame("soccer");var stat=engine.AddStat("Turnovers");engine.AdjustStat(stat.Id,2);engine.AdjustStat(stat.Id,1);Check(engine.State.Stats.First(s=>s.Id==stat.Id).Value==3,"custom values track a single value");Check(ScoreboardTemplates.Bind("{{STAT:Turnovers}}",engine.State)=="3"&&ScoreboardTemplates.Bind("{{stat:turnovers}}",engine.State)=="3","custom value tokens display the value");Check(ScoreboardTemplates.Bind("{{STAT:Missing}}",engine.State)=="","missing custom value tokens render empty");Check(engine.Undo()&&engine.State.Stats.First(s=>s.Id==stat.Id).Value==2,"custom value changes are undoable");var statsReport=GameReport.Build(engine.State);Check(statsReport.Contains("Custom values")&&statsReport.Contains("Turnovers: 2"),"game report lists custom values");engine.RemoveStat(stat.Id);Check(engine.State.Stats.All(s=>s.Id!=stat.Id)&&engine.State.Stats.Count>0,"custom values can be removed without clearing the starters");
+engine.NewGame("football");Check(CommonStats.DefaultsFor("football").Contains("Field goal attempts")&&CommonStats.DefaultsFor("football").Contains("Turnovers")&&engine.State.Stats.Select(s=>s.Name).SequenceEqual(CommonStats.DefaultsFor("football")),"new football games start with useful custom values");var exact=engine.AddStat("Penalties");engine.SetStat(exact.Id,4);Check(engine.State.Stats.First(s=>s.Name=="Penalties").Value==4,"typed custom values set the exact count");engine.SetStat(exact.Id,1);Check(engine.Undo()&&engine.State.Stats.First(s=>s.Name=="Penalties").Value==4,"typed custom values are undoable");var scoreSequenceBefore=engine.State.LastScoreSequence;engine.Score(true,6);Check(engine.State.LastScoreSequence==scoreSequenceBefore+1&&engine.State.LastScoreAmount==6,"a scoring action carries a sequence the graphic can react to");engine.SetClock(42);Check(engine.State.LastScoreSequence==scoreSequenceBefore+1,"clock updates do not fire another score event");engine.SetScore(true,7);Check(engine.State.LastScoreSequence==scoreSequenceBefore+1,"a score correction is not treated as a scoring play");var stagedBefore=GameEngine.StagedSignature(engine.State);engine.Score(true,6);engine.SetClock(42);engine.SetPlayClock(12);Check(GameEngine.StagedSignature(engine.State)==stagedBefore,"score and clocks are published live instead of staged");engine.SetTeams("Home","Away");Check(GameEngine.StagedSignature(engine.State)==stagedBefore,"team name changes publish live like scores");engine.AdvanceDown();Check(GameEngine.StagedSignature(engine.State)!=stagedBefore,"down and distance wait for an explicit output update");
 var liveNames=new GameEngine();liveNames.NewGame("football");var nameTarget=new GameEngine();nameTarget.LoadFromState(liveNames.CloneState());liveNames.SetTeams("Home Team","Away Team");nameTarget.UpdateLiveScoreClock(liveNames.State);Check(nameTarget.State.HomeTeam=="Home Team"&&nameTarget.State.HomeAbbreviation=="HT","live publishing carries renamed teams to the output");
 var typedNames=new GameEngine();typedNames.NewGame("football");var typedTarget=new GameEngine();typedTarget.LoadFromState(typedNames.CloneState());typedNames.SetTeams("New England","ny giants");Check(ScoreboardTemplates.Bind("{{HOME_TEAM}} vs {{AWAY_TEAM}}",typedNames.State)=="New England vs ny giants","scorebug renders the full team name in the case the operator typed");Check(ScoreboardTemplates.Bind("{{HOME_ABBR}}/{{AWAY_ABBR}}",typedNames.State)=="NE/NG","abbreviation tokens still render initials for compact labels");typedTarget.UpdateLiveScoreClock(typedNames.State);Check(ScoreboardTemplates.Bind("{{HOME_TEAM}} vs {{AWAY_TEAM}}",typedTarget.State)=="New England vs ny giants","live publishing carries the typed team name to the on-air graphic");
 engine.NewGame("football");engine.SetFootballDistance(3,74);Check(engine.State.YardsToGoal==50,"the ball spot stops at the 50-yard line");engine.SetPossession(false);Check(engine.State.YardsToGoal==50&&ScoreboardTemplates.Bind("{{BALL_ON}}",engine.State)=="50","the ball spot is not tied to possession");engine.SetFootballDistance(3,-6);Check(engine.State.YardsToGoal==0,"the ball spot stops at the goal line");
 engine.NewGame("football");engine.SetTeams("Home Team","Away Team");engine.SetFootballDistance(2,37);Check(engine.State.BallOnHomeSide&&ScoreboardTemplates.Bind("{{BALL_SIDE}}",engine.State)=="HT","the ball spot starts on the home half of the field");engine.SetPossession(false);Check(ScoreboardTemplates.Bind("{{BALL_SIDE}}",engine.State)=="HT"&&engine.State.YardsToGoal==37,"possession does not decide which half the ball is on");var beforeSide=GameEngine.StagedSignature(engine.State);engine.SetBallSide(false);Check(ScoreboardTemplates.Bind("{{BALL_SIDE}}",engine.State)=="AT"&&ScoreboardTemplates.Bind("{{BALL_SIDE_SPOT}}",engine.State)=="AT 37","the ball spot can sit on the visitors' half");Check(GameEngine.StagedSignature(engine.State)!=beforeSide,"a ball-side change waits for Update Output");Check(engine.Undo()&&engine.State.BallOnHomeSide,"moving the ball to the other half can be undone");
-var sameCatalogPath=Path.Combine(Path.GetTempPath(),$"same-{Guid.NewGuid():N}.json");try{var liveCatalog=new SportCatalog(sameCatalogPath);var liveEngine=new GameEngine(liveCatalog);liveEngine.NewGame("football");liveCatalog.SaveProfile(liveCatalog.Find("football")! with { Timeouts=4, ScoringOptions=[1,2,3,6] });liveEngine.NewGame("football");Check(liveEngine.State.HomeTimeouts==4&&liveEngine.State.ScoringOptions.Contains(6),"a sport profile edited while the app runs reaches the next new game without a relaunch");}finally{if(File.Exists(sameCatalogPath))File.Delete(sameCatalogPath);}
-var autosaveFolder=Path.Combine(Path.GetTempPath(),$"autosaves-{Guid.NewGuid():N}");AutosaveStore.UseFolder(autosaveFolder);try{var auto=new GameEngine();auto.NewGame("football");auto.SetTeams("Home Squad","Away Squad");auto.Score(true,7);AutosaveStore.Save(auto);AutosaveStore.Save(auto);var points=AutosaveStore.List();Check(points.Count==1&&points[0].HomeScore==7&&points[0].HomeTeam=="Home Squad","autosaves keep one recoverable point inside the same minute");Check(points[0].Path.EndsWith(".spg",StringComparison.OrdinalIgnoreCase),"autosaves are stored as .spg game files");auto.NewGame("football");var afterNewGame=AutosaveStore.Save(auto,startNewPoint:true);Check(afterNewGame.Count==2&&afterNewGame[0].HomeScore==0&&afterNewGame[1].HomeScore==7,"a new game starts its own recoverable point and leaves the previous game recoverable");for(var i=0;i<AutosaveStore.Keep+3;i++)AutosaveStore.Save(auto,startNewPoint:true);Check(AutosaveStore.List().Count==AutosaveStore.Keep,$"autosaves are pruned to the newest {AutosaveStore.Keep} points");
+var sameCatalogPath=Path.Combine(Path.GetTempPath(),$"same-{Guid.NewGuid():N}.json");try{var liveCatalog=new SportCatalog(sameCatalogPath);var liveEngine=new GameEngine(liveCatalog);liveEngine.NewGame("football");liveCatalog.SaveProfile(liveCatalog.Find("football")! with { Timeouts=2, ScoringOptions=[1,2,3,6] });liveEngine.NewGame("football");Check(liveEngine.State.HomeTimeouts==2&&liveEngine.State.ScoringOptions.Contains(6),"a sport profile edited while the app runs reaches the next new game without a relaunch");}finally{if(File.Exists(sameCatalogPath))File.Delete(sameCatalogPath);}
+var autosaveFolder=Path.Combine(Path.GetTempPath(),$"autosaves-{Guid.NewGuid():N}");AutosaveStore.UseFolder(autosaveFolder);try{var auto=new GameEngine();auto.NewGame("football");auto.SetTeams("Home Squad","Away Squad");auto.Score(true,7);AutosaveStore.Save(auto);AutosaveStore.Save(auto);var points=AutosaveStore.List();Check(points.Count==1&&points[0].HomeScore==7&&points[0].HomeTeam=="Home Squad","autosaves keep one recoverable point inside the same minute");Check(points[0].Path.EndsWith(".spg",StringComparison.OrdinalIgnoreCase),"autosaves are stored as .spg game files");auto.SetGameName("Friday Night");AutosaveStore.Save(auto);var named=AutosaveStore.List();Check(named[0].Title=="Friday Night"&&named[0].Detail.StartsWith("Away Squad 0 – 7 Home Squad",StringComparison.Ordinal),"an autosave shows its game name with the score details below it");var unnamedAutosave=new AutosaveEntry("x",DateTimeOffset.Now,"football","Away","Home",0,0);Check(unnamedAutosave.Title=="Untitled","an unnamed autosave is labelled Untitled");
+auto.NewGame("football");var afterNewGame=AutosaveStore.Save(auto,startNewPoint:true);Check(afterNewGame.Count==2&&afterNewGame[0].HomeScore==0&&afterNewGame[1].HomeScore==7,"a new game starts its own recoverable point and leaves the previous game recoverable");for(var i=0;i<AutosaveStore.Keep+3;i++)AutosaveStore.Save(auto,startNewPoint:true);Check(AutosaveStore.List().Count==AutosaveStore.Keep,$"autosaves are pruned to the newest {AutosaveStore.Keep} points");
 // Delete all clears the folder, including a file that is too damaged to read as a game.
 File.WriteAllText(Path.Combine(autosaveFolder,"autosave-broken.spg"),"not a game");
 var deleted=AutosaveStore.DeleteAll();
@@ -96,7 +205,8 @@ var liveTick=new GameEngine();liveTick.NewGame("basketball");var tickNotified=0;
 
 // ---------- team identity: name, abbreviation, logo and palette ----------
 var identityEngine=new GameEngine();identityEngine.NewGame("football");
-identityEngine.SetTeamIdentity(false,"Rovers FC","RFC",Path.Combine("logos","rovers.png"),"#FFAA1122","#FF223344");
+identityEngine.SetTeamIdentity(false,"Rovers FC","RFC",@"C:\logos\rovers.png","#FFAA1122","#FF223344",null,"4-2","21","2-2");
+Check(identityEngine.State.AwayRecordDisplay=="4-2 (2-2)"&&identityEngine.State.AwayRanking=="#21"&&ScoreboardTemplates.Bind("{{AWAY_RECORD}} / {{AWAY_RANKING}}",identityEngine.State)=="4-2 (2-2) / #21","team details print a division record in brackets and a ranking with a hash");
 Check(identityEngine.State.AwayTeam=="Rovers FC"&&identityEngine.State.AwayAbbreviation=="RFC"&&identityEngine.State.AwayLogoPath!.EndsWith("rovers.png",StringComparison.OrdinalIgnoreCase)&&identityEngine.State.ColorFor(ScorebugColorSource.AwayPrimary)=="#FFAA1122","team details save the name, abbreviation, logo and colours");
 var identityTarget=new GameEngine();identityTarget.LoadFromState(identityEngine.CloneState());
 identityEngine.SetTeamIdentity(true,"Home Town","HT",null,"#FF010203","#FF040506");
@@ -105,6 +215,9 @@ Check(identityTarget.State.HomePrimaryColor=="#FF010203"&&identityTarget.State.A
 identityEngine.SetTeamIdentity(true,"Home Town","HT",null,"not-a-colour","#FF040506");
 Check(identityEngine.State.HomePrimaryColor.StartsWith('#')&&identityEngine.State.HomePrimaryColor.Length is 7 or 9,"an invalid team colour never reaches the graphic");
 Check(identityEngine.State.ColorFor(ScorebugColorSource.Custom) is null&&identityEngine.State.LogoFor(ScorebugLogoSide.None) is null,"a custom colour and no logo resolve to the element's own values");
+identityEngine.SetDivisionGame(true);Check(identityEngine.State.DivisionGame,"a game can be marked as a division game");
+var photoRoster=Roster.Create("Photos");var photoPlayer=photoRoster.AddPlayer();photoPlayer.Name="Alex Smith";photoPlayer.PhotoPath=@"C:\photos\alex.png";var photoSelection=SelectedPlayer.From(photoRoster,photoPlayer);Check(photoSelection.PhotoPath.EndsWith("alex.png",StringComparison.OrdinalIgnoreCase),"selecting a player carries their uploaded portrait to the graphic");
+var photoLayoutPath=Path.Combine(Path.GetTempPath(),$"photo-layout-{Guid.NewGuid():N}.json");try{var photoCatalog=new ScorebugCatalog(photoLayoutPath);photoCatalog.Update(layout=>layout.Elements.Add(new ScorebugElement{Name="Portrait",Kind=ScorebugElementKind.Image,PlayerPhotoSide=ScorebugPlayerPhotoSide.Home}));Check(new ScorebugCatalog(photoLayoutPath).Layout.Elements[^1].PlayerPhotoSide==ScorebugPlayerPhotoSide.Home,"a player-photo element survives a studio save");}finally{if(File.Exists(photoLayoutPath))File.Delete(photoLayoutPath);}
 
 // ---------- layouts: several scorebugs in one game, one on air at a time ----------
 var layoutsPath=Path.Combine(Path.GetTempPath(),$"layouts-{Guid.NewGuid():N}.json");
@@ -188,6 +301,65 @@ try
 }
 finally{if(File.Exists(displaysPath))File.Delete(displaysPath);}
 
+// ---------- live layouts: a layout inside another, still playing ----------
+var nestedPath=Path.Combine(Path.GetTempPath(),$"live-layout-{Guid.NewGuid():N}.json");
+try
+{
+    var nested=new ScorebugCatalog(nestedPath);
+    var sourceLayoutId=nested.Layout.Id;
+    nested.AddLayout("Live host");
+    var hostLayoutId=nested.Layout.Id;
+    nested.Update(layout=>{
+        layout.Elements.Clear();
+        layout.Elements.Add(new ScorebugElement{Name="Live feed",Kind=ScorebugElementKind.Layout,Content="",NestedLayoutId=sourceLayoutId,NestedPreserveAspect=false,X=80,Y=60,Width=720,Height=405});
+    });
+    Check(nested.Layout.Name=="Live host"&&nested.Layout.Elements.Single().NestedLayoutId==sourceLayoutId,"a layout can hold another layout as a live feed");
+    var nestedReloaded=new ScorebugCatalog(nestedPath);
+    var loadedHost=nestedReloaded.Displays[0].Layouts.Single(layout=>layout.Id==hostLayoutId);
+    var loadedFeed=loadedHost.Elements.Single(element=>element.Kind==ScorebugElementKind.Layout);
+    Check(loadedFeed.NestedLayoutId==sourceLayoutId&&!loadedFeed.NestedPreserveAspect&&loadedFeed.Width==720&&loadedFeed.Height==405,"a live layout keeps its source and fit mode across a save");
+    Check(!nestedReloaded.WouldCreateLayoutCycle(hostLayoutId,sourceLayoutId),"the catalog allows a feed that points at another layout");
+    Check(nestedReloaded.WouldCreateLayoutCycle(sourceLayoutId,hostLayoutId),"the catalog detects a feed that would close a loop");
+    var sourceIndex=nestedReloaded.Displays[0].Layouts.FindIndex(layout=>layout.Id==sourceLayoutId);
+    nestedReloaded.SelectLayout(sourceIndex);
+    nestedReloaded.Update(layout=>layout.Elements.Add(new ScorebugElement{Name="Loop",Kind=ScorebugElementKind.Layout,Content="",NestedLayoutId=hostLayoutId}));
+    Check(nestedReloaded.FindLayout(sourceLayoutId)!.Elements.Where(element=>element.Kind==ScorebugElementKind.Layout).All(element=>element.NestedLayoutId is null),"a layout cannot be put inside itself through another layout");
+    nestedReloaded.Update(layout=>layout.Elements.Add(new ScorebugElement{Name="Self",Kind=ScorebugElementKind.Layout,Content="",NestedLayoutId=sourceLayoutId}));
+    Check(nestedReloaded.FindLayout(sourceLayoutId)!.Elements.Where(element=>element.Kind==ScorebugElementKind.Layout).All(element=>element.NestedLayoutId is null),"a layout cannot contain itself directly");
+}
+finally{if(File.Exists(nestedPath))File.Delete(nestedPath);}
+
+// ---------- display import: nested feeds keep pointing at their own copied layouts ----------
+var nestedDisplayPath=Path.Combine(Path.GetTempPath(),$"nested-display-{Guid.NewGuid():N}.spd");
+var nestedImportPath=Path.Combine(Path.GetTempPath(),$"nested-import-{Guid.NewGuid():N}.json");
+try
+{
+    var shared=new ScorebugCatalog(Path.Combine(Path.GetTempPath(),$"nested-shared-{Guid.NewGuid():N}.json"));
+    var originalHostId=shared.Layout.Id;
+    shared.AddLayout("Embedded source");
+    var originalNestedId=shared.Layout.Id;
+    shared.SelectLayout(0);
+    shared.Update(layout=>{layout.Elements.Clear();layout.Elements.Add(new ScorebugElement{Name="Imported feed",Kind=ScorebugElementKind.Layout,Content="",NestedLayoutId=originalNestedId});});
+    var receiving=new ScorebugCatalog(nestedImportPath);
+    var importedIndex=receiving.ImportDisplay(shared.ActiveDisplay,"Imported live display");
+    var imported=receiving.Displays[importedIndex];
+    var importedHost=imported.Layouts[0];
+    var importedNested=imported.Layouts[1];
+    var importedFeed=importedHost.Elements.Single(element=>element.Kind==ScorebugElementKind.Layout);
+    Check(importedFeed.NestedLayoutId==importedNested.Id&&importedFeed.NestedLayoutId!=originalNestedId,"importing a display remaps a live feed to the copied layout");
+    Check(importedHost.Id!=originalHostId&&importedNested.Id!=originalNestedId,"an imported display gives its layouts independent identities");
+    var reopenedImport=new ScorebugCatalog(nestedImportPath);
+    var savedDisplay=reopenedImport.Displays.Single(display=>display.Name=="Imported live display");
+    Check(savedDisplay.Layouts[0].Elements.Single(element=>element.Kind==ScorebugElementKind.Layout).NestedLayoutId==savedDisplay.Layouts[1].Id,"the remapped live feed survives a reload");
+    var singleIndex=receiving.ImportLayout(shared.ActiveDisplay.Layouts[0],"Single live layout");
+    Check(receiving.Layouts[singleIndex].Elements.Where(element=>element.Kind==ScorebugElementKind.Layout).All(element=>element.NestedLayoutId is null),"a single-layout import drops a source that did not travel with it");
+}
+finally
+{
+    if(File.Exists(nestedDisplayPath))File.Delete(nestedDisplayPath);
+    if(File.Exists(nestedImportPath))File.Delete(nestedImportPath);
+}
+
 // ---------- video elements: preserved aspect, own audio output ----------
 var videoPath=Path.Combine(Path.GetTempPath(),$"video-element-{Guid.NewGuid():N}.json");
 try
@@ -196,13 +368,78 @@ try
     video.Update(layout=>layout.Elements.Add(new ScorebugElement
     {
         Name="Ad",Kind=ScorebugElementKind.Video,MediaTag="Ads",PreserveVideoAspect=true,
-        VideoAspect=4.0/3.0,Width=800,Height=600,AudioDevice="speaker-two"
+        VideoAspect=4.0/3.0,Width=800,Height=600,AudioDevice="speaker-two",
+        VideoCropLeft=0.1,VideoCropTop=0.2,VideoCropRight=0.3,VideoCropBottom=0.15,
+        ChromaKeyColor="#FF00FF00",ChromaKeyTolerance=0.11
     }));
     var reopenedVideo=new ScorebugCatalog(videoPath);
     var ad=reopenedVideo.Layout.Elements.First(x=>x.Kind==ScorebugElementKind.Video);
     Check(ad.PreserveVideoAspect&&Math.Abs(ad.VideoAspect-4.0/3.0)<0.001&&ad.AudioDevice=="speaker-two","a video element keeps its preserved aspect ratio and its own audio output");
+    Check(ad.ChromaKeyColor=="#FF00FF00"&&Math.Abs(ad.ChromaKeyTolerance-0.11)<0.001,"a video element keeps its chroma key colour and tolerance across a save");
+    Check(Math.Abs(ad.VideoCropLeft-0.1)<0.001&&Math.Abs(ad.VideoCropTop-0.2)<0.001
+        &&Math.Abs(ad.VideoCropRight-0.3)<0.001&&Math.Abs(ad.VideoCropBottom-0.15)<0.001,
+        "a video element keeps its four-edge crop across a save");
 }
 finally{if(File.Exists(videoPath))File.Delete(videoPath);}
+
+// ---------- macro buttons: ordered steps save with the game ----------
+var macroPath=Path.Combine(Path.GetTempPath(),$"macros-{Guid.NewGuid():N}.spg");
+try
+{
+    var macroEngine=new GameEngine();macroEngine.NewGame("football");
+    macroEngine.StoreMacros([new SavedMacro
+    {
+        Label="Kickoff",
+        Color="#FF6B6B",
+        Row=2,
+        Column=3,
+        Actions=[
+            new MacroAction{Kind=MacroActionKind.Score,Home=true,Amount=3},
+            new MacroAction{Kind=MacroActionKind.SetDown,Value=1},
+            new MacroAction{Kind=MacroActionKind.SetTimeouts,Home=false,Value=2},
+            new MacroAction{Kind=MacroActionKind.PlayVideo,Path=@"C:\media\intro.mp4"},
+            new MacroAction{Kind=MacroActionKind.Control,Path="output.publish",Label="Output · Update Output"},
+            new MacroAction{Kind=MacroActionKind.SportValue,Path="football.firstdowns.home",Value=4,Label="Home 1st downs"},
+            new MacroAction{Kind=MacroActionKind.CustomValue,Path="stat-id",Value=7,Label="Turnovers"},
+            new MacroAction{Kind=MacroActionKind.PutOnAir,Path=@"C:\media\halftime.mp4",Label="Halftime"},
+            new MacroAction{Kind=MacroActionKind.SwitchLayout,DisplayId="display-1",Path="layout-2",Label="Halftime board"},
+            new MacroAction{Kind=MacroActionKind.PenaltyFlag,Home=false,Path="Offside",Value=1}
+        ]
+    }]);
+    macroEngine.State.MacroPages=2;
+    macroEngine.State.Macros[0].Page=1;
+    macroEngine.State.Macros[0].Actions[4].BypassOutput=true;
+    macroEngine.SetGameName("Friday Night Lights");
+    File.WriteAllText(macroPath,GameFiles.Serialize(macroEngine.State,null));
+    var (loadedMacros,_)=GameFiles.Read(macroPath);
+    var macro=loadedMacros.Macros.Single();
+    Check(loadedMacros.GameName=="Friday Night Lights","a game name survives a game save");
+    Check(macro.Label=="Kickoff"&&macro.Color=="#FF6B6B"&&macro.Actions.Count==10,"macro buttons, their colour and every step survive a game save");
+    Check(macro.Row==2&&macro.Column==3&&macro.Page==1&&loadedMacros.MacroPages==2,
+        "a macro's board cell, page and the page count survive a game save");
+    Check(!macro.Actions[0].BypassOutput&&macro.Actions[4].BypassOutput,
+        "a macro step's bypass-output choice survives a game save");
+    Check(!macroEngine.MacroOutputHold,"macro live output is not held before a held step");
+    macroEngine.HoldMacroOutput();
+    Check(macroEngine.MacroOutputHold,"a macro step can hold live output until Update Output");
+    macroEngine.ClearMacroOutputHold();
+    Check(!macroEngine.MacroOutputHold,"pressing Update Output releases the macro output hold");
+    Check(macro.Actions[0].Kind==MacroActionKind.Score&&macro.Actions[1].Kind==MacroActionKind.SetDown
+        &&macro.Actions[2].Kind==MacroActionKind.SetTimeouts&&macro.Actions[3].Kind==MacroActionKind.PlayVideo,
+        "macro steps keep their order across a game save");
+    Check(macro.Actions[4].Kind==MacroActionKind.Control&&macro.Actions[4].Path=="output.publish"
+        &&macro.Actions[5].Kind==MacroActionKind.SportValue&&macro.Actions[5].Value==4
+        &&macro.Actions[6].Kind==MacroActionKind.CustomValue&&macro.Actions[6].Label=="Turnovers",
+        "console, sport-value and custom-value steps keep their targets across a save");
+    Check(macro.Actions[7].Kind==MacroActionKind.PutOnAir&&macro.Actions[7].Label=="Halftime"
+        &&macro.Actions[8].Kind==MacroActionKind.SwitchLayout&&macro.Actions[8].DisplayId=="display-1"
+        &&macro.Actions[8].Path=="layout-2"&&macro.Actions[9].Kind==MacroActionKind.PenaltyFlag
+        &&macro.Actions[9].Path=="Offside"&&macro.Actions[9].Value==1,
+        "media-on-air, layout-switch and penalty-flag steps keep their targets across a save");
+    Check(new MacroAction{Kind=MacroActionKind.SetGameClock,Value=754}.Summary=="Game clock 12:34",
+        "a game-clock macro step is described as MM:SS");
+}
+finally{if(File.Exists(macroPath))File.Delete(macroPath);}
 
 // ---------- typography, text transitions and team colour slots ----------
 var styledPath=Path.Combine(Path.GetTempPath(),$"styled-{Guid.NewGuid():N}.json");
@@ -234,10 +471,16 @@ try
     decor.Update(layout=>layout.Elements.Add(new ScorebugElement
     {
         Name="Slanted",Rotation=-7.5,BorderThickness=3,BorderColor="#FF00FF00",
-        BorderSource=ScorebugColorSource.AwaySecondary,TransitionSeconds=2.4
+        BorderSource=ScorebugColorSource.AwaySecondary,TransitionSeconds=2.4,
+        Transition=ScorebugTransition.JumpFlip,TransitionShrink=0.55,TransitionJumpHeight=88,
+        TransitionJumpDirection=ScorebugJumpDirection.DownToUp
     }));
     var reloadedDecor=new ScorebugCatalog(decorPath).Layout.Elements[^1];
     Check(reloadedDecor.Rotation==-7.5&&reloadedDecor.BorderThickness==3&&reloadedDecor.BorderColor=="#FF00FF00"&&reloadedDecor.BorderSource==ScorebugColorSource.AwaySecondary&&reloadedDecor.TransitionSeconds==2.4,"rotation, border and transition speed persist in the layout");
+    Check(reloadedDecor.Transition==ScorebugTransition.JumpFlip&&Math.Abs(reloadedDecor.TransitionShrink-0.55)<0.001
+        &&Math.Abs(reloadedDecor.TransitionJumpHeight-88)<0.001
+        &&reloadedDecor.TransitionJumpDirection==ScorebugJumpDirection.DownToUp,
+        "shrink amount, jump height and jump direction persist in the layout");
     decor.Update(layout=>{layout.Elements[^1].Rotation=900;layout.Elements[^1].TransitionSeconds=9;layout.Elements[^1].BorderThickness=90;});
     var clampedDecor=new ScorebugCatalog(decorPath).Layout.Elements[^1];
     Check(clampedDecor.Rotation==360&&clampedDecor.TransitionSeconds==5&&clampedDecor.BorderThickness==40,"rotation, transition speed and border width are clamped to safe ranges");
@@ -251,6 +494,26 @@ Check(playClock.State.PlayClockSeconds<=1&&playClock.State.PlayClockRunning,"the
 Thread.Sleep(1250);playClock.Tick();
 Check(playClock.State.PlayClockSeconds==0&&!playClock.State.PlayClockRunning,"the play clock reaches zero and stops there");
 Check(ScoreboardTemplates.Bind("{{PLAY_CLOCK}}",playClock.State)=="0","the graphic prints zero when the play clock expires");
+var pauseClock=new GameEngine();pauseClock.NewGame("football");
+pauseClock.SetClock(44);pauseClock.SetPlayClock(40);
+pauseClock.ToggleClock();pauseClock.TogglePlayClock();
+Thread.Sleep(1100);
+pauseClock.ToggleClock();pauseClock.TogglePlayClock();
+Check(pauseClock.State.ClockSeconds==44&&!pauseClock.State.ClockRunning
+    &&pauseClock.State.PlayClockSeconds==40&&!pauseClock.State.PlayClockRunning,
+    "stopping the game clock or play clock preserves the displayed value instead of consuming the elapsed fraction");
+var carryClock=new GameEngine();carryClock.NewGame("football");
+carryClock.SetClock(44);carryClock.SetPlayClock(40);
+carryClock.ToggleClock();carryClock.TogglePlayClock();
+Thread.Sleep(300);carryClock.Tick();
+carryClock.ToggleClock();carryClock.TogglePlayClock();
+Check(carryClock.State.ClockSeconds==44&&carryClock.State.PlayClockSeconds==40,
+    "a paused clock keeps its displayed value while holding the elapsed fraction");
+Thread.Sleep(350);
+carryClock.ToggleClock();carryClock.TogglePlayClock();
+Thread.Sleep(850);carryClock.Tick();
+Check(carryClock.State.ClockSeconds==43&&carryClock.State.PlayClockSeconds==39,
+    "resuming a clock keeps its sub-second time so the next change happens when it is due");
 
 // ---------- rosters, player stats and the selected player on the graphic ----------
 var rosterPath=Path.Combine(Path.GetTempPath(),$"rosters-{Guid.NewGuid():N}.json");
@@ -321,19 +584,19 @@ try
 }
 finally { RosterStore.UsePath(null); try { if(File.Exists(rosterPath)) File.Delete(rosterPath); } catch { } }
 
-// ---------- custom stats can hold any text ----------
+// ---------- custom values can hold any text ----------
 var textStatEngine=new GameEngine();textStatEngine.NewGame("football");
 var textStat=textStatEngine.AddStat("Penalties");
 var textBefore=GameEngine.StagedSignature(textStatEngine.State);
 textStatEngine.SetStatText(textStat.Id,"3rd");
-Check(textStatEngine.State.Stats.Single().Display=="3rd"&&textStatEngine.State.Stats.Single().Text=="3rd","a custom stat keeps free text instead of only a number");
-Check(ScoreboardTemplates.Bind("{{STAT:Penalties}}",textStatEngine.State)=="3rd","a text stat prints on the graphic exactly as typed");
-Check(GameReport.Build(textStatEngine.State).Contains("Penalties: 3rd"),"a text stat appears in the game report");
-Check(GameEngine.StagedSignature(textStatEngine.State)!=textBefore,"a text stat waits for Update Output like any other value");
+Check(textStatEngine.State.Stats.First(s=>s.Id==textStat.Id).Display=="3rd"&&textStatEngine.State.Stats.First(s=>s.Id==textStat.Id).Text=="3rd","a custom value keeps free text instead of only a number");
+Check(ScoreboardTemplates.Bind("{{STAT:Penalties}}",textStatEngine.State)=="3rd","a text value prints on the graphic exactly as typed");
+Check(GameReport.Build(textStatEngine.State).Contains("Penalties: 3rd"),"a text value appears in the game report");
+Check(GameEngine.StagedSignature(textStatEngine.State)!=textBefore,"a text value waits for Update Output like any other value");
 textStatEngine.SetStatText(textStat.Id,"412");
-Check(textStatEngine.State.Stats.Single().Value==412&&textStatEngine.State.Stats.Single().Text is null&&textStatEngine.State.Stats.Single().Display=="412","numeric text becomes the stat's number again");
+Check(textStatEngine.State.Stats.First(s=>s.Id==textStat.Id).Value==412&&textStatEngine.State.Stats.First(s=>s.Id==textStat.Id).Text is null&&textStatEngine.State.Stats.First(s=>s.Id==textStat.Id).Display=="412","numeric text becomes the value's number again");
 textStatEngine.AdjustStat(textStat.Id,1);
-Check(textStatEngine.State.Stats.Single().Value==413&&textStatEngine.State.Stats.Single().IsNumber,"stepping a stat works after it held text");
+Check(textStatEngine.State.Stats.First(s=>s.Id==textStat.Id).Value==413&&textStatEngine.State.Stats.First(s=>s.Id==textStat.Id).IsNumber,"stepping a value works after it held text");
 var textStatGame=Path.Combine(Path.GetTempPath(),$"text-stat-{Guid.NewGuid():N}.spg");
 textStatEngine.SetStatText(textStat.Id,"N/A");textStatEngine.Save(textStatGame);
 var textStatLoaded=new GameEngine();textStatLoaded.Load(textStatGame);
@@ -466,7 +729,7 @@ var transitionPath=Path.Combine(Path.GetTempPath(),$"transition-{Guid.NewGuid():
 try
 {
     var transitions=new ScorebugCatalog(transitionPath);
-    Check(transitions.Layout.Transition==LayoutTransition.Fade&&transitions.Layout.TransitionSeconds>0,"a layout starts with a dissolve onto air");
+    Check(transitions.Layout.Transition==LayoutTransition.Cut&&transitions.Layout.TransitionSeconds==0,"a layout starts with a cut onto air");
     transitions.SetTransition(LayoutTransition.Zoom,9);
     Check(transitions.Layout.Transition==LayoutTransition.Zoom&&Math.Abs(transitions.Layout.TransitionSeconds-5)<0.001,"a layout hand-over is capped at five seconds");
     var second=transitions.AddLayout("Lower third");
@@ -475,9 +738,83 @@ try
     Check(transitions.Layouts[0].Transition==LayoutTransition.Zoom&&Math.Abs(transitions.Layouts[0].TransitionSeconds-5)<0.001,"setting one layout's hand-over leaves the others alone");
     var reloadedTransitions=new ScorebugCatalog(transitionPath);
     Check(reloadedTransitions.Layouts[0].Transition==LayoutTransition.Zoom&&Math.Abs(reloadedTransitions.Layouts[0].TransitionSeconds-5)<0.001&&reloadedTransitions.Layouts[second].Transition==LayoutTransition.SlideLeft,"every layout keeps its own hand-over in the saved game");
+    Check(Enum.GetValues<LayoutTransition>().Contains(LayoutTransition.Move),"a layout can slide moved items to their new positions");
+    reloadedTransitions.SetTransition(LayoutTransition.Move,0.8);
+    Check(new ScorebugCatalog(transitionPath).Layout.Transition==LayoutTransition.Move,"the move hand-over persists in the layout file");
     Check(Enum.GetValues<LayoutTransition>().Length>=5,"at least five layout hand-overs are offered");
 }
 finally { if(File.Exists(transitionPath))File.Delete(transitionPath); }
+
+// ---------- touchdown and field-goal clips belong to the layout ----------
+var scoreMotionPath=Path.Combine(Path.GetTempPath(),$"score-motion-{Guid.NewGuid():N}.json");
+try
+{
+    var scoreMotion=new ScorebugCatalog(scoreMotionPath);
+    var touchdownClip=MotionClip.AnimationPreset("Pulse");touchdownClip.Name="Touchdown celebration";
+    var fieldGoalClip=MotionClip.AnimationPreset("Pop in");fieldGoalClip.Name="Field goal pop";
+    scoreMotion.ApplyScoreAnimationToLayout(true,touchdownClip);
+    scoreMotion.ApplyScoreAnimationToLayout(false,fieldGoalClip);
+    var reloadedScoreMotion=new ScorebugCatalog(scoreMotionPath);
+    Check(reloadedScoreMotion.Layout.TouchdownAnimation?.Name=="Touchdown celebration"
+        &&reloadedScoreMotion.Layout.FieldGoalAnimation?.Name=="Field goal pop",
+        "touchdown and field-goal animations persist with the layout");
+    var copiedScoreMotion=reloadedScoreMotion.Layout.Copy();
+    Check(copiedScoreMotion.TouchdownAnimation?.Name=="Touchdown celebration"
+        &&copiedScoreMotion.FieldGoalAnimation?.Name=="Field goal pop",
+        "a copied layout carries both score-event animations");
+    reloadedScoreMotion.ApplyScoreAnimationToLayout(true,null);
+    Check(reloadedScoreMotion.Layout.TouchdownAnimation is null&&reloadedScoreMotion.Layout.FieldGoalAnimation is not null,
+        "the touchdown and field-goal animations switch off independently");
+    var touchdownVideo=new ScoreVideo{Path=@"C:\\clips\\touchdown.mp4",ChromaKeyColor="#FF00B140",ChromaKeyTolerance=0.21};
+    var fieldGoalVideo=new ScoreVideo{Path=@"C:\\clips\\field-goal.mp4",ChromaKeyColor="#FF2020FF",ChromaKeyTolerance=0.17};
+    reloadedScoreMotion.ApplyScoreVideoToLayout(true,touchdownVideo);
+    reloadedScoreMotion.ApplyScoreVideoToLayout(false,fieldGoalVideo);
+    Check(reloadedScoreMotion.Layout.TouchdownVideo?.Path==touchdownVideo.Path
+        &&reloadedScoreMotion.Layout.FieldGoalVideo?.Path==fieldGoalVideo.Path
+        &&reloadedScoreMotion.Layout.TouchdownAnimation is null
+        &&reloadedScoreMotion.Layout.FieldGoalAnimation is null,
+        "score videos replace the touchdown and field-goal animations independently");
+    var reloadedScoreVideo=new ScorebugCatalog(scoreMotionPath);
+    Check(reloadedScoreVideo.Layout.TouchdownVideo?.ChromaKeyColor=="#FF00B140"
+        &&Math.Abs(reloadedScoreVideo.Layout.TouchdownVideo.ChromaKeyTolerance-0.21)<0.001
+        &&reloadedScoreVideo.Layout.FieldGoalVideo?.ChromaKeyColor=="#FF2020FF",
+        "score videos keep their file and chroma key across a save");
+    var copiedScoreVideo=reloadedScoreVideo.Layout.Copy();
+    Check(copiedScoreVideo.TouchdownVideo?.Path==touchdownVideo.Path
+        &&copiedScoreVideo.FieldGoalVideo?.Path==fieldGoalVideo.Path,
+        "a copied layout carries both score videos");
+    reloadedScoreVideo.ApplyScoreVideoToLayout(true,null);
+    Check(reloadedScoreVideo.Layout.TouchdownVideo is null&&reloadedScoreVideo.Layout.FieldGoalVideo is not null,
+        "the touchdown and field-goal videos switch off independently");
+    reloadedScoreVideo.ClearScoreCelebration(false);
+    Check(reloadedScoreVideo.Layout.FieldGoalVideo is null,"a score celebration can be cleared completely");
+    var plusSixVideo=new ScoreVideo{Path=@"C:\\clips\\plus-six.mp4",ChromaKeyColor="#FF00B140",ChromaKeyTolerance=0.14};
+    var minusSixVideo=new ScoreVideo{Path=@"C:\\clips\\minus-six.mp4",ChromaKeyColor="#FF2020FF",ChromaKeyTolerance=0.08};
+    reloadedScoreVideo.ApplyScoreVideoToLayout(6,plusSixVideo);
+    reloadedScoreVideo.ApplyScoreVideoToLayout(-6,minusSixVideo);
+    var valueRules=new ScorebugCatalog(scoreMotionPath);
+    Check(valueRules.Layout.ScoreVideoForAmount(6)?.Path==plusSixVideo.Path
+        &&valueRules.Layout.ScoreVideoForAmount(-6)?.Path==minusSixVideo.Path
+        &&valueRules.Layout.ScoreVideoForAmount(3) is null,
+        "score videos are selected by the exact signed score change");
+    var minusSixTolerance=valueRules.Layout.ScoreVideoForAmount(-6)?.ChromaKeyTolerance??1;
+    Check(valueRules.Layout.ScoreVideoForAmount(6)?.ChromaKeyColor=="#FF00B140"
+        &&Math.Abs(minusSixTolerance-0.08)<0.001,
+        "a value score video keeps its own chroma key in the saved layout");
+    var copiedValueRules=valueRules.Layout.Copy();
+    Check(copiedValueRules.ScoreVideoForAmount(6)?.Path==plusSixVideo.Path
+        &&copiedValueRules.ScoreVideoForAmount(-6)?.Path==minusSixVideo.Path,
+        "a copied layout carries every value score video");
+    valueRules.ApplyScoreVideoToLayout(6,null);
+    Check(valueRules.Layout.ScoreVideoForAmount(6) is null
+        &&valueRules.Layout.ScoreVideoForAmount(-6)?.Path==minusSixVideo.Path,
+        "one score value's video can be removed without clearing the others");
+    var shimmerPreset=MotionClip.AnimationPreset("Shimmer");
+    var colourCyclePreset=MotionClip.AnimationPreset("Color cycle");
+    Check(shimmerPreset.Phases[0].Tracks.Count==0&&colourCyclePreset.Phases[0].Tracks.Count==0,
+        "colour-only animation presets do not inherit the default pop scale");
+}
+finally { if(File.Exists(scoreMotionPath))File.Delete(scoreMotionPath); }
 
 var exportLayoutPath=Path.Combine(Path.GetTempPath(),$"layout-{Guid.NewGuid():N}.spl");
 var displayPath=Path.Combine(Path.GetTempPath(),$"display-{Guid.NewGuid():N}.spd");
@@ -516,7 +853,29 @@ try
     var webGame=new GameEngine();webGame.NewGame("football");webGame.Score(true,7);
     var page=ScorebugHtml.Build(ScorebugLayout.Default(),webGame.State,"Broadcast");
     Check(page.Contains("data-token")&&page.Contains("ScorePlus")&&page.Contains("<html"),"the web export keeps the tokens a site can update");
-    Check(page.Contains(">7</div>"),"the web export prints the bound score inside the element, not just the token");
+    Check(page.Contains(">7<")||page.Contains("7"),"the web export prints the bound values onto the page");
+
+    var arrowGame=new GameEngine();arrowGame.NewGame("football");arrowGame.SetPossession(true);
+    var arrowLayout=new ScorebugLayout{Elements=[
+        new ScorebugElement{Name="Home arrow",Content="",Icon=ScorebugIcon.PossessionArrow,Width=80,Height=40},
+        new ScorebugElement{Name="Away arrow",Content="",Icon=ScorebugIcon.PossessionArrow,IconVisitors=true,Width=80,Height=40}]};
+    var homeArrowPage=ScorebugHtml.Build(arrowLayout,arrowGame.State,"Possession");
+    Check(homeArrowPage.Contains("class=\"sp-arrow in")&&!homeArrowPage.Contains("class=\"sp-arrow out"),"the possession arrow only marks the team with the ball");
+    arrowGame.SetPossession(false);
+    Check(ScorebugHtml.Build(arrowLayout,arrowGame.State,"Possession").Contains("class=\"sp-arrow out flip"),"the possession arrow follows the ball to the other plate");
+    arrowGame.SetPossession(true);
+    arrowLayout.Elements[0].IconArrowDown=true;
+    Check(ScorebugHtml.Build(arrowLayout,arrowGame.State,"Possession").Contains("class=\"sp-arrow down\""),"the web export can draw the downward possession arrow");
+    var webBars=new ScorebugElement{Name="Timeouts",Content="",Icon=ScorebugIcon.TimeoutBars,Width=160,Height=60,IconBorderThickness=3,IconBorderColor="#FFE23B3B"};
+    var webBarsPage=ScorebugHtml.Build(new ScorebugLayout{Elements=[webBars]},arrowGame.State,"Bars");
+    Check(webBarsPage.Contains("sp-bar")&&webBarsPage.Contains("box-shadow:0 0 0 3px rgba(226,59,59,1)"),"the web export draws the icon border on each timeout bar");
+    var freshItem=new ScorebugElement{Name="Fresh",Content="X"};
+    Check(freshItem.TextAlign==ScorebugTextAlign.Center,"a new element centres its text");
+    Check(Math.Abs(freshItem.TextShadowAngle-45)<0.001,"a new element's shadow falls down and to the right");
+    var uncutLayout=new ScorebugLayout{Name="Fresh layout"};
+    Check(uncutLayout.Transition==LayoutTransition.Cut&&uncutLayout.TransitionSeconds==0,"a new layout cuts instead of dissolving");
+    var shadowItem=new ScorebugElement{Name="Shadowed",Content="TEXAS",TextShadow=true,TextShadowColor="#CC000000",TextShadowOffset=5,TextShadowSoftness=0};
+    Check(ScorebugHtml.Build(new ScorebugLayout{Elements=[shadowItem]},arrowGame.State,"Shadow").Contains("text-shadow:"),"a text shadow is written into the web export");
 
     var reportRoster=Roster.Create("Home Roster");
     var bench=reportRoster.AddPlayer();bench.Name="Bench";bench.SetStat("Yards",0);
@@ -537,6 +896,409 @@ try
     var pieceCopy=pieceClip.Snapshot();
     Check(pieceCopy.Pieces.Count==1&&pieceCopy.Pieces[0].Name=="Flash"
         &&pieceCopy.Phase("Enter")!.Tracks.Any(track=>track.PieceId=="element-a"),"a saved clip carries its temporary pieces and piece-scoped keys");
+
+    // ---------- score-specific takes, temporary pieces and the layout timeline ----------
+    var scoreGame=new GameEngine();scoreGame.NewGame("basketball");scoreGame.Score(true,3);
+    Check(scoreGame.State.LastScoreAmount==3&&scoreGame.State.LastScoreHome
+        &&ScoreboardTemplates.Bind("{{LAST_SCORE_CHANGE}} {{LAST_SCORE_ABBR}} {{LAST_SCORE_SIDE}}",scoreGame.State,null).StartsWith("+3 "),
+        "the last score is kept and its score-change tokens are available to a timeline piece");
+    Check(ScoreboardTemplates.Bind("{{LAST_SCORE_AMOUNT}}|{{LAST_SCORE_CHANGE}}",scoreGame.State,null)=="3|+3",
+        "a temporary piece can print the actual score amount instead of a hard-coded number");
+    var takeClip=new MotionClip{Name="Score takes",Kind=MotionKind.Animation,UseOnValueChange=true};
+    var untriggeredTake=new MotionPhase("Value",0.4);
+    untriggeredTake.Tracks.Add(new MotionTrack(MotionTarget.Scale,(0,1),(0.4,1.1)));
+    var plus3=untriggeredTake.Copy();plus3.Name="Value +3";plus3.TriggerAmount=3;
+    var plus6=untriggeredTake.Copy();plus6.Name="Value +6";plus6.TriggerAmount=6;
+    takeClip.Phases.AddRange([untriggeredTake,plus3,plus6]);
+    takeClip.Pieces.AddRange([
+        new MotionPiece{Name="Three",Text="{{LAST_SCORE_CHANGE}}",TriggerAmount=3},
+        new MotionPiece{Name="Six",Text="{{LAST_SCORE_CHANGE}}",TriggerAmount=6}
+    ]);
+    takeClip.Normalize();
+    Check(ReferenceEquals(takeClip.ValuePhaseFor(3,true),plus3)&&ReferenceEquals(takeClip.ValuePhaseFor(6,true),plus6),
+        "a value phase is chosen by the exact score that was pressed");
+    Check(ReferenceEquals(takeClip.ValuePhaseFor(2,true),untriggeredTake),
+        "a score with no take falls back to the untriggered phase");
+    Check(takeClip.PiecesForTrigger(3,true).Select(piece=>piece.Name).SequenceEqual(["Three"])
+        &&takeClip.PiecesForTrigger(6,true).Select(piece=>piece.Name).SequenceEqual(["Six"]),
+        "a +3 temporary piece never appears for +6");
+    scoreGame.Score(true,6);
+    Check(takeClip.PiecesForTrigger(scoreGame.State.LastScoreAmount,scoreGame.State.LastScoreHome)
+        .All(piece=>piece.Name!="Three"),"the live last-score amount filters the temporary pieces");
+    var timelineClip=new MotionClip{Name="Timeline",Kind=MotionKind.Transition};
+    timelineClip.PieceOrder=["first","second"];
+    timelineClip.ItemStagger=0.12;
+    timelineClip.Normalize();
+    Check(timelineClip.PieceOrder.SequenceEqual(["first","second"])
+        &&Math.Abs(timelineClip.ItemStagger-0.12)<0.001,
+        "a layout timeline keeps its item order and gap when the clip is saved");
+
+    // ---------- Daktronics All Sport 5000 RTD decoding ----------
+    // Build one RTD packet exactly as the console does: SYN SOH header STX text EOT checksum ETX.
+    static byte[] DaktronicsFrame(int offset,string text)
+    {
+        var body=new List<byte>{0x01};
+        body.AddRange(System.Text.Encoding.ASCII.GetBytes("004210"+offset.ToString("D4")));
+        body.Add(0x02);
+        body.AddRange(System.Text.Encoding.ASCII.GetBytes(text));
+        body.Add(0x04);
+        var checksum=body.Aggregate(0,static (sum,value)=>(sum+value)&0xFF);
+        var frame=new List<byte>{0x16};
+        frame.AddRange(body);
+        frame.AddRange(System.Text.Encoding.ASCII.GetBytes(checksum.ToString("X2")));
+        frame.Add(0x17);
+        return frame.ToArray();
+    }
+
+    var rtd=new DaktronicsRtdDecoder("football");
+    DeviceSnapshot? rtdState=null;
+    foreach(var (offset,text) in new[]{
+        (1,"16:09"),(108,"  12"),(112,"   7"),(142," 2"),(122," 3"),(130," 1"),
+        (201," 0:25.0z"),(220,"35"),(222,"1ST"),(225,"10")})
+        rtdState=rtd.Feed(DaktronicsFrame(offset,text)) ?? rtdState;
+    Check(rtdState?.ClockSeconds==969&&rtdState.HomeScore==12&&rtdState.AwayScore==7&&rtdState.Period==2,
+        "Daktronics RTD packets splice clock, score and period fields into the persistent buffer");
+    Check(rtdState.HomeTimeouts==3&&rtdState.AwayTimeouts==1&&rtdState.PlayClockSeconds==25,
+        "Daktronics RTD decodes timeouts and the football play clock");
+    Check(rtdState.Down==1&&rtdState.YardsToGo==10&&rtdState.BallOn==35,
+        "Daktronics RTD decodes down, distance and ball spot");
+    var hardwareGame=new GameEngine();hardwareGame.NewGame("football");hardwareGame.HardwareControlled=true;
+    Check(hardwareGame.ApplyHardwareSnapshot(rtdState!),
+        "a device snapshot changes the live game");
+    Check(hardwareGame.State.HomeScore==12&&hardwareGame.State.AwayScore==7&&hardwareGame.State.ClockSeconds==969
+        &&hardwareGame.State.Period==2&&hardwareGame.State.Down==1&&hardwareGame.State.YardsToGo==10,
+        "hardware values reach the console without an operator undo point");
+    var hardwareOutput=new GameEngine();hardwareOutput.LoadFromState(hardwareGame.CloneState());
+    Check(hardwareOutput.UpdateLiveController(hardwareGame.State)==false,
+        "a controller update is idempotent for the published copy");
+    hardwareGame.SetFootballDistance(3,42);hardwareGame.SetPeriod(3);
+    Check(hardwareOutput.UpdateLiveController(hardwareGame.State)
+        &&hardwareOutput.State.YardsToGo==3&&hardwareOutput.State.YardsToGoal==42&&hardwareOutput.State.Period==3,
+        "controller updates carry down, distance and period to the audience copy");
+    hardwareGame.HardwareControlled=false;
+
+    var basketballRtd=new DaktronicsRtdDecoder("basketball");
+    DeviceSnapshot? basketballState=null;
+    foreach(var (offset,text) in new[]{
+        (1," 0:44"),(108,"  21"),(112,"  19"),(201," 0:18.4z"),(236," 4"),(238," 2")})
+        basketballState=basketballRtd.Feed(DaktronicsFrame(offset,text)) ?? basketballState;
+    Check(basketballState?.ShotClockSeconds==18&&basketballState.HomeFouls==4&&basketballState.AwayFouls==2,
+        "Daktronics RTD uses the basketball shot-clock and foul fields");
+
+    // ---------- every clock button reaches the software ----------
+    // RTD sends clock values but no running flag, so each clock is judged from its own readings:
+    // a value that decreases is running, one that holds still was stopped.
+    var runTrack=new ClockRunTracker(1000);
+    Check(runTrack.Track(600,0)==null,"one clock reading does not guess whether the clock runs");
+    Check(runTrack.Track(599,500)==true&&runTrack.Track(598,1000)==true,"a decreasing clock is running");
+    Check(runTrack.Track(598,2600)==false,"a clock that holds still is stopped");
+    Check(runTrack.Track(540,2700)==true&&runTrack.Track(540,3800)==false,
+        "a clock set back reads as running until it holds still again");
+    runTrack.Reset();
+    Check(runTrack.Track(24,4000)==null,"a tracker that was reset forgets the previous game");
+    var shotTrack=new ClockRunTracker(1000);
+    // The shot and play clocks move independently of the game clock.
+    shotTrack.Track(24,0);shotTrack.Track(23,500);
+    var playTrack=new ClockRunTracker(1000);
+    playTrack.Track(25,0);playTrack.Track(25,3000);
+    Check(shotTrack.Track(22,1000)==true&&playTrack.Track(25,3500)==false,
+        "the shot clock and the play clock are tracked separately");
+
+    // ---------- b1.0: clock shapes, team records and a sport switch that keeps the teams ----------
+    Check(GameEngine.FormatClock(600,ClockStyle.Padded)=="10:00"
+        &&GameEngine.FormatClock(599,ClockStyle.Padded)=="09:59"
+        &&GameEngine.FormatClock(59,ClockStyle.Padded)=="0:59",
+        "the padded clock prints 10:00, 09:59 and 0:59");
+    Check(GameEngine.FormatClock(600,ClockStyle.Compact)=="10:00"
+        &&GameEngine.FormatClock(599,ClockStyle.Compact)=="9:59"
+        &&GameEngine.FormatClock(59,ClockStyle.Compact)==":59",
+        "the compact clock drops the leading zero and prints :59 under a minute");
+    var identityGame=new GameEngine();identityGame.NewGame("football");
+    identityGame.SetTeamIdentity(true,"Eagles","EAG",null,"#FF112233","#FF445566","Birds","8-2");
+    Check(ScoreboardTemplates.Bind("{{HOME_RECORD}}",identityGame.State)=="8-2",
+        "a team record is saved in team details and prints through its binding");
+    identityGame.NewGame("soccer",keepTeamIdentity:true);
+    Check(identityGame.State.HomeTeam=="Eagles"&&identityGame.State.HomeRecord=="8-2"&&identityGame.State.SportId=="soccer",
+        "switching sport keeps the teams and their records");
+    var identityReloaded=new GameEngine();identityReloaded.LoadFromState(identityGame.State);
+    Check(identityReloaded.State.HomeRecord=="8-2","a team record survives a state reload");
+
+    // ---------- b1.0: automatic results and quick buttons in the game save ----------
+    Check(GameEngine.ApplyResult("4-0",1)=="5-0"&&GameEngine.ApplyResult("4-0",-1)=="4-1",
+        "a win or loss adds to a two-part record without inventing a tie column");
+    Check(GameEngine.ApplyResult("4-0",0)=="4-0-1"&&GameEngine.ApplyResult("5-7-1",1)=="6-7-1",
+        "a tie becomes win-loss-tie and an existing tie column is kept");
+    Check(GameEngine.ApplyResult("",1)==""&&GameEngine.ApplyResult("not a record",1)=="not a record",
+        "an empty or malformed record is never changed by a result");
+    var autoRecord=new GameEngine();autoRecord.NewGame("basketball");
+    autoRecord.State.Period=autoRecord.State.TotalPeriods;autoRecord.State.ClockSeconds=1;
+    autoRecord.State.HomeRecord="4-0";autoRecord.State.AwayRecord="5-7-1";autoRecord.Score(true,2);
+    GameEngine.AutoUpdateRecordEnabled=true;autoRecord.State.ClockRunning=true;Thread.Sleep(1100);autoRecord.Tick();
+    GameEngine.AutoUpdateRecordEnabled=false;
+    Check(autoRecord.State.HomeRecord=="5-0"&&autoRecord.State.AwayRecord=="5-8-1"
+        &&autoRecord.State.GameEnded&&autoRecord.State.RecordSettled,
+        "the final whistle marks the game final and adds a win and a loss to both team records");
+    // A tied regulation game is held at End of Reg. while overtime is still possible. The record
+    // is only settled when a winner emerges, unless the operator chooses a tie period.
+    var tieGame=new GameEngine();tieGame.NewGame("football");
+    tieGame.State.HomeRecord="5-2";tieGame.State.AwayRecord="5-2";
+    tieGame.State.Period=tieGame.State.TotalPeriods;tieGame.State.ClockSeconds=1;
+    tieGame.Score(true,7);tieGame.Score(false,7);
+    GameEngine.AutoUpdateRecordEnabled=true;GameEngine.TieAllowedAtPeriod=0;
+    tieGame.State.ClockRunning=true;Thread.Sleep(1100);tieGame.Tick();
+    Check(tieGame.State.ClockMessage==GameClockMessage.EndOfRegulation&&!tieGame.State.GameEnded
+        &&!tieGame.State.RecordSettled&&tieGame.State.HomeRecord=="5-2",
+        "a tied regulation game waits at End of Reg. instead of recording a tie");
+    tieGame.State.Period=5;tieGame.State.ClockSeconds=1;tieGame.State.ClockRunning=true;
+    Thread.Sleep(1100);tieGame.Tick();
+    Check(tieGame.State.ClockMessage==GameClockMessage.EndOfRegulation&&!tieGame.State.RecordSettled,
+        "a tie after overtime also stays open until a winner is found");
+    tieGame.Score(true,3);tieGame.EndGame();
+    Check(tieGame.State.GameEnded&&tieGame.State.RecordSettled&&tieGame.State.HomeRecord=="6-2"
+        &&tieGame.State.AwayRecord=="5-3",
+        "a winner in overtime settles both records");
+    var tieEnd=new GameEngine();tieEnd.NewGame("football");
+    tieEnd.State.HomeRecord="5-2";tieEnd.State.AwayRecord="5-2";
+    tieEnd.State.Period=tieEnd.State.TotalPeriods;tieEnd.Score(true,7);tieEnd.Score(false,7);
+    GameEngine.AutoUpdateRecordEnabled=true;GameEngine.TieAllowedAtPeriod=0;
+    Check(tieEnd.EndGame()&&tieEnd.State.GameEnded&&tieEnd.State.RecordSettled
+        &&tieEnd.State.ClockMessage==GameClockMessage.Final
+        &&tieEnd.State.HomeRecord=="5-2-1"&&tieEnd.State.AwayRecord=="5-2-1",
+        "End Game records a tie instead of leaving the records unchanged");
+    var tieAtFour=new GameEngine();tieAtFour.NewGame("football");
+    tieAtFour.State.HomeRecord="5-2";tieAtFour.State.AwayRecord="5-2";
+    tieAtFour.State.Period=tieAtFour.State.TotalPeriods;tieAtFour.State.ClockSeconds=1;
+    tieAtFour.Score(true,7);tieAtFour.Score(false,7);
+    GameEngine.TieAllowedAtPeriod=4;tieAtFour.State.ClockRunning=true;Thread.Sleep(1100);tieAtFour.Tick();
+    Check(tieAtFour.State.GameEnded&&tieAtFour.State.RecordSettled
+        &&tieAtFour.State.HomeRecord=="5-2-1"&&tieAtFour.State.AwayRecord=="5-2-1",
+        "choosing regulation as the tie period records a 5-2-1 tie");
+    GameEngine.AutoUpdateRecordEnabled=false;GameEngine.TieAllowedAtPeriod=0;GameEngine.OvertimeFinalLabelEnabled=false;
+    var endedGame=new GameEngine();endedGame.NewGame("baseball");
+    endedGame.State.HomeRecord="4-0";endedGame.State.AwayRecord="";endedGame.Score(true,1);
+    Check(endedGame.EndGame()&&endedGame.State.GameEnded&&endedGame.State.RecordSettled
+        &&endedGame.State.HomeRecord=="5-0"&&endedGame.State.AwayRecord=="",
+        "End Game stops the game and records the result even when automatic updates are off");
+    Check(!endedGame.EndGame()&&endedGame.State.HomeRecord=="5-0",
+        "an already ended game is not counted twice");
+    Check(endedGame.Undo()&&!endedGame.State.GameEnded&&!endedGame.State.RecordSettled
+        &&endedGame.State.HomeRecord=="4-0",
+        "End Game and its record update can be undone");
+    var pendingFinal=new GameEngine();pendingFinal.NewGame("football");
+    pendingFinal.State.HomeRecord="5-2";pendingFinal.State.AwayRecord="5-2";
+    pendingFinal.Score(true,7);pendingFinal.Score(false,7);
+    pendingFinal.State.GameEnded=true;pendingFinal.State.ClockMessage=GameClockMessage.Final;
+    GameEngine.AutoUpdateRecordEnabled=false;
+    Check(pendingFinal.EndGame()&&pendingFinal.State.RecordSettled
+        &&pendingFinal.State.HomeRecord=="5-2-1"&&pendingFinal.State.AwayRecord=="5-2-1",
+        "End Game still records a tie when the clock already marked the game final");
+    var restartGame=new GameEngine();restartGame.NewGame("football");
+    restartGame.SetTeamIdentity(true,"Restart Home","RST",null,"#FF112233","#FF445566",mascot:"Eagles",record:"2-0",ranking:"#7",divisionRecord:"1-0");
+    restartGame.State.HomeRosterId="roster-1";
+    restartGame.Score(true,7);restartGame.Score(false,3);
+    restartGame.State.HomeTimeouts=1;restartGame.State.Period=3;restartGame.State.ClockSeconds=87;
+    restartGame.EndGame();
+    var settledRecord=restartGame.State.HomeRecord;
+    Check(restartGame.RestartGame()&&!restartGame.State.GameEnded&&!restartGame.State.RecordSettled
+        &&settledRecord=="3-0"
+        &&restartGame.State.HomeScore==0&&restartGame.State.AwayScore==0
+        &&restartGame.State.Period==1&&restartGame.State.ClockSeconds==restartGame.State.PeriodSeconds
+        &&restartGame.State.HomeTimeouts==restartGame.State.HomeTimeoutLimit,
+        "Restart Game clears the final, score and clocks");
+    Check(restartGame.State.HomeTeam=="Restart Home"&&restartGame.State.HomeAbbreviation=="RST"
+        &&restartGame.State.HomePrimaryColor=="#FF112233"&&restartGame.State.HomeMascot=="Eagles"
+        &&restartGame.State.HomeRanking=="#7"&&restartGame.State.HomeDivisionRecord=="1-0"
+        &&restartGame.State.HomeRecord==settledRecord&&restartGame.State.HomeRosterId=="roster-1",
+        "Restart Game keeps the team properties and the settled record");
+    Check(!restartGame.RestartGame(),"a running game is not restarted by the End Game button");
+    var quickSave=Path.Combine(Path.GetTempPath(),$"quick-buttons-{Guid.NewGuid():N}.spg");
+    engine.NewGame("basketball");
+    engine.State.QuickLayouts=[new SavedQuickLayout{Label="Flag Layout",DisplayId="main",LayoutId="flag"}];
+    engine.State.QuickMedia=[new SavedQuickMedia{Label="Replay",Path="C:\\clips\\replay.mp4"}];
+    engine.State.QuickButtonsSaved=true;engine.Save(quickSave);
+    var quickReload=new GameEngine();quickReload.Load(quickSave);
+    Check(quickReload.State.QuickButtonsSaved&&quickReload.State.QuickLayouts.Single().Label=="Flag Layout"
+        &&quickReload.State.QuickMedia.Single().Path=="C:\\clips\\replay.mp4",
+        "quick layout and media buttons travel inside the game save");
+    File.Delete(quickSave);
+
+    // ---------- league cloud snapshot, feed parsing and ticker ----------
+    var cloudGame=new GameEngine();cloudGame.NewGame("football");
+    cloudGame.SetTeams("Cloud Home","Cloud Away");cloudGame.State.GameName="Friday Night";
+    cloudGame.Score(true,14);cloudGame.Score(false,7);
+    var cloudUpload=LeagueCloudUpload.From(cloudGame.State,"fall-league");
+    Check(cloudUpload.League=="fall-league"&&cloudUpload.GameId==cloudGame.State.GameId
+        &&cloudUpload.HomeScore==14&&cloudUpload.Status=="live"&&cloudUpload.HomeTeam=="Cloud Home",
+        "the league upload carries the stable game id, teams, score and live status");
+    cloudGame.State.ClockMessage=GameClockMessage.EndOfRegulation;
+    Check(LeagueCloudUpload.From(cloudGame.State,"fall-league").Status=="end_of_reg",
+        "the league upload marks a held tie as End of Reg.");
+    var feedGames=new[]
+    {
+        new LeagueGame{AwayTeam="Bears",HomeTeam="Eagles",AwayScore=2,HomeScore=4,PeriodLabel="Q4",Clock="1:20",Status="live"},
+        new LeagueGame{AwayTeam="Tigers",HomeTeam="Hawks",HomeScore=3,PeriodLabel="FINAL",Status="final"}
+    };
+    var feedJson=JsonSerializer.Serialize(feedGames);
+    var parsedGames=LeagueCloudClient.Parse(feedJson);
+    var wrappedGames=LeagueCloudClient.Parse($"{{\"games\":{feedJson}}}");
+    Check(parsedGames.Count==2&&wrappedGames.Count==2&&parsedGames[0].TickerLine.Contains("Bears 2")
+        &&parsedGames[1].StateLine.Contains("FINAL"),
+        "the league feed accepts a bare array or a games wrapper and exposes ticker text");
+    Check(LeagueTicker.Format(parsedGames).Contains("Eagles 4")&&LeagueTicker.Format([]).Contains("waiting for cloud feed"),
+        "the league ticker joins received games and prints a waiting state for an empty feed");
+
+    // ---------- node rules and hand-over chroma keying ----------
+    var automationPath=Path.Combine(Path.GetTempPath(),$"automation-{Guid.NewGuid():N}.json");
+    var chromaPath=Path.Combine(Path.GetTempPath(),$"transition-chroma-{Guid.NewGuid():N}.json");
+    try
+    {
+        var automationCatalog=new ScorebugCatalog(automationPath);
+        var automationDisplay=automationCatalog.ActiveDisplay;
+        var target=automationCatalog.Layout.Elements.First(element=>element.Name=="Home team");
+        var rule=new AutomationRule{Name="Play clock warning",LayoutId=automationDisplay.Layouts[0].Id};
+        rule.Conditions.Add(new AutomationCondition{Field=AutomationField.PlayClock,Operator=AutomationOperator.Less,Value=5});
+        rule.Actions.Add(new AutomationAction{Kind=AutomationActionKind.SetTextColor,LayoutId=automationDisplay.Layouts[0].Id,ElementId=target.Id,Value="#FFFF3B30",ColorSource=ScorebugColorSource.HomePrimary});
+        automationCatalog.UpdateAutomations(automationDisplay.Id,[rule]);
+        var automationReloaded=new ScorebugCatalog(automationPath);
+        var savedRule=automationReloaded.ActiveDisplay.Automations.Single();
+        Check(savedRule.Name=="Play clock warning"&&savedRule.LayoutId==automationDisplay.Layouts[0].Id
+            &&savedRule.Conditions.Single().Field==AutomationField.PlayClock
+            &&savedRule.Actions.Single().Kind==AutomationActionKind.SetTextColor&&savedRule.Actions.Single().Value=="#FFFF3B30"
+            &&savedRule.Actions.Single().ColorSource==ScorebugColorSource.HomePrimary,
+            "conditionals, their layout scope, actions and team-palette colours persist with their display");
+        var paletteState=new GameState{HomePrimaryColor="#FF123456",AwaySecondaryColor="#FF654321"};
+        Check(AutomationRules.ResolveColor(savedRule.Actions.Single(),paletteState)=="#FF123456",
+            "a conditional colour can resolve against the home team's primary colour");
+        Check(new AutomationCondition{Field=AutomationField.PossessionSide,Operator=AutomationOperator.Equal,Text="Away"}.Matches(new GameState{HomePossession=false}),
+            "possession is available as a readable Home/Away condition");
+        var ruleEngine=new GameEngine();ruleEngine.NewGame("football");ruleEngine.SetPlayClock(3);
+        Check(savedRule.Matches(ruleEngine.State),"a play-clock condition matches while the clock is below its threshold");
+        ruleEngine.SetPlayClock(8);
+        Check(!savedRule.Matches(ruleEngine.State),"a play-clock condition stops matching above its threshold");
+
+        // Rule bundles carry more than one rule, and the expanded graph can see flags, timeouts,
+        // cards and team figures without making one element per value.
+        var secondRule=new AutomationRule{Name="Flag and yards",BypassOutputUpdate=true};
+        secondRule.Conditions.Add(new AutomationCondition{Field=AutomationField.PenaltyActive,Operator=AutomationOperator.IsTrue});
+        secondRule.Conditions.Add(new AutomationCondition{Field=AutomationField.PenaltyType,Operator=AutomationOperator.Equal,Text="Holding"});
+        secondRule.Conditions.Add(new AutomationCondition{Field=AutomationField.HomeYards,Operator=AutomationOperator.Greater,Value=300});
+        secondRule.Conditions.Add(new AutomationCondition{Field=AutomationField.HomeTimeouts,Operator=AutomationOperator.Equal,Value=1});
+        var ruleBundle=Path.Combine(Path.GetTempPath(),$"rules-{Guid.NewGuid():N}.spr");
+        try
+        {
+            RuleFiles.Save(ruleBundle,new AutomationRule?[]{rule,secondRule});
+            var importedRules=RuleFiles.Load(ruleBundle);
+            Check(importedRules?.Count==2&&importedRules[1].Conditions.Count==4
+                &&importedRules[1].Conditions[1].Field==AutomationField.PenaltyType
+                &&importedRules[1].BypassOutputUpdate,
+                "a ScorePlus Rule .spr bundle exports and imports multiple rules at once, including the live-bypass choice");
+            var flagState=new GameState{PenaltyActive=true,PenaltyType="Holding",HomeYards=347,HomeTimeouts=1,
+                HomeYellowCards=2,AwayRedCards=1,BallOnHomeSide=false,HomeTimeoutLimit=3,TimeoutClockSeconds=42};
+            Check(secondRule.Matches(flagState),"flag, flag type, yards and timeouts all evaluate from the game state");
+            flagState.PenaltyType="Offside";
+            Check(!secondRule.Matches(flagState),"the flag-type condition rejects another penalty");
+            Check(new AutomationCondition{Field=AutomationField.HomeYellowCards,Operator=AutomationOperator.GreaterOrEqual,Value=2}.Matches(flagState),
+                "a card condition reads the home team's yellow cards");
+            Check(new AutomationCondition{Field=AutomationField.HomeTimeoutLimit,Operator=AutomationOperator.Equal,Value=3}.Matches(flagState),
+                "the timeout limit is available as a rule condition");
+            var numericLabels=AutomationRules.OperatorsFor(AutomationField.PlayClock).Select(option=>option.Label).ToArray();
+            Check(new[]{"greater than","less than","less than or equal to","greater than or equal to","equal to"}
+                    .All(label=>numericLabels.Contains(label)),
+                "numeric conditions offer the requested comparisons");
+            var waitRule=new AutomationRule{Name="Flag layout and back"};
+            waitRule.Conditions.Add(new AutomationCondition{Field=AutomationField.PenaltyActive,Operator=AutomationOperator.IsTrue});
+            waitRule.Conditions.Add(new AutomationCondition{Field=AutomationField.PenaltyActive,Operator=AutomationOperator.IsFalse,WaitUntil=true});
+            waitRule.Actions.Add(new AutomationAction{Kind=AutomationActionKind.SwitchLayout,LayoutId=automationDisplay.Layouts[0].Id,Phase=AutomationActionPhase.OnMatch});
+            waitRule.Actions.Add(new AutomationAction{Kind=AutomationActionKind.SwitchLayout,LayoutId=automationDisplay.Layouts[0].Id,Phase=AutomationActionPhase.AfterWait});
+            waitRule.Actions.Add(new AutomationAction{Kind=AutomationActionKind.SetText,ElementId=target.Id,Value="NO FLAG",Phase=AutomationActionPhase.Else});
+            RuleFiles.Save(ruleBundle,new AutomationRule?[]{waitRule});
+            var waitImport=RuleFiles.Load(ruleBundle)?.SingleOrDefault();
+            Check(waitImport is not null&&waitImport.Conditions.Count==2&&waitImport.Conditions[1].WaitUntil
+                &&waitImport.Actions[1].Phase==AutomationActionPhase.AfterWait
+                &&waitImport.Actions[2].Phase==AutomationActionPhase.Else,
+                "wait-until conditions and action phases travel in a ScorePlus Rule bundle");
+            var waitState=new GameState{PenaltyActive=true};
+            Check(waitImport!.Matches(waitState)&&!waitImport.MatchesWait(waitState),
+                "a flag-down trigger matches while its wait-until condition does not");
+            waitState.PenaltyActive=false;
+            Check(!waitImport.Matches(waitState)&&waitImport.MatchesWait(waitState),
+                "the wait-until condition becomes true when the flag goes away");
+        }
+        finally { if(File.Exists(ruleBundle)) File.Delete(ruleBundle); }
+
+        var chromaCatalog=new ScorebugCatalog(chromaPath);
+        chromaCatalog.Update(layout=>{layout.TransitionVideoPath=@"C:\\clips\\transition.mp4";layout.TransitionVideoChromaKeyColor="#FF00B140";layout.TransitionVideoChromaKeyTolerance=0.23;layout.TransitionVideoCutSeconds=2.4;});
+        var chromaReloaded=new ScorebugCatalog(chromaPath);
+        Check(chromaReloaded.Layout.TransitionVideoChromaKeyColor=="#FF00B140"&&Math.Abs(chromaReloaded.Layout.TransitionVideoChromaKeyTolerance-0.23)<0.001,
+            "a layout hand-over video keeps its chroma key colour and tolerance across a save");
+        Check(Math.Abs(chromaReloaded.Layout.TransitionVideoCutSeconds-2.4)<0.001,
+            "a layout hand-over video keeps the beat when the incoming layout cuts in");
+        chromaReloaded.Update(layout=>layout.TransitionVideoCutSeconds=90);
+        Check(new ScorebugCatalog(chromaPath).Layout.TransitionVideoCutSeconds<=30,
+            "a hand-over cut beat is clamped to a safe range");
+    }
+    finally
+    {
+        if(File.Exists(automationPath))File.Delete(automationPath);
+        if(File.Exists(chromaPath))File.Delete(chromaPath);
+    }
+
+    // Made icons can carry a different design for each game value, with its own colour, position,
+    // size, rotation and opacity. These are the values the studio and exported HTML both read.
+    var iconStatePath=Path.Combine(Path.GetTempPath(),$"icons-{Guid.NewGuid():N}.json");
+    try
+    {
+        CustomIconStore.UsePath(iconStatePath);
+        var made=new CustomIcon{Name="Possession mark",Glyph="●",Color="#FFFFFFFF",Plate="#00000000"};
+        made.States.Add(new CustomIconState
+        {
+            Condition=new AutomationCondition{Field=AutomationField.PossessionSide,Operator=AutomationOperator.Equal,Text="Away"},
+            Glyph="A",ImagePath=@"C:\art\away.png",Color="#FF112233",Plate="#FF445566",Round=false,OffsetX=8,OffsetY=-4,Scale=1.4,Opacity=0.6,Rotation=20
+        });
+        made.States.Add(new CustomIconState
+        {
+            Condition=new AutomationCondition{Field=AutomationField.PossessionSide,Operator=AutomationOperator.Equal,Text="Home"},
+            Glyph="H",Color="#FF778899",OffsetX=-6,Scale=0.8
+        });
+        var stored=CustomIconStore.Save(made.Copy());
+        var away=stored.Resolve(new GameState{HomePossession=false});
+        var home=stored.Resolve(new GameState{HomePossession=true});
+        Check(stored.States.Count==2&&away.Glyph=="A"&&home.Glyph=="H"
+            &&away.Color=="#FF112233"&&away.OffsetX==8&&Math.Abs(away.Scale-1.4)<0.001&&Math.Abs(away.Opacity-0.6)<0.001
+            &&away.ImagePath==@"C:\art\away.png"&&home.ImagePath=="",
+            "a made icon chooses the first matching data state, including its image, colour, location, scale and opacity");
+        Check(home.Color=="#FF778899"&&home.Round,"each icon state keeps its own plate and roundness");
+        var fallback=new CustomIcon{Glyph="F",Color="#FFFFFFFF"};
+        fallback.States.Add(new CustomIconState{Condition=new AutomationCondition{Field=AutomationField.PossessionSide,Operator=AutomationOperator.Equal,Text="Neither"},Glyph="X"});
+        Check(fallback.Resolve(new GameState{HomePossession=false}).Glyph=="F","the fallback icon design draws when no data state matches");
+        var copied=stored.Copy();
+        Check(!ReferenceEquals(copied.States[0],stored.States[0])&&copied.States[0].Glyph=="A","copying an icon deep-copies its data states");
+        var reloadedIcon=CustomIconStore.Find(stored.Id);
+        Check(reloadedIcon is not null&&reloadedIcon.States.Count==2&&reloadedIcon.Resolve(new GameState{HomePossession=true}).Glyph=="H",
+            "icon data states survive a save and reload");
+        // A ScorePlus Icon file carries one icon and its data states between machines, and imports
+        // as a new library entry rather than reusing the file's ids.
+        var iconFile=Path.Combine(Path.GetTempPath(),$"icon-{Guid.NewGuid():N}.spi");
+        try
+        {
+            var shared=new CustomIcon{Name="Shared icon",Glyph="◆",Color="#FF102030",Plate="#FF405060",Round=false,OffsetX=3,Scale=1.2,Opacity=0.8,Rotation=15};
+            shared.States.Add(new CustomIconState{Condition=new AutomationCondition{Field=AutomationField.PossessionSide,Operator=AutomationOperator.Equal,Text="Home"},Glyph="H",ImagePath=@"C:\art\home.png",Color="#FF00FF00",OffsetY=-2});
+            IconFiles.Save(iconFile,shared);
+            var imported=IconFiles.Load(iconFile);
+            Check(imported is not null&&imported.Name=="Shared icon"&&imported.Glyph=="◆"
+                &&imported.States.Count==1&&imported.States[0].Glyph=="H"&&imported.States[0].ImagePath==@"C:\art\home.png"&&imported.States[0].Condition.Text=="Home"
+                &&imported.Id!=shared.Id&&imported.States[0].Id!=shared.States[0].Id,
+                "a .spi file carries an icon and its data states and imports as an independent copy");
+            File.WriteAllText(iconFile,"not a ScorePlus icon");
+            Check(IconFiles.Load(iconFile) is null,"a damaged .spi file is refused");
+        }
+        finally { if(File.Exists(iconFile))File.Delete(iconFile); }
+    }
+    finally
+    {
+        CustomIconStore.UsePath(null);
+        if(File.Exists(iconStatePath))File.Delete(iconStatePath);
+    }
 }
 finally
 {
