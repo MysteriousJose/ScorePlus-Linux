@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
@@ -23,6 +24,7 @@ public static class MediaProbe
     public static string? Pacat { get; } = Find("pacat");
     public static string? Xrandr { get; } = Find("xrandr");
     public static string? Fonts { get; } = Find("fc-list");
+    [MemberNotNullWhen(true, nameof(Ffmpeg), nameof(Ffprobe))]
     public static bool HasVideo => Ffmpeg is not null && Ffprobe is not null;
     public static bool HasAudio => Ffplay is not null || Paplay is not null;
 
