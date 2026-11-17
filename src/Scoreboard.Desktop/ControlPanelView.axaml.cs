@@ -630,7 +630,7 @@ public partial class ControlPanelView : UserControl
         return host;
     }
 
-    void Name_KeyDown(object sender, KeyEventArgs e)
+    void Name_KeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter) return;
         e.Handled = true;
@@ -638,7 +638,7 @@ public partial class ControlPanelView : UserControl
         Keyboard.ClearFocus();
     }
 
-    void Name_LostFocus(object sender, FocusChangedEventArgs e) => CommitNames();
+    void Name_LostFocus(object? sender, FocusChangedEventArgs e) => CommitNames();
 
     void CommitNames()
     {
@@ -710,7 +710,7 @@ public partial class ControlPanelView : UserControl
         _host.LiveScoreClock = enabled;
     }
 
-    void Action_Click(object sender, RoutedEventArgs e)
+    void Action_Click(object? sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: string actionId }) Execute(actionId);
     }
