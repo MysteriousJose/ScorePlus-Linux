@@ -31,6 +31,14 @@ public partial class MainWindow : Window, IControlPanelHost
     // display at the same time; only Update Output sends anything to an audience.
     readonly ProgramSelection _program;
     readonly MediaSession _session;
+    readonly ReplayBoothController _booth;
+    readonly HardwareService _hardware;
+    readonly AutomationRuntime _automation;
+    QuickMediaBar? _quickMedia;
+    AutomationWindow? _automationWindow;
+    IconMakerWindow? _iconMaker;
+    bool _operatorLocked;
+    bool _workspaceEnabled = true;
     bool _displaySync;
     readonly MediaPlayback _playback;
     // Every audience window ever opened this session. Opening the output again adds another one
@@ -86,12 +94,20 @@ public partial class MainWindow : Window, IControlPanelHost
         // the console off the screen; the console itself is reflowable down to its minimum width.
         ScreenFit.Track(this);
         _session = new MediaSession(_preferences);
+        _booth = new ReplayBoothController(_session, _engine, _preferences);
+        _hardware = new HardwareService(_engine);
+        _hardware.Snapshot += snapshot => Dispatcher.BeginInvoke(() => ApplyHardware(snapshot));
+        _hardware.Status += message => Dispatcher.BeginInvoke(() => StatusText.Text = message);
+        _automation = new AutomationRuntime(_scorebug, _publishedEngine, _engine);
         _playback = _session.Playback;
         ThemeManager.Apply(this, _preferences.Theme);
         BuildSoundMeter();
         _meterTimer.Tick += (_, _) => UpdateSoundMeter();
         _meterTimer.Start();
         DisplayTiming.Apply(_preferences);
+        _quickMedia = new QuickMediaBar(_session, _preferences.Theme);
+        _quickMedia.Status += message => StatusText.Text = message;
+        QuickMediaHost.Content = _quickMedia;
         _quickLayouts = new QuickLayoutBar(_scorebug, _engine, _preferences.Theme);
         _quickLayouts.Status += message => StatusText.Text = message;
         QuickLayoutsHost.Content = _quickLayouts;
@@ -101,6 +117,7 @@ public partial class MainWindow : Window, IControlPanelHost
 
         _engine.Changed += Refresh;
         _engine.Changed += EngineChanged;
+        _engine.Changed += () => ReplayBoothHistory.Sample(_engine.State);
         _leagueCloud = new LeagueCloudService(_engine, _preferences);
         _leagueCloud.Status += message => Dispatcher.BeginInvoke(new Action(() => StatusText.Text = message));
         _engine.Changed += () => _leagueCloud?.MarkDirty();
@@ -111,7 +128,7 @@ public partial class MainWindow : Window, IControlPanelHost
 
         _program = new ProgramSelection(_scorebug);
         _program.Changed += ProgramChanged;
-        _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback, layoutProvider: () => _program.Layout, displayId: _program.DisplayId);
+        _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback, layoutProvider: () => _program.Layout, displayId: _program.DisplayId, automation: _automation);
         PreviewHost.Content = _preview;
         // The monitor reads the published engine and the published layout, so it is a real
         // reflection of the audience window rather than another staged preview.
@@ -126,7 +143,7 @@ public partial class MainWindow : Window, IControlPanelHost
         {
             ApplyTabVisuals();
             // The remote and the update check belong to a live window, not to the launch sequence.
-            if (!waitForLaunch) { StartRemote(); _leagueCloud?.Start(); _ = CheckForUpdatesAsync(); }
+            if (!waitForLaunch) { StartRemote(); StartHardware(); _leagueCloud?.Start(); _ = CheckForUpdatesAsync(); }
         };
 
         // Exit prompt: the world has no OnClosing override; Avalonia's Closing event carries the same
@@ -238,6 +255,7 @@ public partial class MainWindow : Window, IControlPanelHost
         SetWorkspaceEnabled(true);
         Activate();
         StartRemote();
+        StartHardware();
         _leagueCloud?.Start();
         _ = CheckForUpdatesAsync();
     }
@@ -245,9 +263,11 @@ public partial class MainWindow : Window, IControlPanelHost
     /// <summary>Locks or unlocks everything inside the window while the launch box is up.</summary>
     void SetWorkspaceEnabled(bool enabled)
     {
-        Root.IsEnabled = enabled;
+        _workspaceEnabled = enabled;
+        Root.IsEnabled = enabled && !_operatorLocked;
+        LockButton.IsEnabled = enabled && !_operatorLocked;
         // A locked window reads as dimmed, so nobody tries to type into a game that is not there.
-        Root.Opacity = enabled ? 1 : 0.55;
+        Root.Opacity = _operatorLocked ? 0.35 : enabled ? 1 : 0.55;
     }
 
     /// <summary>The live game, exposed so the operator surface (and the checks) can drive it.</summary>
@@ -492,6 +512,126 @@ public partial class MainWindow : Window, IControlPanelHost
         RosterControl.SetHintVisibility(_preferences.ShowHeadingHints);
         _macroDock?.SetHintVisibility(_preferences.ShowHeadingHints);
         _log?.SetHintVisibility(_preferences.ShowHeadingHints);
+    }
+
+    void AdLog_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AdLogWindow(_preferences.Theme) { Owner = this };
+        dialog.ShowDialog();
+    }
+
+    void Hardware_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new HardwareWindow(_preferences, _hardware) { Owner = this };
+        dialog.ShowDialog();
+    }
+
+    void Automation_Click(object sender, RoutedEventArgs e)
+    {
+        if (_automationWindow is { IsVisible: true }) { _automationWindow.Activate(); return; }
+        var dialog = new AutomationWindow(_scorebug, _publishedEngine, _preferences.Theme,
+            _program.DisplayId, _automation, _engine, layoutId: _program.Layout.Id) { Owner = this };
+        _automationWindow = dialog;
+        dialog.Closed += (_, _) => { _automationWindow = null; _preview?.Rebuild(); };
+        dialog.Show();
+    }
+
+    void IconMaker_Click(object sender, RoutedEventArgs e)
+    {
+        if (_iconMaker is { IsVisible: true }) { _iconMaker.Activate(); return; }
+        var dialog = new IconMakerWindow(_preferences.Theme) { Owner = this };
+        _iconMaker = dialog;
+        dialog.Closed += (_, _) => { _iconMaker = null; _preview?.Rebuild(); };
+        dialog.ShowDialog();
+    }
+
+    void Multiview_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new MultiviewWindow(_session, _preferences, _scorebug, _engine, _publishedEngine,
+            _program, _automation, _playback) { Owner = this };
+        window.Show();
+    }
+
+    void ReplayBooth_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new ReplayBoothWindow(_booth, _preferences) { Owner = this };
+        window.Show();
+    }
+
+    void Lock_Click(object sender, RoutedEventArgs e)
+    {
+        if (_operatorLocked) return;
+        if (string.IsNullOrWhiteSpace(_preferences.OperatorLockPasswordHash))
+        {
+            var created = OperatorLockWindow.Create(this, _preferences.Theme);
+            if (created is null) return;
+            _preferences.OperatorLockPasswordHash = OperatorLock.Hash(created);
+            PreferencesStore.Save(_preferences);
+            SetOperatorLocked(true);
+            return;
+        }
+        if (!OperatorLockWindow.Confirm(this, _preferences.Theme, _preferences.OperatorLockPasswordHash,
+                "LOCK SCOREPLUS", "Enter the operator lock password to lock the console, media, rosters and remote.")) return;
+        SetOperatorLocked(true);
+    }
+
+    void Unlock_Click(object? sender, RoutedEventArgs e)
+    {
+        var password = this.FindControl<TextBox>("UnlockPasswordInput");
+        var error = this.FindControl<TextBlock>("UnlockError");
+        if (password is null || error is null) return;
+        if (!OperatorLock.Matches(password.Text, _preferences.OperatorLockPasswordHash))
+        {
+            error.Text = "That password does not match the operator lock.";
+            password.SelectAll();
+            password.Focus();
+            return;
+        }
+        SetOperatorLocked(false);
+    }
+
+    void UnlockPassword_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        Unlock_Click(sender, e);
+    }
+
+    void SetOperatorLocked(bool locked)
+    {
+        _operatorLocked = locked;
+        Root.IsEnabled = _workspaceEnabled && !locked;
+        LockButton.IsEnabled = _workspaceEnabled && !locked;
+        Root.Opacity = locked ? 0.35 : _workspaceEnabled ? 1 : 0.55;
+        LockOverlay.IsVisible = locked;
+        LockButton.Content = locked ? "🔓" : "🔒";
+        foreach (var panel in _controlPanels) panel.IsEnabled = !locked;
+        var password = this.FindControl<TextBox>("UnlockPasswordInput");
+        var error = this.FindControl<TextBlock>("UnlockError");
+        if (password is not null) password.Text = string.Empty;
+        if (error is not null) error.Text = string.Empty;
+        if (locked)
+        {
+            Dispatcher.BeginInvoke(new Action(() => password?.Focus()));
+        }
+        else
+        {
+            _panel.Refresh();
+        }
+    }
+
+    void ApplyHardware(DeviceSnapshot snapshot)
+    {
+        if (!_engine.ApplyHardwareSnapshot(snapshot) || !_liveScoreClock) return;
+        if (!_publishedEngine.UpdateLiveController(_engine.State)) return;
+        _preview?.Refresh();
+        foreach (var output in _outputs.Where(output => output.IsVisible)) output.Publish();
+    }
+
+    void StartHardware()
+    {
+        if (!_preferences.Hardware.AutoConnect || _hardware.IsRunning) return;
+        _hardware.Start(_preferences.Hardware);
     }
 
     void EventLog_Click(object sender, RoutedEventArgs e)
@@ -837,7 +977,11 @@ public partial class MainWindow : Window, IControlPanelHost
         if (enabled) PublishLiveValues();
     }
 
-    void EngineChanged() { if (_liveScoreClock) PublishLiveValues(); }
+    void EngineChanged()
+    {
+        ReplayBoothHistory.Sample(_engine.State);
+        if (_liveScoreClock) PublishLiveValues();
+    }
 
     void PublishLiveValues()
     {
@@ -932,10 +1076,16 @@ public partial class MainWindow : Window, IControlPanelHost
         _engine.Changed -= EngineChanged;
         _remote?.Dispose();
         _leagueCloud?.Dispose();
+        _hardware.Dispose();
+        _booth.Dispose();
+        _automation.Dispose();
+        _automationWindow?.Close();
+        _iconMaker?.Close();
         _meterTimer.Stop();
         _macroDock?.CommitPendingEdits();
         _program.Dispose();
         _preview?.Dispose();
+        _quickMedia = null;
         _session.Dispose();
         foreach (var panel in _controlPanels.ToArray()) panel.Close();
         foreach (var output in _outputs.ToArray()) output.Close();

@@ -41,6 +41,7 @@ public sealed class CameraFeed : IDisposable
 
     /// <summary>How far back Replay can reach, in seconds.</summary>
     public const double MaxReplaySeconds = 120;
+    public const double ReplayWindowSeconds = MaxReplaySeconds;
 
     readonly int _index;
     readonly Avalonia.Threading.Dispatcher _dispatcher;
@@ -82,6 +83,12 @@ public sealed class CameraFeed : IDisposable
     public int CameraIndex => _index;
 
     public bool CanRecord => !_recordingFailed && _segmentPath is not null;
+
+    /// <summary>The most recent captured frame, for a replay surface that attaches late.</summary>
+    public BitmapSource? LastFrame { get; private set; }
+
+    /// <summary>Increments for every displayed frame so a wall can avoid redundant repaints.</summary>
+    public long FrameVersion { get; private set; }
 
 
     public void Start()
@@ -446,6 +453,8 @@ public sealed class CameraFeed : IDisposable
         _dispatcher.BeginInvoke(() =>
         {
             _framePending = false;
+            LastFrame = picture;
+            FrameVersion++;
             try { FrameReady?.Invoke(picture); } catch { }
         });
     }

@@ -58,6 +58,27 @@ public sealed class BitmapImage : BitmapSource
     public void EndInit() { }
 }
 
+public sealed class TransformedBitmap : BitmapSource
+{
+    public TransformedBitmap(Avalonia.Media.IImage source, Avalonia.Media.ITransform transform)
+    {
+        PixelWidth = Math.Max(1, (int)Math.Round(source.Size.Width));
+        PixelHeight = Math.Max(1, (int)Math.Round(source.Size.Height));
+    }
+}
+
+public sealed class BitmapFrame
+{
+    public static BitmapFrame Create(Avalonia.Media.IImage source) => new();
+}
+
+public sealed class JpegBitmapEncoder
+{
+    public int QualityLevel { get; set; } = 75;
+    public List<BitmapFrame> Frames { get; } = [];
+    public void Save(System.IO.Stream stream) { }
+}
+
 public sealed class RenderTargetBitmap : BitmapSource
 {
     public RenderTargetBitmap(int width, int height, double dpiX, double dpiY, PixelFormats format)
@@ -556,6 +577,8 @@ public sealed class VideoCapture : IDisposable
     public VideoCapture(int index) { }
     public VideoCapture(int index, VideoCaptureAPIs api) { }
     public bool IsOpened() => false; // stub: no capture backend wired yet
+    public double Fps => 0;
+    public long FrameCount => 0;
     public void Set(VideoCaptureProperties property, double value) { }
     public bool Read(Mat frame) => false;
     public void Release() { }

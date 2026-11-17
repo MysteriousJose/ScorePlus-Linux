@@ -32,12 +32,15 @@ public sealed record MediaEntry(
     public bool IsCamera => MediaLibrary.CameraIndex(Path) is not null;
     /// <summary>A live microphone item: captured from a device, with no file and no picture.</summary>
     public bool IsMicrophone => MediaLibrary.MicrophoneIndex(Path) is not null;
+    /// <summary>A speaker bus is a routing destination, not a clip: the button toggles its output.</summary>
+    public bool IsSpeaker => MediaLibrary.SpeakerIndex(Path) is not null;
+    public int SpeakerSlot => MediaLibrary.SpeakerIndex(Path) ?? 0;
     /// <summary>Which capture device this camera item routes to; an override beats the path's index.</summary>
     public int CameraIndex => CameraDevice ?? MediaLibrary.CameraIndex(Path) ?? 0;
     /// <summary>Which microphone this item listens to.</summary>
     public int MicrophoneIndex => MicrophoneDevice ?? MediaLibrary.MicrophoneIndex(Path) ?? 0;
-    public bool IsVideo => IsCamera || (!IsMicrophone && MediaLibrary.IsVideoFile(Path));
-    public string KindLabel => IsCamera ? "LIVE" : IsMicrophone ? "MIC" : IsVideo ? "VIDEO" : "AUDIO";
+    public bool IsVideo => IsCamera || (!IsMicrophone && !IsSpeaker && MediaLibrary.IsVideoFile(Path));
+    public string KindLabel => IsCamera ? "LIVE" : IsMicrophone ? "MIC" : IsSpeaker ? "SPEAKER" : IsVideo ? "VIDEO" : "AUDIO";
     public string FolderLabel => string.IsNullOrWhiteSpace(Folder) ? MediaLibrary.RootFolderLabel : Folder;
     public string TagAndFolder => string.IsNullOrWhiteSpace(Folder) ? Tag : $"{Tag} · {Folder}";
 
@@ -75,6 +78,9 @@ public static class MediaLibrary
     /// <summary>Where a microphone source's path lives. <c>mic:0</c> is the first capture device.</summary>
     public const string MicrophonePrefix = "mic:";
 
+    /// <summary>Where a speaker bus path lives. <c>speaker:0</c> is the first routed output.</summary>
+    public const string SpeakerPrefix = "speaker:";
+
     public static readonly string[] SuggestedTags = [AnyTag, "General", "Ads", "Highlights", "Music", "Anthem", "Sponsors", "Camera", "Microphone"];
 
     public static bool IsVideoFile(string path) => Path.GetExtension(path).ToLowerInvariant() is ".mp4" or ".mov" or ".mkv" or ".webm" or ".avi" or ".m4v";
@@ -89,6 +95,14 @@ public static class MediaLibrary
     }
 
     public static string MicrophonePath(int index) => $"{MicrophonePrefix}{Math.Max(0, index)}";
+
+    public static int? SpeakerIndex(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !path.StartsWith(SpeakerPrefix, StringComparison.OrdinalIgnoreCase)) return null;
+        return int.TryParse(path[SpeakerPrefix.Length..], out var index) ? index : 0;
+    }
+
+    public static string SpeakerPath(int index) => $"{SpeakerPrefix}{Math.Max(0, index)}";
 
     /// <summary>The capture device number behind a microphone path, or null for a real file.</summary>
     public static int? MicrophoneIndex(string path)
@@ -331,6 +345,9 @@ public sealed class MediaPlayback
         NowPlaying = entry;
         Changed?.Invoke();
     }
+
+    /// <summary>The replay feed a video surface should paint, if one is open.</summary>
+    public ReplayFeed? ReplayFramesFor(bool preview) => null;
 
     public void Stop() => Start(null);
 

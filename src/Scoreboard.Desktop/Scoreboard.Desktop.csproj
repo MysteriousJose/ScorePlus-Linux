@@ -27,6 +27,7 @@
     <!-- The .axaml surfaces need no listing: Avalonia's targets glob **/*.axaml as AvaloniaXaml
          and compile them. WPF-era <Resource> items did nothing here, so they are gone. -->
     <AvaloniaResource Include="Assets/*.png" />
+    <Content Include="Assets/*.mp3" CopyToOutputDirectory="PreserveNewest" />
     <!-- Window markup says Icon="app.ico". Avalonia only sees what is registered here, which is
          why the WPF-era ApplicationIcon alone left every window throwing on load. -->
     <AvaloniaResource Include="app.ico" />
@@ -38,5 +39,6 @@
     <PackageReference Include="Avalonia" Version="11.3.22" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.0" />
   </ItemGroup>
 </Project>

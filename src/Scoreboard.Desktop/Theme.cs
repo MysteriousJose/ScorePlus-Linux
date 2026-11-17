@@ -68,6 +68,21 @@ public sealed class UserPreferences
     /// </summary>
     public bool QuickLayoutsPublish { get; set; }
 
+    /// <summary>Twelve quick-media buttons, each pointing at one library item.</summary>
+    public List<QuickMediaBinding> QuickMedia { get; set; } = [];
+
+    /// <summary>The operator's saved multiview wall, one entry per tile.</summary>
+    public List<MultiviewTileBinding> MultiviewTiles { get; set; } = [];
+    public bool MultiviewShowLabels { get; set; } = true;
+    public bool ReplayBoothShowLabels { get; set; } = true;
+    public int ReplaySeconds { get; set; } = 120;
+
+    /// <summary>A salted hash of the operator lock password; empty means the desk is unlocked.</summary>
+    public string OperatorLockPasswordHash { get; set; } = "";
+
+    /// <summary>The controller connection, remembered beside the other operator settings.</summary>
+    public HardwareSettings Hardware { get; set; } = new();
+
     public List<MediaEntry> Media { get; set; } = [];
 
     /// <summary>Saved media playlists: an ordered run of clips that can repeat.</summary>
@@ -101,11 +116,45 @@ public sealed class UserPreferences
         LastSport = LastSport,
         QuickLayouts = QuickLayouts.Select(binding => new QuickLayoutBinding { Label = binding.Label, DisplayId = binding.DisplayId, LayoutId = binding.LayoutId }).ToList(),
         QuickLayoutsPublish = QuickLayoutsPublish,
+        QuickMedia = QuickMedia.Select(binding => new QuickMediaBinding { Label = binding.Label, Path = binding.Path }).ToList(),
+        MultiviewTiles = MultiviewTiles.Select(tile => new MultiviewTileBinding { Source = tile.Source, DisplayId = tile.DisplayId, CameraIndex = tile.CameraIndex, LayoutId = tile.LayoutId }).ToList(),
+        MultiviewShowLabels = MultiviewShowLabels,
+        ReplayBoothShowLabels = ReplayBoothShowLabels,
+        ReplaySeconds = ReplaySeconds,
+        OperatorLockPasswordHash = OperatorLockPasswordHash,
+        Hardware = Hardware.Clone(),
         Media = [.. Media],
         Playlists = Playlists.Select(p => new MediaPlaylist { Name = p.Name, Loop = p.Loop, Paths = p.Paths.ToList() }).ToList(),
         MediaFolders = [.. MediaFolders],
         MediaFiles = [.. MediaFiles]
     };
+}
+
+/// <summary>One quick-media button: a short name and the library item it cues.</summary>
+public sealed class QuickMediaBinding
+{
+    public string Label { get; set; } = "";
+    public string Path { get; set; } = "";
+    public bool IsSet => !string.IsNullOrWhiteSpace(Path);
+}
+
+/// <summary>Trims an operator's quick-button label without stripping meaningful punctuation.</summary>
+public static class QuickLabels
+{
+    public static string Clean(string? value) => (value ?? "").Trim();
+}
+
+/// <summary>Hashes and checks the operator lock without ever storing the password in clear text.</summary>
+public static class OperatorLock
+{
+    public static string Hash(string? password) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(password ?? string.Empty)));
+
+    public static bool Matches(string? password, string? hash) =>
+        !string.IsNullOrWhiteSpace(hash)
+        && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.ASCII.GetBytes(Hash(password)),
+            System.Text.Encoding.ASCII.GetBytes(hash.Trim()));
 }
 
 /// <summary>One of the four quick-layout buttons: a name the operator sees, and where it points.</summary>
@@ -146,6 +195,10 @@ public static class PreferencesStore
         preferences.MediaFolders ??= [];
         preferences.MediaFiles ??= [];
         preferences.QuickLayouts ??= [];
+        preferences.QuickMedia ??= [];
+        preferences.MultiviewTiles ??= [];
+        preferences.ReplaySeconds = Math.Clamp(preferences.ReplaySeconds, 10, 900);
+        preferences.OperatorLockPasswordHash = (preferences.OperatorLockPasswordHash ?? "").Trim();
         if (preferences.Media.Count == 0 && preferences.MediaFiles.Count > 0)
             preferences.Media = preferences.MediaFiles.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => new MediaEntry(p)).ToList();
         preferences.MediaFiles.Clear();
@@ -217,6 +270,14 @@ public static class ThemeManager
         }
         catch { }
         return "Dark";
+    }
+
+    public static void ApplyTo(Avalonia.Controls.Window window, string theme) => Apply(window, theme);
+
+    /// <summary>Applies the theme to a detached editor hosted in a tab; bare controls have no window resources.</summary>
+    public static void ApplyTo(Avalonia.Controls.Control control, string theme)
+    {
+        if (control is Avalonia.Controls.Window window) Apply(window, theme);
     }
 
     public static void Apply(Avalonia.Controls.Window window, string theme)

@@ -33,6 +33,7 @@ public sealed class ScorebugCanvasView : Grid
     readonly bool _muteVideo;
     // A silent monitor of the audience picture (not a preview), so it follows the on-air cue.
     readonly bool _onAirVideo;
+    readonly AutomationRuntime? _automation;
     readonly Dictionary<string, (Avalonia.Controls.Control Host, Avalonia.Controls.Control Content)> _visuals = [];
     // Keyed by element id so a rebuild can keep the surface (and the running picture) alive.
     readonly Dictionary<string, VideoSurface> _videoSurfaces = [];
@@ -56,10 +57,11 @@ public sealed class ScorebugCanvasView : Grid
     /// actually published, not the one being designed in the preview.</param>
     /// <param name="layoutProvider">Draws exactly the layout this view belongs to (a specific
     /// display's on-air layout, or a window's staged one). Overrides <paramref name="publishedLayout"/>.</param>
-    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true, bool publishedLayout=false, Func<ScorebugLayout>? layoutProvider=null, bool onAirVideo=false, string? displayId=null)
+    public ScorebugCanvasView(ScorebugCatalog catalog, GameEngine engine, Func<GameState>? stateProvider=null, MediaPlayback? playback=null, bool muteVideo=true, bool publishedLayout=false, Func<ScorebugLayout>? layoutProvider=null, bool onAirVideo=false, string? displayId=null, AutomationRuntime? automation=null)
     {
         _catalog=catalog;_engine=engine;_live=stateProvider is null;
         _displayId=displayId;
+        _automation = automation;
         _layoutProvider = layoutProvider ?? (publishedLayout ? () => _catalog.PublishedLayout : () => _catalog.Layout);
         _stateProvider=stateProvider??(()=>_engine.State);
         _playback=playback;_muteVideo=muteVideo;_onAirVideo=onAirVideo;

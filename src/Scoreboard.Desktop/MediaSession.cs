@@ -129,6 +129,12 @@ public sealed class MediaSession
     /// <summary>True once Start replay put that replay on air; false while it is preview only.</summary>
     public bool ReplayOnAir => IsReplaying && _replayOnAir;
 
+    /// <summary>The replay booth drives its own preview, so the session has no separate preview replay.</summary>
+    public bool HasReplayPreview => false;
+
+    /// <summary>The camera behind the replay, for the booth's title line.</summary>
+    public MediaEntry? ReplayCameraEntry => IsReplaying ? CameraEntry : null;
+
     /// <summary>True while a live camera is cued.</summary>
     public bool IsCameraLive => Current?.IsCamera == true && _camera is not null;
 
@@ -140,6 +146,23 @@ public sealed class MediaSession
 
     /// <summary>Every microphone currently on air.</summary>
     public IReadOnlyList<MediaEntry> LiveMicrophones => _liveMicrophones;
+
+    /// <summary>Speaker buses the operator can route to, in the order PulseAudio reports them.</summary>
+    public IReadOnlyList<AudioRouter.OutputDevice> SpeakerDevices() => AudioRouter.Devices();
+
+    /// <summary>Names a speaker bus and chooses the physical output it feeds.</summary>
+    public void SetSpeakerOutput(MediaEntry entry, string? name, string? deviceId)
+    {
+        var index = Library.IndexOf(entry);
+        if (index < 0) return;
+        var trimmed = (name ?? "").Trim();
+        Library[index] = entry with
+        {
+            Name = trimmed.Length == 0 ? null : trimmed,
+            AudioDevice = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId.Trim()
+        };
+        Playback.RefreshAudio();
+    }
 
     public bool IsCameraOnAir(MediaEntry entry) =>
         _liveCameras.Any(camera => string.Equals(camera.Path, entry.Path, StringComparison.OrdinalIgnoreCase));
@@ -175,6 +198,9 @@ public sealed class MediaSession
         .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
 
     public bool IsPlaying => _playing;
+
+    /// <summary>True while a live camera is being monitored, including a background camera.</summary>
+    public bool IsCameraLiveOnAir => _liveCameras.Count > 0;
 
     public double Position
     {

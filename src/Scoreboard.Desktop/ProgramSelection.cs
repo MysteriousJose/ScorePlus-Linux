@@ -39,6 +39,14 @@ public sealed class ProgramSelection
 
     public ScorebugLayout Layout => Display.Layouts[LayoutIndex];
 
+    /// <summary>The staged layout for any display, falling back to the published layout.</summary>
+    public ScorebugLayout? LayoutFor(string displayId)
+    {
+        var display = _catalog.FindDisplay(displayId);
+        if (display is null || display.Layouts.Count == 0) return null;
+        return display.Layouts[Math.Clamp(IndexFor(display.Id), 0, display.Layouts.Count - 1)];
+    }
+
     /// <summary>"2 · Lower third" — the layout this window would publish.</summary>
     public string Label => $"{LayoutIndex + 1} · {Layout.Name}";
 
