@@ -264,8 +264,6 @@ public partial class SettingsWindow : Window
     void Save_Click(object sender, RoutedEventArgs e)
     {
         Commit();
-        // DialogResult is only valid for a modal dialog; the window may also be shown modelessly.
-        if (false) DialogResult = true;
         Close();
     }
 

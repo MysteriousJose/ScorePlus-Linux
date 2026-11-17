@@ -263,9 +263,9 @@ public partial class ScorebugEditorWindow : Window
         _syncingLayers=true;
         try
         {
-            Layers.SelectedItems.Clear();
+            Layers.SelectedItems?.Clear();
             foreach(var item in Layers.Items.OfType<LayerItem>().Where(x=>_selectedIds.Contains(x.Element.Id)))
-                Layers.SelectedItems.Add(item);
+                Layers.SelectedItems?.Add(item);
         }
         finally { _syncingLayers=false; }
     }
@@ -282,7 +282,7 @@ public partial class ScorebugEditorWindow : Window
         // Top of the list is the front of the picture, the opposite of the canvas' back-to-front order.
         var ordered=_catalog.Layout.Elements.AsEnumerable().Reverse().Select(e=>new LayerItem(e)).ToArray();
         Layers.ItemsSource=ordered;
-        foreach(var item in ordered.Where(x=>_selectedIds.Contains(x.Element.Id)))Layers.SelectedItems.Add(item);
+        foreach(var item in ordered.Where(x=>_selectedIds.Contains(x.Element.Id)))Layers.SelectedItems?.Add(item);
         LayerCount.Text=ordered.Length==0?"no elements":$"{ordered.Length} element{(ordered.Length==1?"":"s")}";
         _syncingLayers=false;
         RefreshMotionLists();
@@ -772,12 +772,12 @@ public partial class ScorebugEditorWindow : Window
     void UpdatePlayerHint()
     {
         if(PlayerBindingHint is null)return;
-        if((ContentInput.Text?.Length ?? 0)==0||!PlayerToken.IsMatch(ContentInput.Text))
+        if(ContentInput.Text is not { Length: > 0 } content||!PlayerToken.IsMatch(content))
         {
             PlayerBindingHint.Text="This text is not tied to a player yet. Pick a team, player and value above, or type any binding in CONTENT.";
             return;
         }
-        var printed=ScoreboardTemplates.Bind(ContentInput.Text,_engine.State,Selected?.PeriodFormat);
+        var printed=ScoreboardTemplates.Bind(content,_engine.State,Selected?.PeriodFormat);
         PlayerBindingHint.Text=printed.Length==0
             ? "Prints nothing: that player or value is empty right now."
             : $"Prints now: \"{printed}\"";
@@ -788,7 +788,8 @@ public partial class ScorebugEditorWindow : Window
         if(_loading||_syncingLayers)return;
         // Extended mode hands over the whole range: Ctrl adds rows one at a time, Shift takes every
         // row between the anchor and the click.
-        var ids=Layers.SelectedItems.OfType<LayerItem>().Select(x=>x.Element.Id).ToArray();
+        if(Layers.SelectedItems is not { } selected)return;
+        var ids=selected.OfType<LayerItem>().Select(x=>x.Element.Id).ToArray();
         _selectedIds.Clear();
         _selectedIds.AddRange(ids);
         // Keep editing the element the panel already held while it is still selected, so adding a
@@ -1071,7 +1072,7 @@ public partial class ScorebugEditorWindow : Window
         if(_loading)return;
         var item=Selected; if(item is null)return;
         var ids=_selectedIds.Count>0?_selectedIds.ToArray():[item.Id];
-        var name=NameInput.Text; var content=ContentInput.Text;
+        var name=NameInput.Text ?? ""; var content=ContentInput.Text ?? "";
         var xOk=double.TryParse(XInput.Text,out var x); var yOk=double.TryParse(YInput.Text,out var y);
         var wOk=double.TryParse(WidthInput.Text,out var w); var hOk=double.TryParse(HeightInput.Text,out var h);
         var fOk=double.TryParse(FontInputSize.Text,out var f);
@@ -1211,7 +1212,7 @@ public partial class ScorebugEditorWindow : Window
         if(artworkChanged)Render();
     }
 
-    static bool TryColor(string value,out Color color){try{color=(Color)ColorConverter.ConvertFromString(value)!;return true;}catch{color=Colors.White;return false;}}
+    static bool TryColor(string? value,out Color color){try{color=(Color)ColorConverter.ConvertFromString(value ?? "")!;return true;}catch{color=Colors.White;return false;}}
 
     // ---------- fonts ----------
 
@@ -1832,8 +1833,8 @@ public partial class ScorebugEditorWindow : Window
         ThemeManager.SetSkipTheme(add,true);
         add.Click+=(_,_)=>
         {
-            if(list.SelectedItems.Count==0)return;
-            AddMany(list.SelectedItems.Cast<PartItem>().Select(part=>part.Element));
+            if(list.SelectedItems is not { Count: > 0 } selected)return;
+            AddMany(selected.Cast<PartItem>().Select(part=>part.Element));
             dialog.DialogResult=true;
             dialog.Close();
         };

@@ -106,9 +106,9 @@ public partial class SportProfileWindow : Window
         {
             Name = NameInput.Text?.Trim() ?? "",
             Unit = UnitInput.Text?.Trim() ?? "",
-            Periods = int.Parse(PeriodsInput.Text),
-            PeriodSeconds = checked(int.Parse(MinutesInput.Text) * 60),
-            Timeouts = int.Parse(TimeoutsInput.Text),
+            Periods = int.Parse(PeriodsInput.Text ?? ""),
+            PeriodSeconds = checked(int.Parse(MinutesInput.Text ?? "") * 60),
+            Timeouts = int.Parse(TimeoutsInput.Text ?? ""),
             CountUp = CountUpInput.IsChecked == true,
             HasShotClock = ShotClockInput.IsChecked == true,
             ScoringOptions = scores,
