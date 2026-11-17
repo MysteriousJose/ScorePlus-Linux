@@ -729,7 +729,6 @@ public sealed class TickerView : Grid, IDisposable
             item.Bold ? FontWeights.Bold : FontWeights.Normal,
             FontStretch.Normal);
         var brush = Paint.Text(item, game);
-        var dpi = 1.0;
         double width;
         try
         {

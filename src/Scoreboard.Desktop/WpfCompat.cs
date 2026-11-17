@@ -1,9 +1,7 @@
-// ScorePlus Linux port — dirty WPF compatibility shims.
+// ScorePlus Linux port — WPF compatibility types still used by ported code.
 //
-// TECH DEBT: these exist only so the ported code compiles while the real Avalonia/ffmpeg/pulse
-// replacements land. Media/audio/camera paths remain compatibility stubs; animation calls now use
-// a real Avalonia dispatcher clock so transitions and completion callbacks are time-based. Grep
-// "WpfCompat" to find every shim site.
+// These are thin surfaces over Avalonia, ffmpeg and PulseAudio: media playback, pictures, animation
+// clocks and image encoding are real. Grep "WpfCompat" to find every compatibility site.
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Avalonia;
@@ -66,11 +64,50 @@ public class BitmapSource : Avalonia.Media.IImage
         return new BitmapSource { PixelWidth = width, PixelHeight = height, Image = bitmap, Pixels = target };
     }
 
+    /// <summary>Wraps an already-decoded Avalonia image in the WPF-shaped surface.</summary>
+    public static BitmapSource Wrap(Avalonia.Media.IImage image) => new()
+    {
+        PixelWidth = Math.Max(1, (int)Math.Round(image.Size.Width)),
+        PixelHeight = Math.Max(1, (int)Math.Round(image.Size.Height)),
+        Image = image
+    };
+
     public void CopyPixels(byte[] buffer, int stride, int offset)
     {
-        if (Pixels is null) return;
-        var rowBytes = Math.Min(stride, Pixels.Length / Math.Max(1, PixelHeight));
-        System.Buffer.BlockCopy(Pixels, 0, buffer, offset, Math.Min(Pixels.Length, buffer.Length - offset));
+        var pixels = Pixels ?? Snapshot();
+        if (pixels is null || pixels.Length == 0) return;
+        for (var y = 0; y < PixelHeight; y++)
+        {
+            var from = y * PixelWidth * 4;
+            var to = offset + y * stride;
+            if (from >= pixels.Length || to >= buffer.Length) break;
+            var count = Math.Min(Math.Min(PixelWidth * 4, pixels.Length - from), buffer.Length - to);
+            if (count > 0) System.Buffer.BlockCopy(pixels, from, buffer, to, count);
+        }
+    }
+
+    /// <summary>BGRA bytes for encoders and blank-frame checks; decoded images are read once.</summary>
+    internal byte[]? PixelSnapshot() => Pixels ?? Snapshot();
+
+    protected byte[]? Snapshot()
+    {
+        if (Pixels is not null) return Pixels;
+        if (Image is not Avalonia.Media.Imaging.Bitmap bitmap) return null;
+        try
+        {
+            var stride = PixelWidth * 4;
+            var data = new byte[stride * PixelHeight];
+            var handle = System.Runtime.InteropServices.GCHandle.Alloc(data, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try
+            {
+                bitmap.CopyPixels(new Avalonia.PixelRect(0, 0, PixelWidth, PixelHeight),
+                    handle.AddrOfPinnedObject(), data.Length, stride);
+            }
+            finally { handle.Free(); }
+            Pixels = data;
+            return data;
+        }
+        catch { return null; }
     }
 
     public void Freeze() { }
@@ -102,63 +139,97 @@ public sealed class BitmapImage : BitmapSource
     public void EndInit() { }
 }
 
+/// <summary>A real scaled still; the camera wall asks for these before encoding its JPEG tiles.</summary>
 public sealed class TransformedBitmap : BitmapSource
 {
     public TransformedBitmap(Avalonia.Media.IImage source, Avalonia.Media.ITransform transform)
     {
-        PixelWidth = Math.Max(1, (int)Math.Round(source.Size.Width));
-        PixelHeight = Math.Max(1, (int)Math.Round(source.Size.Height));
+        var scaleX = Math.Abs(transform.Value.M11);
+        var scaleY = Math.Abs(transform.Value.M22);
+        if (scaleX < 0.001) scaleX = 1;
+        if (scaleY < 0.001) scaleY = 1;
+        PixelWidth = Math.Max(1, (int)Math.Round(source.Size.Width * scaleX));
+        PixelHeight = Math.Max(1, (int)Math.Round(source.Size.Height * scaleY));
+        var target = new Avalonia.Media.Imaging.RenderTargetBitmap(
+            new Avalonia.PixelSize(PixelWidth, PixelHeight), new Avalonia.Vector(96, 96));
+        using (var context = target.CreateDrawingContext())
+            context.DrawImage(source, new Avalonia.Rect(0, 0, source.Size.Width, source.Size.Height),
+                new Avalonia.Rect(0, 0, PixelWidth, PixelHeight));
+        Image = target;
     }
 }
 
 public sealed class BitmapFrame
 {
-    public static BitmapFrame Create(Avalonia.Media.IImage source) => new();
+    public Avalonia.Media.IImage Source { get; }
+    BitmapFrame(Avalonia.Media.IImage source) => Source = source;
+    public static BitmapFrame Create(Avalonia.Media.IImage source) => new(source);
 }
 
+/// <summary>JPEG encoding through the Skia build Avalonia already loads; Bitmap.Save writes PNG only.</summary>
 public sealed class JpegBitmapEncoder
 {
     public int QualityLevel { get; set; } = 75;
     public List<BitmapFrame> Frames { get; } = [];
-    public void Save(System.IO.Stream stream) { }
+
+    public void Save(System.IO.Stream stream)
+    {
+        if (Frames.Count == 0 || Frames[0].Source is not BitmapSource frame) return;
+        var pixels = frame.PixelSnapshot();
+        if (pixels is null || frame.PixelWidth <= 0 || frame.PixelHeight <= 0) return;
+        var info = new SkiaSharp.SKImageInfo(frame.PixelWidth, frame.PixelHeight,
+            SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Opaque);
+        using var bitmap = new SkiaSharp.SKBitmap(info);
+        System.Runtime.InteropServices.Marshal.Copy(pixels, 0, bitmap.GetPixels(),
+            Math.Min(pixels.Length, info.BytesSize));
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, Math.Clamp(QualityLevel, 1, 100));
+        data.SaveTo(stream);
+    }
 }
 
+/// <summary>A real Avalonia render target: scorebug transitions and layout thumbnails need pixels.</summary>
 public sealed class RenderTargetBitmap : BitmapSource
 {
+    readonly Avalonia.Media.Imaging.RenderTargetBitmap _target;
+
     public RenderTargetBitmap(int width, int height, double dpiX, double dpiY, PixelFormats format)
     {
         PixelWidth = Math.Max(1, width);
         PixelHeight = Math.Max(1, height);
+        _target = new Avalonia.Media.Imaging.RenderTargetBitmap(
+            new Avalonia.PixelSize(PixelWidth, PixelHeight), new Avalonia.Vector(96, 96));
+        Image = _target;
     }
-    public void Render(object visual) { }
+
+    public void Render(object visual)
+    {
+        try { if (visual is Avalonia.Visual target) _target.Render(target); }
+        catch { }
+        Pixels = null;
+    }
 }
 
-// Cropping preserves the requested placeholder dimensions, but does not create pixel data.
+/// <summary>A real crop: the transition overlay draws this straight from the outgoing still.</summary>
 public sealed class CroppedBitmap : BitmapSource
 {
     public CroppedBitmap(Avalonia.Media.IImage source)
+        : this(source, new Int32Rect(0, 0, (int)Math.Round(source.Size.Width), (int)Math.Round(source.Size.Height)))
     {
-        PixelWidth = Math.Max(1, (int)Math.Round(source.Size.Width));
-        PixelHeight = Math.Max(1, (int)Math.Round(source.Size.Height));
     }
 
     public CroppedBitmap(Avalonia.Media.IImage source, Int32Rect sourceRect)
     {
         PixelWidth = Math.Max(1, sourceRect.Width);
         PixelHeight = Math.Max(1, sourceRect.Height);
+        var target = new Avalonia.Media.Imaging.RenderTargetBitmap(
+            new Avalonia.PixelSize(PixelWidth, PixelHeight), new Avalonia.Vector(96, 96));
+        using (var context = target.CreateDrawingContext())
+            context.DrawImage(source,
+                new Avalonia.Rect(sourceRect.X, sourceRect.Y, PixelWidth, PixelHeight),
+                new Avalonia.Rect(0, 0, PixelWidth, PixelHeight));
+        Image = target;
     }
-}
-
-public sealed class DrawingVisual
-{
-    public DrawingContext RenderOpen() => new();
-}
-
-public sealed class DrawingContext : IDisposable
-{
-    public void DrawVideo(MediaPlayer player, Avalonia.Rect rect) { } // stub: no frame source on Linux yet
-    public void DrawRectangle(Brush? fill, Pen? pen, Avalonia.Rect rect) { }
-    public void Dispose() { }
 }
 
 // ---------- media: MediaPlayer / MediaElement (real playback lands with the ffmpeg player) ----------
@@ -317,12 +388,12 @@ public sealed class MediaElement : Avalonia.Controls.Image, IDisposable
 
     public MediaState LoadedBehavior { get; set; }
     public MediaState UnloadedBehavior { get; set; }
-    public new bool IsMuted
+    public bool IsMuted
     {
         get => _muted;
         set { _muted = value; ApplyAudio(); }
     }
-    public new double Volume
+    public double Volume
     {
         get => _volume;
         set { _volume = Math.Clamp(value, 0, 1); _audio?.SetVolume(_volume); }
@@ -334,7 +405,7 @@ public sealed class MediaElement : Avalonia.Controls.Image, IDisposable
         get => _path is null ? null : new Uri(_path);
         set => OpenSource(value);
     }
-    public new TimeSpan Position
+    public TimeSpan Position
     {
         get => TimeSpan.FromSeconds(_position);
         set => Seek(value.TotalSeconds);
@@ -713,106 +784,12 @@ public sealed class RoutedPropertyChangedEventArgs<T> : EventArgs
     public T NewValue { get; init; } = default!;
 }
 
-// ---------- NAudio stand-ins (WASAPI does not exist on Linux; real path = pw-play/ffmpeg) ----------
-// TECH DEBT: every method below is inert. Audio routing, mic monitor, and the output meter report
-// "available" but produce no sound. TODO(port): replace with PipeWire/ffmpeg players.
+// The old NAudio stand-ins were removed: AudioRouter, MicrophoneFeed and FfmpegAudioPlayer are the
+// real PulseAudio/ffmpeg path, and nothing in the port references WASAPI types.
 
-public enum DataFlow { Render, Capture }
-public enum DeviceState { Active = 1, Uninitialized = 2, Disabled = 4, NotPresent = 8 }
-public enum Role { Console, Multimedia, Communications }
-public enum AudioClientShareMode { Shared, Exclusive }
-public enum WaveFormatEncoding { Pcm = 1, IeeeFloat = 3, Extensible = 0xFFFE }
-
-public sealed class WaveFormat
-{
-    public int BitsPerSample { get; } = 32;
-    public WaveFormatEncoding Encoding { get; } = WaveFormatEncoding.IeeeFloat;
-    public int SampleRate { get; } = 48000;
-    public int Channels { get; } = 2;
-}
-
-public sealed class WaveInEventArgs : EventArgs
-{
-    public byte[] Buffer { get; init; } = [];
-    public int BytesRecorded { get; init; }
-}
-
-public interface IWavePlayer
-{
-    void Init(object audioSource);
-    void Play();
-    void Pause();
-    void Stop();
-    void Dispose();
-}
-
-public sealed class MMDevice : IDisposable
-{
-    public string ID { get; init; } = "stub-device";
-    public string FriendlyName { get; init; } = "Stub output";
-    public void Dispose() { }
-}
-
-public sealed class MMDeviceEnumerator : IDisposable
-{
-    public List<MMDevice> EnumerateAudioEndPoints(DataFlow flow, DeviceState states) => [];
-    public MMDevice? GetDefaultAudioEndpoint(DataFlow flow, Role role) => null; // stub: no devices
-    public MMDevice? GetDevice(string id) => null;
-    public void Dispose() { }
-}
-
-public sealed class AudioFileReader : IDisposable
-{
-    public float Volume { get; set; } = 1;
-    public TimeSpan TotalTime => TimeSpan.Zero;
-    public TimeSpan CurrentTime { get; set; }
-    public AudioFileReader(string path) { }
-    public void Dispose() { }
-}
-
-public sealed class BufferedWaveProvider
-{
-    public bool DiscardOnBufferOverflow { get; set; }
-    public bool ReadFully { get; set; }
-    public BufferedWaveProvider(WaveFormat format) { }
-    public void AddSamples(byte[] buffer, int offset, int count) { }
-}
-
-public abstract class WasapiDeviceStub : IDisposable
-{
-    public WaveFormat WaveFormat { get; } = new();
-    public event EventHandler<WaveInEventArgs>? DataAvailable;
-    public void StartRecording() { }
-    public void StopRecording() { }
-    public void Dispose() { }
-    protected void RaiseData(WaveInEventArgs e) => DataAvailable?.Invoke(this, e);
-}
-
-public sealed class WasapiCapture : WasapiDeviceStub
-{
-    public WasapiCapture() { }
-    public WasapiCapture(MMDevice device) { }
-}
-
-public sealed class WasapiLoopbackCapture : WasapiDeviceStub
-{
-    public WasapiLoopbackCapture() { }
-}
-
-public sealed class WasapiOut : IWavePlayer
-{
-    public WasapiOut(AudioClientShareMode shareMode, bool useEventSync, int latency) { }
-    public WasapiOut(MMDevice device, AudioClientShareMode shareMode, bool useEventSync, int latency) { }
-    public void Init(object audioSource) { }
-    public void Play() { }
-    public void Pause() { }
-    public void Stop() { }
-    public void Dispose() { }
-}
-
-// ---------- OpenCV stand-ins (OpenCvSharp4 was dropped; real path = ffmpeg/v4l2) ----------
-// TECH DEBT: cameras never open (IsOpened false) so live feed and replay stay unavailable.
-// TODO(port): ffmpeg-based LinuxCameraFeed.
+// ---------- OpenCV-compatible capture (OpenCvSharp4 was dropped; real path = ffmpeg/v4l2) ----------
+// The ported camera and replay code keeps the OpenCV shape; the implementations below start ffmpeg
+// on a v4l2 device or a file, so capture and replay are real.
 
 public enum VideoCaptureAPIs { ANY, V4L2, DSHOW }
 public enum VideoCaptureProperties { PosFrames = 1, FrameWidth = 3, FrameHeight = 4 }

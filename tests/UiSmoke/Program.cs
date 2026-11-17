@@ -67,6 +67,7 @@ internal static class Program
             WindowCatalogChecks(temps);
             MediaBackendChecks(temps);
             PortedFeatureChecks(temps);
+            DialogChecks();
             ThemeChecks();
             IconChecks(temps);
             VideoRoutingChecks(temps);
@@ -134,6 +135,21 @@ internal static class Program
         Check(All<Button>(picker).Any(button => (button.ToolTip as string) is not null), "the colour picker offers palette swatches");
         picker.Close();
         Console.WriteLine("PASS: dialogs are the app's own themed windows");
+    }
+
+    static void DialogChecks()
+    {
+        var filters = LinuxFileDialog.Filters("ScorePlus Game (*.spg)|*.spg|All files (*.*)|*.*");
+        Check(filters.Count == 2 && filters[0].Contains("*.spg") && filters[1].EndsWith(" | *"),
+            "WPF file filters become the Linux picker's filter list");
+        Check(LinuxFileDialog.ApplyDefaultExtension("highlights", "spg", true).EndsWith("highlights.spg"),
+            "a save path gets the dialog's default extension");
+        var sources = MicrophoneFeed.ParseSources(
+            "Source #0\n\tState: RUNNING\n\tName: alsa_input.pci-0000_00\n\tDescription: Headset microphone\n\n" +
+            "Source #1\n\tState: IDLE\n\tName: alsa_output.pci-0000.analog-stereo.monitor\n\tDescription: Monitor of Speakers\n");
+        Check(sources.Count == 1 && sources[0].Name == "Headset microphone",
+            "microphone sources skip loopback monitors and keep their description");
+        Console.WriteLine("PASS: native dialogs and PulseAudio microphone routing are wired");
     }
 
     static void PaintTextureChecks(List<string> temps)
@@ -1049,6 +1065,39 @@ internal static class Program
                 "Clear empties the media library and blanks what was on air");
             Check(!session.IsReplaying && !session.PlayReplay(), "Start replay refuses when no replay is open");
 
+            var adClip = new MediaEntry(Path.Combine("media", "smoke-bus.mp4"), "Ads");
+            var musicClip = new MediaEntry(Path.Combine("media", "smoke-bed.mp3"), "Music");
+            session.Library.Add(adClip);
+            session.Library.Add(musicClip);
+            session.SetClipTransition(adClip, "Fade");
+            session.SetClipTransitionSeconds(adClip, 1.25);
+            var tuned = session.Library.First(entry => string.Equals(entry.Path, adClip.Path, StringComparison.OrdinalIgnoreCase));
+            Check(tuned.Transition == "Fade" && Math.Abs(tuned.TransitionSeconds - 1.25) < 0.001,
+                "a clip carries its own switch animation and duration");
+            var bus = session.AddSpeaker(0, "Ads");
+            Check(bus.IsSpeaker && session.HasSpeakerBuses && Math.Abs(session.SpeakerGain(adClip) - 1) < 0.001,
+                "a speaker bus carries clips with its tag");
+            session.ToggleOnAir(bus);
+            Check(Math.Abs(session.SpeakerGain(adClip)) < 0.001,
+                "switching a speaker bus off silences its tag");
+            session.ToggleOnAir(session.Selected!);
+            Check(Math.Abs(session.SpeakerGain(adClip) - 1) < 0.001,
+                "switching a speaker bus back on restores its tag");
+            var order = session.CreatePlaylist("Smoke order");
+            session.AddToPlaylist(order, adClip);
+            session.AddToPlaylist(order, musicClip);
+            session.MovePlaylistItem(order, 0, 1);
+            Check(order.Paths.Count == 2 && string.Equals(order.Paths[0], musicClip.Path, StringComparison.OrdinalIgnoreCase),
+                "a playlist clip moves up and down its play order");
+            var cameraEntry = new MediaEntry(MediaLibrary.CameraPath(0), "Smoke cam");
+            session.Library.Add(cameraEntry);
+            session.Select(cameraEntry);
+            Check(string.Equals(session.ReplaySource?.Path, cameraEntry.Path, StringComparison.OrdinalIgnoreCase),
+                "ReplaySource follows the selected camera");
+            session.ClearOnAir();
+            Check(session.Library.Count > 0 && session.Current is null && session.Playback.NowPlaying is null,
+                "Clear off air blanks the screen but keeps the library");
+
             var mic = session.AddMicrophone(0, "Commentary");
             Check(mic.IsMicrophone && session.Library.Contains(mic) && mic.Tag == "Commentary",
                 "Add microphone files the item in the library");
@@ -1091,6 +1140,43 @@ internal static class Program
         var main = new MainWindow(LaunchMode.New) { Width = 1280, Height = 860 };
         main.Show();
         main.UpdateLayout();
+        Check(main.RemoteDisplays.Count == main.Scorebug.Displays.Count
+              && main.Scorebug.Displays.Any(display => string.Equals(display.Id, main.RemoteDisplayId, StringComparison.OrdinalIgnoreCase)),
+            "the phone remote lists every program display and starts on the previewed one");
+
+        var selectorHost = new Window { Width = 240, Height = 120 };
+        var selector = new ComboBox
+        {
+            ItemsSource = new[] { new CompatChoice("football", "Football"), new CompatChoice("basketball", "Basketball") }
+        };
+        selector.SelectedValuePath = "Id";
+        selectorHost.Content = selector;
+        selectorHost.Show();
+        selectorHost.UpdateLayout();
+        selector.SelectedValue = "basketball";
+        selectorHost.UpdateLayout();
+        Check(selector.SelectedItem is CompatChoice { Id: "basketball" },
+            "SelectedValuePath selects the item by its real property");
+        selectorHost.Close();
+
+        var displayHost = new Window { Width = 240, Height = 160 };
+        var displayList = new ListBox
+        {
+            ItemsSource = new[] { new CompatChoice("alpha", "Alpha") },
+            DisplayMemberPath = "Label"
+        };
+        displayHost.Content = displayList;
+        displayHost.Show();
+        displayHost.UpdateLayout();
+        Check(All<TextBlock>(displayList).Any(text => text.Text == "Alpha"),
+            "DisplayMemberPath renders the chosen property");
+        displayHost.Close();
+
+        var scalingProbe = new Image();
+        Scoreboard.Desktop.RenderOptions.SetBitmapScalingMode(scalingProbe, BitmapScalingMode.NearestNeighbor);
+        Check(Scoreboard.Desktop.RenderOptions.GetBitmapScalingMode(scalingProbe) == BitmapScalingMode.NearestNeighbor
+              && Avalonia.Media.RenderOptions.GetBitmapInterpolationMode(scalingProbe) == Avalonia.Media.Imaging.BitmapInterpolationMode.None,
+            "bitmap scaling mode reaches Avalonia's interpolation setting");
 
         // New Game clears both the live game and the on-air copy.
         main.Engine.SetTeams("Old Home", "Old Away");
@@ -1394,6 +1480,8 @@ internal static class Program
     {
         public override void OnFrameworkInitializationCompleted() { }
     }
+
+    sealed record CompatChoice(string Id, string Label);
 
     static void Check(bool condition, string message)
     {

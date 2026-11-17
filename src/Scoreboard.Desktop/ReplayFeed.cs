@@ -25,7 +25,6 @@ public sealed class ReplayFeed : IDisposable
     bool _playing;
     bool _restart;
     double _seekTo;
-    string? _path;
     double _position;
     double _duration;
     bool _failed;
@@ -178,6 +177,12 @@ public sealed class ReplayFeed : IDisposable
                     fps = SafeFps(capture);
                     _duration = SafeDuration(capture, fps);
                     restart = true;
+                }
+
+                if (capture is null)
+                {
+                    Fail();
+                    break;
                 }
 
                 if (restart)

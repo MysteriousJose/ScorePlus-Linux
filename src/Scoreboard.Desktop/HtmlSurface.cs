@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using Avalonia;
 using Avalonia.Controls;
@@ -10,8 +12,8 @@ namespace Scoreboard.Desktop;
 /// <summary>
 /// An HTML element on the graphic. The markup is drawn by a real browser engine and captured to an
 /// image, so the studio, both previews and the audience output all show the identical picture.
-/// A live web view cannot be used directly: it is a native window that WPF cannot scale inside the
-/// viewbox every feed draws through, and it would float above the rest of the artwork.
+/// A live browser window cannot be used directly: it is a native window that Avalonia cannot scale
+/// inside the viewbox every feed draws through, and it would float above the rest of the artwork.
 /// </summary>
 public sealed class HtmlSurface : Grid
 {
@@ -142,17 +144,20 @@ public sealed class HtmlSurface : Grid
 }
 
 /// <summary>
-/// One hidden browser used to draw an HTML element. It is kept alive so a page can animate between
-/// captures; only a change of markup re-navigates it, which would otherwise restart the animation
-/// from the top on every frame. Everything is guarded: a machine without the WebView2 runtime gets
-/// null frames and a placeholder, never a crash.
+/// Captures HTML with the system Chromium/Chrome in headless mode. Each frame is a real browser
+/// render written as a transparent PNG, then loaded into the Avalonia image the graphic draws.
+/// Chromium's virtual clock advances between captures, so CSS/JS animations are sampled instead of
+/// freezing on their first frame. A machine without a browser gets null frames and a placeholder.
 /// </summary>
 public sealed class HtmlEngine : IDisposable
 {
     static readonly SemaphoreSlim Gate = new(1, 1);
-    Window? _host;
-    WebView2? _view;
+
+    readonly Stopwatch _clock = Stopwatch.StartNew();
     string _loaded = "";
+    string? _work;
+    string? _page;
+    string? _shot;
     bool _disposed;
 
     /// <summary>The last failure, so a blank HTML element can be explained instead of guessed at.</summary>
@@ -181,107 +186,158 @@ public sealed class HtmlEngine : IDisposable
         await Gate.WaitAsync();
         try
         {
-            var view = await EnsureViewAsync(width, height);
-            if (view is null) return null;
-            var core = view.CoreWebView2;
-            if (core is null) return null;
-            if (!string.Equals(_loaded, html, StringComparison.Ordinal) || string.IsNullOrEmpty(_loaded))
+            var executable = FindBrowser();
+            if (executable is null)
+            {
+                Note(new InvalidOperationException("no Chromium or Chrome found; install chromium or set SCOREPLUS_CHROME"));
+                return null;
+            }
+            EnsureWorkDir();
+            if (!string.Equals(_loaded, html, StringComparison.Ordinal) || !File.Exists(_page))
             {
                 _loaded = html;
-                var loaded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                void OnNavigation(object? sender, CoreWebView2NavigationCompletedEventArgs e)
-                {
-                    core.NavigationCompleted -= OnNavigation;
-                    loaded.TrySetResult(e.IsSuccess);
-                }
-                core.NavigationCompleted += OnNavigation;
-                core.NavigateToString(Wrap(html));
-                await Task.WhenAny(loaded.Task, Task.Delay(2500));
+                _clock.Restart();
+                await File.WriteAllTextAsync(_page!, Wrap(html));
             }
-            using var stream = new MemoryStream();
-            await core.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream);
-            if (stream.Length == 0) return null;
-            stream.Position = 0;
-            var frame = new BitmapImage();
-            frame.BeginInit();
-            frame.CacheOption = BitmapCacheOption.OnLoad;
-            frame.StreamSource = stream;
-            frame.EndInit();
-            frame.Freeze();
+            try { File.Delete(_shot!); } catch { }
+
+            // Let the page load, then sample the animation at the elapsed virtual time.
+            var budget = Math.Clamp((int)_clock.ElapsedMilliseconds + 800, 800, 5000);
+            var start = new ProcessStartInfo
+            {
+                FileName = executable,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            foreach (var argument in new[]
+            {
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--hide-scrollbars",
+                "--mute-audio",
+                "--no-first-run",
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--run-all-compositor-stages-before-draw",
+                $"--virtual-time-budget={budget.ToString(CultureInfo.InvariantCulture)}",
+                $"--window-size={width.ToString(CultureInfo.InvariantCulture)},{height.ToString(CultureInfo.InvariantCulture)}",
+                "--force-device-scale-factor=1",
+                "--default-background-color=00000000",
+                $"--user-data-dir={Path.Combine(_work!, "profile")}",
+                $"--screenshot={_shot}",
+                new Uri(_page!).AbsoluteUri
+            }) start.ArgumentList.Add(argument);
+
+            using var process = Process.Start(start);
+            if (process is null)
+            {
+                Note(new InvalidOperationException($"{executable} could not be started"));
+                return null;
+            }
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            try
+            {
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            }
+            catch (TimeoutException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                throw new InvalidOperationException($"{executable} did not finish the HTML capture");
+            }
+            var log = (await stderr).Trim();
+            if (!File.Exists(_shot))
+                throw new InvalidOperationException(log.Length > 0 ? log : $"{executable} wrote no screenshot");
+            var bytes = await File.ReadAllBytesAsync(_shot);
+            if (bytes.Length == 0)
+                throw new InvalidOperationException("the browser wrote an empty screenshot");
+            using var stream = new MemoryStream(bytes);
+            var bitmap = new Avalonia.Media.Imaging.Bitmap(stream);
+            var frame = BitmapSource.Wrap(bitmap);
+            // Avalonia's headless platform decodes every bitmap as 1x1. The bytes are the real
+            // browser capture, so take the dimensions from the PNG header and let the wrapper carry
+            // them; the desktop backend decodes the same bytes at the same size.
+            var (pngWidth, pngHeight) = PngSize(bytes);
+            if (pngWidth > 0 && pngHeight > 0)
+            {
+                frame.PixelWidth = pngWidth;
+                frame.PixelHeight = pngHeight;
+            }
             return frame;
         }
         catch (Exception ex)
         {
-            Note(ex);
+            if (!_disposed) Note(ex);
             return null;
         }
         finally { Gate.Release(); }
     }
 
-    async Task<WebView2?> EnsureViewAsync(int width, int height)
+    static (int Width, int Height) PngSize(byte[] bytes)
     {
-        try
-        {
-            if (_view is not null)
-            {
-                // The browser is laid out at the element's design size, exactly as the artwork was
-                // designed, and the viewbox scales the captured frame like every other graphic.
-                if (Math.Abs(_host!.Width - width) > 0.5 || Math.Abs(_host.Height - height) > 0.5)
-                {
-                    _host.Width = width;
-                    _host.Height = height;
-                    _view.Width = width;
-                    _view.Height = height;
-                }
-                return _view;
-            }
-            _view = new WebView2 { Width = width, Height = height, DefaultBackgroundColor = System.Drawing.Color.Transparent };
-            _host = new Window
-            {
-                Title = "ScorePlus HTML",
-                Width = width,
-                Height = height,
-                Left = -32000,
-                Top = -32000,
-                ShowInTaskbar = false,
-                ShowActivated = false,
-                SystemDecorations = SystemDecorations.None,
-                ResizeMode = ResizeMode.NoResize,
-                Content = _view
-            };
-            _host.Show();
-            var userData = Path.Combine(AppPaths.Root, "webview");
-            Directory.CreateDirectory(userData);
-            // Awaited, never blocked: the environment finishes on this thread's dispatcher, so
-            // waiting for it synchronously would deadlock the window that asked for the frame.
-            var environment = await CoreWebView2Environment.CreateAsync(null, userData);
-            await _view.EnsureCoreWebView2Async(environment);
-            var core = _view.CoreWebView2;
-            if (core is null) return null;
-            core.Settings.AreDefaultContextMenusEnabled = false;
-            core.Settings.AreDevToolsEnabled = false;
-            core.Settings.IsStatusBarEnabled = false;
-            core.Settings.IsZoomControlEnabled = false;
-            return _view;
-        }
-        catch (Exception ex)
-        {
-            Note(ex);
-            Dispose();
-            return null;
-        }
+        if (bytes.Length < 24 || bytes[0] != 0x89 || bytes[1] != 0x50 || bytes[2] != 0x4E || bytes[3] != 0x47)
+            return (0, 0);
+        var width = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+        var height = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+        return width > 0 && height > 0 ? (width, height) : (0, 0);
     }
 
-    void DisposeView()
+    void EnsureWorkDir()
     {
-        try { _host?.Close(); } catch { }
-        _host = null;
-        _view = null;
+        if (_work is not null) return;
+        _work = Path.Combine(Path.GetTempPath(), $"scoreplus-html-{Environment.ProcessId}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_work);
+        _page = Path.Combine(_work, "frame.html");
+        _shot = Path.Combine(_work, "frame.png");
+    }
+
+    static string? FindBrowser()
+    {
+        foreach (var variable in new[] { "SCOREPLUS_CHROME", "SCOREPLUS_BROWSER", "CHROME_PATH" })
+        {
+            var forced = Environment.GetEnvironmentVariable(variable);
+            if (!string.IsNullOrWhiteSpace(forced) && File.Exists(forced)) return forced;
+        }
+
+        var names = new[] { "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "microsoft-edge", "microsoft-edge-stable", "brave-browser" };
+        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var name in names)
+        {
+            foreach (var folder in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var candidate = Path.Combine(folder, name);
+                if (File.Exists(candidate)) return candidate;
+                if (OperatingSystem.IsWindows() && File.Exists(candidate + ".exe")) return candidate + ".exe";
+            }
+        }
+
+        foreach (var candidate in new[]
+        {
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/snap/bin/chromium",
+            "/opt/google/chrome/chrome",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        }) if (File.Exists(candidate)) return candidate;
+        return null;
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
-        DisposeView();
+        if (_work is { } work)
+        {
+            try { Directory.Delete(work, recursive: true); } catch { }
+        }
+        _work = null;
+        _page = null;
+        _shot = null;
     }
 }

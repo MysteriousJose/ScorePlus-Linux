@@ -1556,12 +1556,9 @@ public sealed class MotionMakerWindow : Window
         _easyExit.ValueChanged += EasyTimingChanged;
         _easyEnter.ValueChanged += EasyTimingChanged;
         _easyDuration.ValueChanged += EasyTimingChanged;
-        _loopBox.Checked += EasyBehaviorChanged;
-        _loopBox.Unchecked += EasyBehaviorChanged;
-        _pingBox.Checked += EasyBehaviorChanged;
-        _pingBox.Unchecked += EasyBehaviorChanged;
-        _valueBox.Checked += EasyBehaviorChanged;
-        _valueBox.Unchecked += EasyBehaviorChanged;
+        _loopBox.IsCheckedChanged += EasyBehaviorChanged;
+        _pingBox.IsCheckedChanged += EasyBehaviorChanged;
+        _valueBox.IsCheckedChanged += EasyBehaviorChanged;
     }
 
     void FillPresetList()
@@ -1629,7 +1626,7 @@ public sealed class MotionMakerWindow : Window
         _presetList.SelectedItem = match;
         if (match is null)
             _presetHint.Text = _clip.Phases.Count == 0 ? "This clip has no phases yet. Start blank only if you want to build from nothing." : "Tune the pace in step 2, or open Advanced for exact keyframes.";
-        else _presetHint.Text = PresetDescription(_kind, (string)match.Tag);
+        else _presetHint.Text = PresetDescription(_kind, match.Tag as string ?? _clip.Name);
     }
 
     void RefreshEasy()
@@ -1705,7 +1702,7 @@ public sealed class MotionMakerWindow : Window
         _status.Text = $"{phase.Name} is now {seconds:0.##}s.";
     }
 
-    void EasyBehaviorChanged(object sender, RoutedEventArgs e)
+    void EasyBehaviorChanged(object? sender, RoutedEventArgs e)
     {
         if (_easySync) return;
         _clip.Loop = _loopBox.IsChecked == true;
@@ -2000,7 +1997,7 @@ public sealed class MotionMakerWindow : Window
     {
         if (SelectedPiece is not { } piece) { _status.Text = "Select a temporary piece first."; return; }
         piece.Name = string.IsNullOrWhiteSpace(_pieceName.Text) ? piece.Name : _pieceName.Text.Trim();
-        piece.Text = _pieceText.Text;
+        piece.Text = _pieceText.Text ?? "";
         piece.Kind = (MotionPieceKind)Math.Clamp(_pieceKindPicker.SelectedIndex, 0, 2);
         piece.Logo = _pieceLogoSide.SelectedIndex switch { 1 => ScorebugLogoSide.Home, 2 => ScorebugLogoSide.Away, _ => ScorebugLogoSide.None };
         piece.Shape = _pieceShapePicker.SelectedItem is ScorebugShape shape ? shape : piece.Shape;
@@ -3092,7 +3089,7 @@ public sealed class MotionMakerWindow : Window
         _timelinePointer = null;
     }
 
-    void TimelineDown(object sender, PointerPressedEventArgs e)
+    void TimelineDown(object? sender, PointerPressedEventArgs e)
     {
         if (CurrentPhase is null) return;
         _timelinePointer = e.Pointer;
@@ -3169,7 +3166,7 @@ public sealed class MotionMakerWindow : Window
         ScrubTo(point);
     }
 
-    void TimelineMove(object sender, PointerEventArgs e)
+    void TimelineMove(object? sender, PointerEventArgs e)
     {
         if (!e.GetCurrentPoint(_timeline).Properties.IsLeftButtonPressed) { EndDrag(); return; }
         var point = e.GetPosition(_timeline);
@@ -3202,7 +3199,7 @@ public sealed class MotionMakerWindow : Window
         if (_scrubbing) ScrubTo(point);
     }
 
-    void TimelineUp(object sender, PointerReleasedEventArgs e)
+    void TimelineUp(object? sender, PointerReleasedEventArgs e)
     {
         if (_timelineDragId is not null)
         {

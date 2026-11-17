@@ -2,6 +2,8 @@
 // Everything here is inert glue so the ported code compiles on Avalonia; TODO(port) marks each
 // site that needs a real implementation in a later phase.
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -221,10 +223,171 @@ public static class WpfDialogExtensions
     }
 }
 
+/// <summary>
+/// The Linux file chooser behind the WPF-shaped dialog shims. A desktop session gets zenity or
+/// kdialog; a machine with no picker, no display, or SCOREPLUS_NATIVE_DIALOG=0 falls back to the
+/// app's typed-path window, which always works and hands ffmpeg the real path it needs.
+/// </summary>
+public static class LinuxFileDialog
+{
+    public sealed record Request(
+        string Title, string InitialPath, string Filter, bool Save, bool Folder, bool Multi,
+        bool CheckFileExists, bool OverwritePrompt, string DefaultExt, bool AddExtension);
+
+    enum PickOutcome { Unavailable, Cancelled, Picked }
+
+    /// <summary>Returns the chosen paths, or null when the operator cancelled.</summary>
+    public static IReadOnlyList<string>? Choose(Request request, Avalonia.Controls.Window? owner)
+    {
+        var initial = NormalizeInitial(request);
+        var native = request with { InitialPath = initial };
+        if (NativePickerWanted())
+        {
+            var zenity = TryZenity(native);
+            if (zenity.Outcome == PickOutcome.Picked) return zenity.Paths;
+            if (zenity.Outcome == PickOutcome.Cancelled) return null;
+            var kdialog = TryKdialog(native);
+            if (kdialog.Outcome == PickOutcome.Picked) return kdialog.Paths;
+            if (kdialog.Outcome == PickOutcome.Cancelled) return null;
+        }
+        var typed = Scoreboard.Desktop.PathPromptWindow.Ask(owner,
+            string.IsNullOrWhiteSpace(request.Title)
+                ? request.Save ? "Save as" : request.Folder ? "Choose a folder" : "Open a file"
+                : request.Title,
+            initial, request.Save, request.Folder, request.CheckFileExists, request.OverwritePrompt);
+        return typed is null ? null : [typed];
+    }
+
+    static bool NativePickerWanted()
+    {
+        var forced = Environment.GetEnvironmentVariable("SCOREPLUS_NATIVE_DIALOG");
+        if (forced == "0") return false;
+        if (forced == "1") return true;
+        return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DISPLAY"))
+            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+    }
+
+    static string NormalizeInitial(Request request)
+    {
+        var initial = (request.InitialPath ?? "").Trim();
+        if (initial.Length == 0) return initial;
+        if (request.Save && !request.Folder) initial = ApplyDefaultExtension(initial, request.DefaultExt, request.AddExtension);
+        try { return System.IO.Path.IsPathRooted(initial) ? initial : System.IO.Path.GetFullPath(initial); }
+        catch { return initial; }
+    }
+
+    /// <summary>WPF appends DefaultExt to a save path with no extension; the Linux pickers do not.</summary>
+    public static string ApplyDefaultExtension(string path, string extension, bool add)
+    {
+        if (!add || string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(extension)) return path;
+        var trimmed = extension.Trim().TrimStart('.');
+        if (trimmed.Length == 0 || System.IO.Path.HasExtension(path)) return path;
+        return path + "." + trimmed;
+    }
+
+    /// <summary>Translates a WPF filter string into zenity's "Name | pattern pattern" rows.</summary>
+    public static IReadOnlyList<string> Filters(string filter)
+    {
+        var result = new List<string>();
+        foreach (var (name, patterns) in FilterPairs(filter))
+            result.Add($"{(name.Length == 0 ? "All files" : name)} | {patterns}");
+        return result;
+    }
+
+    static IReadOnlyList<(string Name, string Patterns)> FilterPairs(string filter)
+    {
+        var parts = (filter ?? "").Split('|');
+        var pairs = new List<(string, string)>();
+        for (var index = 0; index + 1 < parts.Length; index += 2)
+        {
+            var name = parts[index].Trim();
+            var patterns = string.Join(" ", parts[index + 1]
+                .Split(';', StringSplitOptions.RemoveEmptyEntries)
+                .Select(pattern => pattern.Trim() == "*.*" ? "*" : pattern.Trim())
+                .Where(pattern => pattern.Length > 0));
+            if (patterns.Length > 0) pairs.Add((name, patterns));
+        }
+        return pairs;
+    }
+
+    static (PickOutcome Outcome, IReadOnlyList<string>? Paths) TryZenity(Request request)
+    {
+        try
+        {
+            var args = new List<string> { "--file-selection" };
+            if (!string.IsNullOrWhiteSpace(request.Title)) { args.Add("--title"); args.Add(request.Title); }
+            if (request.Folder) args.Add("--directory");
+            else if (request.Save) args.Add("--save");
+            if (request.Multi) { args.Add("--multiple"); args.Add("--separator=\n"); }
+            if (!string.IsNullOrWhiteSpace(request.InitialPath)) { args.Add("--filename"); args.Add(request.InitialPath); }
+            foreach (var filter in Filters(request.Filter)) { args.Add("--file-filter"); args.Add(filter); }
+
+            using var process = Process.Start(MediaProbe.Start("zenity", args.ToArray()));
+            if (process is null) return (PickOutcome.Unavailable, null);
+            var output = process.StandardOutput.ReadToEnd();
+            _ = process.StandardError.ReadToEnd();
+            process.WaitForExit(120_000);
+            if (process.ExitCode != 0) return (PickOutcome.Cancelled, null);
+            var paths = Clean(output, request);
+            return paths.Count == 0 ? (PickOutcome.Cancelled, null) : (PickOutcome.Picked, paths);
+        }
+        catch (System.ComponentModel.Win32Exception) { return (PickOutcome.Unavailable, null); }
+        catch { return (PickOutcome.Cancelled, null); }
+    }
+
+    static (PickOutcome Outcome, IReadOnlyList<string>? Paths) TryKdialog(Request request)
+    {
+        try
+        {
+            var args = new List<string>
+            {
+                request.Folder ? "--getexistingdirectory" : request.Save ? "--getsavefilename" : "--getopenfilename",
+                string.IsNullOrWhiteSpace(request.InitialPath)
+                    ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+                    : request.InitialPath
+            };
+            var filters = FilterPairs(request.Filter).Select(pair => $"{pair.Patterns}|{pair.Name}").ToArray();
+            if (filters.Length > 0) args.Add(string.Join("\n", filters));
+            if (request.Multi) { args.Add("--multiple"); args.Add("--separate-output"); }
+            if (!string.IsNullOrWhiteSpace(request.Title)) { args.Add("--title"); args.Add(request.Title); }
+
+            using var process = Process.Start(MediaProbe.Start("kdialog", args.ToArray()));
+            if (process is null) return (PickOutcome.Unavailable, null);
+            var output = process.StandardOutput.ReadToEnd();
+            _ = process.StandardError.ReadToEnd();
+            process.WaitForExit(120_000);
+            if (process.ExitCode != 0) return (PickOutcome.Cancelled, null);
+            var paths = Clean(output, request);
+            return paths.Count == 0 ? (PickOutcome.Cancelled, null) : (PickOutcome.Picked, paths);
+        }
+        catch (System.ComponentModel.Win32Exception) { return (PickOutcome.Unavailable, null); }
+        catch { return (PickOutcome.Cancelled, null); }
+    }
+
+    static IReadOnlyList<string> Clean(string output, Request request)
+    {
+        var paths = new List<string>();
+        foreach (var raw in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0) continue;
+            try
+            {
+                var path = request.Save && !request.Folder
+                    ? ApplyDefaultExtension(line, request.DefaultExt, request.AddExtension)
+                    : line;
+                paths.Add(System.IO.Path.GetFullPath(path));
+            }
+            catch { }
+            if (!request.Multi) break;
+        }
+        return paths;
+    }
+}
+
 } // namespace Scoreboard.Desktop
 
-// ---------- Microsoft.Win32 file dialogs (unavailable on Linux; WPF-shaped stubs) ----------
-// TECH DEBT: ShowDialog always returns null (cancel). TODO(port): zenity/portals dialog layer.
+// ---------- Microsoft.Win32 file dialogs (real Linux pickers, WPF-shaped call surface) ----------
 
 namespace Microsoft.Win32
 {
@@ -246,19 +409,51 @@ namespace Microsoft.Win32
         public FileDialogCharacterCasing CharacterCasing { get; set; }
         public string FileName { get; set; } = "";
         public string[] FileNames { get; set; } = [];
-        public bool? ShowDialog() => null; // dirty: always cancel on Linux
-        public bool? ShowDialog(object? owner) => null;
+
+        protected abstract bool SaveMode { get; }
+        protected virtual bool AllowsMultiple => false;
+
+        public bool? ShowDialog() => Show(null);
+        public bool? ShowDialog(object? owner) => Show(owner);
+
+        bool? Show(object? owner)
+        {
+            var request = new Scoreboard.Desktop.LinuxFileDialog.Request(
+                Title, InitialPath(), Filter, SaveMode, false, AllowsMultiple,
+                CheckFileExists, OverwritePrompt, DefaultExt, AddExtension);
+            var chosen = Scoreboard.Desktop.LinuxFileDialog.Choose(request, owner as Avalonia.Controls.Window);
+            if (chosen is null || chosen.Count == 0) return null;
+            FileNames = chosen.ToArray();
+            FileName = FileNames[0];
+            return true;
+        }
+
+        string InitialPath()
+        {
+            if (!string.IsNullOrWhiteSpace(FileName))
+            {
+                if (System.IO.Path.IsPathRooted(FileName)) return FileName;
+                if (!string.IsNullOrWhiteSpace(InitialDirectory))
+                    return System.IO.Path.Combine(InitialDirectory, FileName);
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                return string.IsNullOrWhiteSpace(home) ? FileName : System.IO.Path.Combine(home, FileName);
+            }
+            return string.IsNullOrWhiteSpace(InitialDirectory) ? "" : InitialDirectory;
+        }
     }
 
     public sealed class OpenFileDialog : FileDialogStub
     {
         public bool Multiselect { get; set; }
         public bool DereferenceLinks { get; set; } = true;
+        protected override bool SaveMode => false;
+        protected override bool AllowsMultiple => Multiselect;
     }
 
     public sealed class SaveFileDialog : FileDialogStub
     {
         public bool CreatePrompt { get; set; }
+        protected override bool SaveMode => true;
     }
 
     public sealed class FolderBrowserDialog
@@ -266,7 +461,18 @@ namespace Microsoft.Win32
         public string Description { get; set; } = "";
         public string SelectedPath { get; set; } = "";
         public bool ShowNewFolderButton { get; set; }
-        public bool? ShowDialog() => null;
-        public bool? ShowDialog(object? owner) => null;
+
+        public bool? ShowDialog() => Show(null);
+        public bool? ShowDialog(object? owner) => Show(owner);
+
+        bool? Show(object? owner)
+        {
+            var request = new Scoreboard.Desktop.LinuxFileDialog.Request(
+                Description, SelectedPath, "", false, true, false, false, false, "", false);
+            var chosen = Scoreboard.Desktop.LinuxFileDialog.Choose(request, owner as Avalonia.Controls.Window);
+            if (chosen is null || chosen.Count == 0) return null;
+            SelectedPath = chosen[0];
+            return true;
+        }
     }
 }

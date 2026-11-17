@@ -3,7 +3,6 @@ using Avalonia;
 using Avalonia.Controls;
 
 using Avalonia.Media;
-using System.Runtime.InteropServices;
 using Scoreboard.Core;
 namespace Scoreboard.Desktop;
 public partial class OutputWindow : Window
@@ -71,6 +70,8 @@ public partial class OutputWindow : Window
     /// <summary>The display's name, for the window title and the chooser.</summary>
     public string DisplayName => _catalog.FindDisplay(_displayId)?.Name ?? "Program";
     public void Publish(){_displayState=_engine.CloneState();Update();_scorebugView.Refresh();}
+    /// <summary>Opens a staged layout's hand-over video before the layout is sent to air.</summary>
+    public void PrepareTransition(ScorebugLayout layout) => _scorebugView.PrepareTransition(layout);
     /// <summary>Re-creates the on-air visuals; used when a new game replaces everything.</summary>
     public void Rebuild(){Update();_scorebugView.Rebuild();}
     public void UpdateLiveScoreClock(GameState source)
@@ -184,40 +185,21 @@ public partial class OutputWindow : Window
     /// <summary>Takes the window to the full bounds of the monitor it is on, taskbar included.</summary>
     void FillMonitor()
     {
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle == IntPtr.Zero) return;
-        var monitor = MonitorFromWindow(handle, MonitorDefaultToNearest);
-        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-        if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return;
-        // GetMonitorInfo is in physical pixels; WPF's Left/Top/Width/Height are device-independent.
-        var dpi = VisualTreeHelper.GetDpi(this);
-        Left = info.Monitor.Left / dpi.DpiScaleX;
-        Top = info.Monitor.Top / dpi.DpiScaleY;
-        Width = (info.Monitor.Right - info.Monitor.Left) / dpi.DpiScaleX;
-        Height = (info.Monitor.Bottom - info.Monitor.Top) / dpi.DpiScaleY;
-    }
-
-    const uint MonitorDefaultToNearest = 2;
-
-    [DllImport("user32.dll")]
-    static extern IntPtr MonitorFromWindow(IntPtr handle, uint flags);
-
-    [DllImport("user32.dll")]
-    static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct NativeRect
-    {
-        public int Left, Top, Right, Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct MonitorInfo
-    {
-        public int Size;
-        public NativeRect Monitor;
-        public NativeRect Work;
-        public uint Flags;
+        try
+        {
+            // The screen backend already knows the monitor geometry: xrandr under X11, the portal
+            // under Wayland. Divide its physical bounds by that monitor's scale, just as ScreenFit
+            // does for ordinary windows; no win32 handle is involved.
+            var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+            if (screen is null) return;
+            var scale = screen.Scaling > 0 ? screen.Scaling : RenderScaling;
+            if (scale <= 0) scale = 1;
+            Left = screen.Bounds.X / scale;
+            Top = screen.Bounds.Y / scale;
+            Width = screen.Bounds.Width / scale;
+            Height = screen.Bounds.Height / scale;
+        }
+        catch (Exception) { }
     }
 
     /// <summary>

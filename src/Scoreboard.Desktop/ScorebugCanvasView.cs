@@ -271,7 +271,7 @@ public sealed class ScorebugCanvasView : Grid
             // A rebuilt view starts from what it draws right now, so a delay never blanks the graphic.
             if(content is ScorebugTextBlock shown)
             {
-                _shownText[item.Id]=shown.Text;
+                _shownText[item.Id]=shown.Text ?? "";
                 shown.StateProvider=_stateProvider;
                 var elementId=item.Id;
                 shown.ValueMotionPlayed=(clip,before,after)=>PlayValuePieces(elementId,clip,before,after);

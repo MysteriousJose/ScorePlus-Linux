@@ -4,10 +4,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
-using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Microsoft.Win32;
@@ -163,8 +161,7 @@ public sealed class MultiviewWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         _showLabels = preferences.MultiviewShowLabels;
         _labelsToggle.IsChecked = _showLabels;
-        _labelsToggle.Checked += (_, _) => SetLabels(true);
-        _labelsToggle.Unchecked += (_, _) => SetLabels(false);
+        _labelsToggle.IsCheckedChanged += (_, _) => SetLabels(_labelsToggle.IsChecked == true);
         Content = BuildChrome();
         _wall.SizeChanged += (_, _) => UpdateWallColumns();
         ApplyPalette(preferences.Theme);
@@ -765,7 +762,7 @@ public sealed class MultiviewWindow : Window
             Width = editing ? 420 : double.NaN,
             Margin = editing ? new Thickness(6) : new Thickness(1),
             Background = editing ? _surfaceBrush : Brushes.Black,
-            BorderBrush = editing ? _borderBrush : IsFocused(tile) ? Solid("#38D7A3") : Brushes.Transparent,
+            BorderBrush = editing ? _borderBrush : IsTileFocused(tile) ? Solid("#38D7A3") : Brushes.Transparent,
             // Keep the border thickness constant. Toggling it on selection shifted the picture by
             // two pixels and forced WPF to lay the whole tile out again.
             BorderThickness = editing ? new Thickness(1) : new Thickness(2),
@@ -827,7 +824,7 @@ public sealed class MultiviewWindow : Window
         }
     }
 
-    bool IsFocused(TileConfig tile) =>
+    bool IsTileFocused(TileConfig tile) =>
         _tiles.Count > 0 && ReferenceEquals(tile, _tiles[Math.Clamp(_focusedIndex, 0, _tiles.Count - 1)]);
 
     void UpdateSelectionBorders()
@@ -835,7 +832,7 @@ public sealed class MultiviewWindow : Window
         if (_editing) return;
         foreach (var border in _wallTiles.Children.OfType<Border>())
             if (border.Tag is TileConfig tile)
-                border.BorderBrush = IsFocused(tile) ? Solid("#38D7A3") : Brushes.Transparent;
+                border.BorderBrush = IsTileFocused(tile) ? Solid("#38D7A3") : Brushes.Transparent;
     }
 
     void SelectTile(TileConfig tile, bool maximize)

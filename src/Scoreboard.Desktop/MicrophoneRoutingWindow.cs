@@ -34,7 +34,7 @@ internal sealed class MicrophoneRoutingWindow : Window
         });
         root.Children.Add(new TextBlock
         {
-            Text = "Give this item a name the crew recognises, then point it at a microphone. The device is listed by the name Windows knows it by. Changing it while the item is live switches the feed immediately.",
+            Text = "Give this item a name the crew recognises, then point it at a microphone. The device is listed by the name PulseAudio knows it by. Changing it while the item is live switches the feed immediately.",
             FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.75,

@@ -264,8 +264,10 @@ public sealed class VideoSurface : Grid
         // this element) is muted here so its sound never comes out of two places at once.
         try
         {
-            _element.IsMuted = _mute || !string.IsNullOrWhiteSpace(_item.AudioDevice) || (_playback?.RoutedToDevice ?? false);
-            _element.Volume = (float)Math.Clamp(_playback?.Volume ?? 1, 0, 1);
+            var busGain = Math.Clamp(_playback?.SpeakerGain ?? 1, 0, 1);
+            _element.IsMuted = _mute || !string.IsNullOrWhiteSpace(_item.AudioDevice)
+                || (_playback?.RoutedToDevice ?? false) || busGain <= 0.001;
+            _element.Volume = (float)Math.Clamp((_playback?.Volume ?? 1) * busGain, 0, 1);
         }
         catch { }
         SyncRouting(entry!);
@@ -369,12 +371,14 @@ public sealed class VideoSurface : Grid
         {
             // Start at the transport's point so joining a running clip stays in sync.
             var start = _playback?.Position ?? 0;
-            _router.Play(entry.Path, device, Math.Clamp(_playback?.Volume ?? entry.Volume, 0, 1), start);
+            var gain = Math.Clamp(_playback?.SpeakerGain ?? 1, 0, 1);
+            _router.Play(entry.Path, device, Math.Clamp((_playback?.Volume ?? entry.Volume) * gain, 0, 1), start);
             _routedPath = entry.Path;
             _routedDevice = device;
         }
         if (_playback is { IsPlaying: false }) _router.Pause(); else _router.Resume();
-        if (_playback is not null) _router.SetVolume(Math.Clamp(_playback.Volume, 0, 1));
+        if (_playback is not null)
+            _router.SetVolume(Math.Clamp(_playback.Volume * Math.Clamp(_playback.SpeakerGain, 0, 1), 0, 1));
     }
 
     void StopRouting()

@@ -20,6 +20,7 @@ public static class MediaProbe
     public static string? PulseAudio { get; } = Find("pactl");
     public static string? Paplay { get; } = Find("paplay");
     public static string? Parec { get; } = Find("parec");
+    public static string? Pacat { get; } = Find("pacat");
     public static string? Xrandr { get; } = Find("xrandr");
     public static string? Fonts { get; } = Find("fc-list");
     public static bool HasVideo => Ffmpeg is not null && Ffprobe is not null;
@@ -37,6 +38,15 @@ public static class MediaProbe
     {
         try
         {
+            // SCOREPLUS_<TOOL> points at a specific binary; a packaged AppImage carries its own
+            // ffmpeg/ffprobe under resources/ffmpeg beside the executable; PATH is the fallback.
+            var configured = Environment.GetEnvironmentVariable("SCOREPLUS_" + name.ToUpperInvariant().Replace('-', '_'));
+            if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return configured;
+            foreach (var folder in new[] { Path.Combine(AppContext.BaseDirectory, "resources", "ffmpeg"), AppContext.BaseDirectory })
+            {
+                var bundled = Path.Combine(folder, name);
+                if (File.Exists(bundled)) return bundled;
+            }
             foreach (var folder in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':', StringSplitOptions.RemoveEmptyEntries))
             {
                 var path = Path.Combine(folder, name);
@@ -112,6 +122,31 @@ public static class MediaFiles
             return info;
         }
         catch { return ProbeInfo.Empty; }
+    }
+
+    /// <summary>Decodes one frame to PNG in memory; media tiles use this instead of a live player.</summary>
+    public static BitmapSource? ExtractFrame(string path, double seconds)
+    {
+        if (MediaProbe.Ffmpeg is null || !File.Exists(path)) return null;
+        try
+        {
+            var info = MediaProbe.Start(MediaProbe.Ffmpeg,
+                "-v", "error",
+                "-ss", Math.Max(0, seconds).ToString("0.###", CultureInfo.InvariantCulture),
+                "-i", path,
+                "-frames:v", "1",
+                "-f", "image2pipe", "-vcodec", "png", "-");
+            info.RedirectStandardError = false;
+            using var process = Process.Start(info);
+            if (process is null) return null;
+            using var memory = new MemoryStream();
+            process.StandardOutput.BaseStream.CopyTo(memory);
+            process.WaitForExit(4000);
+            if (memory.Length == 0) return null;
+            memory.Position = 0;
+            return BitmapSource.Wrap(new Avalonia.Media.Imaging.Bitmap(memory));
+        }
+        catch { return null; }
     }
 
     static double Number(JsonElement element, string name, double fallback = 0)
@@ -198,7 +233,8 @@ public sealed class FfmpegVideoDecoder : IDisposable
 
     void StartProcess(string path, double start)
     {
-        var info = MediaProbe.Start(MediaProbe.Ffmpeg,
+        if (MediaProbe.Ffmpeg is not { } ffmpeg) return;
+        var info = MediaProbe.Start(ffmpeg,
             "-v", "error",
             "-ss", Math.Max(0, start).ToString("0.###", CultureInfo.InvariantCulture),
             "-i", path,

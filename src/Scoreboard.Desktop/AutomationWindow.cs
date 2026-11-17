@@ -3,10 +3,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
-using Avalonia.Media;
 using Avalonia.Controls.Shapes;
 using Microsoft.Win32;
 using Scoreboard.Core;
@@ -103,7 +101,8 @@ public sealed class AutomationWindow : Window
     /// </summary>
     public FrameworkElement DetachEditor()
     {
-        var view = (FrameworkElement)Content;
+        var view = Content as FrameworkElement
+            ?? throw new InvalidOperationException("the automation editor has no content");
         Content = null;
         _detachedView = view;
         RefreshEditor();
@@ -452,7 +451,7 @@ public sealed class AutomationWindow : Window
         _displayLabel.Text = _catalog.FindDisplay(_displayId)?.Name ?? "Display";
     }
 
-    void RuleList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    void RuleList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (_refreshingList) return;
         if (_ruleList.SelectedItem is not AutomationRule rule) return;
@@ -537,7 +536,8 @@ public sealed class AutomationWindow : Window
     Border BuildTriggerCard(AutomationRule rule)
     {
         var card = Card("TRIGGER", AccentBrush);
-        var panel = (StackPanel)card.Child;
+        var panel = card.Child as StackPanel
+            ?? throw new InvalidOperationException("automation card is missing its panel");
         var name = Box(rule.Name, 14, bold: true);
         name.TextChanged += (_, _) =>
         {
@@ -548,8 +548,7 @@ public sealed class AutomationWindow : Window
         };
         panel.Children.Add(name);
         var enabled = new CheckBox { Content = "Enabled", IsChecked = rule.Enabled, Foreground = TextBrush, FontSize = 11, Margin = new Thickness(0, 9, 0, 2) };
-        enabled.Checked += (_, _) => { rule.Enabled = true; Persist(); };
-        enabled.Unchecked += (_, _) => { rule.Enabled = false; Persist(); };
+        enabled.IsCheckedChanged += (_, _) => { rule.Enabled = enabled.IsChecked == true; Persist(); };
         panel.Children.Add(enabled);
         var bypass = new CheckBox
         {
@@ -560,8 +559,7 @@ public sealed class AutomationWindow : Window
             Margin = new Thickness(0, 1, 0, 2),
             ToolTip = "Use the live game state and apply this rule to the output immediately, without pressing Update Output."
         };
-        bypass.Checked += (_, _) => { rule.BypassOutputUpdate = true; Persist(); RefreshGraph(); };
-        bypass.Unchecked += (_, _) => { rule.BypassOutputUpdate = false; Persist(); RefreshGraph(); };
+        bypass.IsCheckedChanged += (_, _) => { rule.BypassOutputUpdate = bypass.IsChecked == true; Persist(); RefreshGraph(); };
         panel.Children.Add(bypass);
         var any = new CheckBox
         {
@@ -571,8 +569,12 @@ public sealed class AutomationWindow : Window
             FontSize = 10,
             Margin = new Thickness(0, 3, 0, 6)
         };
-        any.Checked += (_, _) => { rule.MatchAny = true; any.Content = "Match any condition"; Persist(); };
-        any.Unchecked += (_, _) => { rule.MatchAny = false; any.Content = "Match all conditions"; Persist(); };
+        any.IsCheckedChanged += (_, _) =>
+        {
+            rule.MatchAny = any.IsChecked == true;
+            any.Content = rule.MatchAny ? "Match any condition" : "Match all conditions";
+            Persist();
+        };
         panel.Children.Add(any);
         var active = MatchesNow(rule);
         panel.Children.Add(new TextBlock
@@ -601,7 +603,8 @@ public sealed class AutomationWindow : Window
     Border BuildConditionCard(AutomationCondition condition, int index)
     {
         var card = Card(condition.WaitUntil ? $"CONDITION {index + 1} · WAIT UNTIL" : $"CONDITION {index + 1}", ConditionBrush);
-        var panel = (StackPanel)card.Child;
+        var panel = card.Child as StackPanel
+            ?? throw new InvalidOperationException("automation card is missing its panel");
         var fieldChoices = AutomationRules.Fields.Select(option => new FieldChoice(option.Field, option.Label)).ToArray();
         var field = new ComboBox
         {
@@ -649,7 +652,7 @@ public sealed class AutomationWindow : Window
             text.TextChanged += (_, _) =>
             {
                 if (_building) return;
-                condition.Text = text.Text.Trim();
+                condition.Text = (text.Text ?? "").Trim();
                 Persist();
             };
             panel.Children.Add(text);
@@ -663,7 +666,7 @@ public sealed class AutomationWindow : Window
                 key.TextChanged += (_, _) =>
                 {
                     if (_building) return;
-                    condition.Key = key.Text.Trim();
+                    condition.Key = (key.Text ?? "").Trim();
                     Persist();
                 };
                 panel.Children.Add(key);
@@ -699,8 +702,7 @@ public sealed class AutomationWindow : Window
             Margin = new Thickness(0, 7, 0, 0),
             ToolTip = "Hold the rule after its trigger matches until this condition becomes true, then run the actions marked After wait."
         };
-        waitUntil.Checked += (_, _) => { condition.WaitUntil = true; Persist(); RefreshGraph(); };
-        waitUntil.Unchecked += (_, _) => { condition.WaitUntil = false; Persist(); RefreshGraph(); };
+        waitUntil.IsCheckedChanged += (_, _) => { condition.WaitUntil = waitUntil.IsChecked == true; Persist(); RefreshGraph(); };
         panel.Children.Add(waitUntil);
         if (condition.WaitUntil)
             panel.Children.Add(new TextBlock
@@ -726,7 +728,8 @@ public sealed class AutomationWindow : Window
     Border BuildActionCard(AutomationAction action, int index)
     {
         var card = Card($"ACTION {index + 1}", ActionBrush);
-        var panel = (StackPanel)card.Child;
+        var panel = card.Child as StackPanel
+            ?? throw new InvalidOperationException("automation card is missing its panel");
         var actionChoices = AutomationRules.Actions.Select(option => new ActionChoice(option.Kind, option.Label)).ToArray();
         var kind = new ComboBox
         {
@@ -880,7 +883,7 @@ public sealed class AutomationWindow : Window
                 hex.TextChanged += (_, _) =>
                 {
                     if (_building || action.ColorSource != ScorebugColorSource.Custom) return;
-                    action.Value = hex.Text.Trim();
+                    action.Value = (hex.Text ?? "").Trim();
                     swatch.Background = ColorBrush(action.Value);
                     swatch.ToolTip = action.Value;
                     Persist();
@@ -902,7 +905,7 @@ public sealed class AutomationWindow : Window
                 text.TextChanged += (_, _) =>
                 {
                     if (_building) return;
-                    action.Value = text.Text;
+                    action.Value = text.Text ?? "";
                     Persist();
                 };
                 panel.Children.Add(text);

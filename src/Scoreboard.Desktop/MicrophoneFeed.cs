@@ -1,8 +1,10 @@
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace Scoreboard.Desktop;
 
-/// <summary>A capture device the operator can add to the media library, by its Windows name.</summary>
+/// <summary>A capture device the operator can add to the media library, by the name PulseAudio knows.</summary>
 public sealed record MicrophoneDevice(int Index, string Name);
 
 /// <summary>
@@ -16,15 +18,19 @@ public sealed class MicrophoneFeed : IDisposable
     static readonly object Gate = new();
     static readonly Dictionary<int, MicrophoneFeed> Feeds = [];
 
+    // float32le, stereo, 48 kHz matches the meter and both PulseAudio utilities, and lets the
+    // monitor level be applied by scaling samples in the pump without a second format conversion.
+    const int SampleRate = 48000;
+    const int Channels = 2;
+
     readonly int _index;
-    // A device handle is only usable while its enumerator lives, so one stays open for the cue.
-    MMDeviceEnumerator? _enumerator;
-    WasapiCapture? _capture;
-    WasapiOut? _output;
-    BufferedWaveProvider? _buffer;
-    string? _outputDeviceId;
+    Process? _capture;
+    Process? _playback;
+    Thread? _pump;
+    volatile bool _running;
     double _volume = 1;
-    bool _running;
+    string? _source;
+    string? _sink;
 
     MicrophoneFeed(int index) => _index = index;
 
@@ -43,18 +49,8 @@ public sealed class MicrophoneFeed : IDisposable
         }
     }
 
-    /// <summary>Every active microphone, in Windows' own order, with the name Windows gives it.</summary>
-    public static IReadOnlyList<MicrophoneDevice> NamedDevices()
-    {
-        try
-        {
-            using var enumerator = new MMDeviceEnumerator();
-            return enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                .Select((device, index) => new MicrophoneDevice(index, device.FriendlyName))
-                .ToArray();
-        }
-        catch { return []; }
-    }
+    /// <summary>Every capture source PulseAudio can see, with its description, in pactl's order.</summary>
+    public static IReadOnlyList<MicrophoneDevice> NamedDevices() => PulseSources();
 
     /// <summary>The name of one microphone, falling back to its position when it cannot be read.</summary>
     public static string MicrophoneName(int index)
@@ -65,7 +61,7 @@ public sealed class MicrophoneFeed : IDisposable
 
     public int Index => _index;
 
-    /// <summary>True while this microphone is being listened to and monitored.</summary>
+    /// <summary>True while this microphone is being captured and monitored.</summary>
     public bool IsRunning => _running;
 
     /// <summary>Why the last capture or monitor attempt failed, if it did.</summary>
@@ -73,34 +69,59 @@ public sealed class MicrophoneFeed : IDisposable
 
     /// <summary>
     /// Opens the microphone and starts sending it to <paramref name="outputDeviceId"/> (null is the
-    /// Windows default output). The monitor runs through WASAPI with a small buffer, so the operator
-    /// hears the room a fraction of a second behind the microphone, not a clip behind.
+    /// default sink). The pump runs a small buffer, so the operator hears the room a fraction of a
+    /// second behind the microphone, not a clip behind.
     /// </summary>
     public void Start(string? outputDeviceId)
     {
-        if (_running && string.Equals(_outputDeviceId, outputDeviceId, StringComparison.OrdinalIgnoreCase)) return;
+        var source = SourceName(_index);
+        if (source is null)
+        {
+            Stop();
+            Error = $"Microphone {_index + 1} is not available.";
+            return;
+        }
+        if (_running && string.Equals(_source, source, StringComparison.Ordinal)
+            && string.Equals(_sink, outputDeviceId, StringComparison.Ordinal)) return;
+
         Stop();
         Error = null;
+        if (MediaProbe.Parec is null || MediaProbe.Pacat is null)
+        {
+            Error = "Microphone capture needs parec and pacat (install pulseaudio-utils).";
+            return;
+        }
+
         try
         {
-            _enumerator = new MMDeviceEnumerator();
-            var captureDevice = Resolve(DataFlow.Capture, _index);
-            _capture = captureDevice is null ? new WasapiCapture() : new WasapiCapture(captureDevice);
-            _buffer = new BufferedWaveProvider(_capture.WaveFormat)
+            var captureInfo = MediaProbe.Start(MediaProbe.Parec,
+                $"--device={source}", "--format=float32le", $"--rate={SampleRate}", $"--channels={Channels}", "--raw");
+            var playbackInfo = MediaProbe.Start(MediaProbe.Pacat,
+                "--format=float32le", $"--rate={SampleRate}", $"--channels={Channels}", "--raw");
+            if (!string.IsNullOrWhiteSpace(outputDeviceId))
+                playbackInfo.ArgumentList.Insert(0, $"--device={outputDeviceId}");
+            // pacat writes nothing to stdout; leaving that pipe redirected would just hold a handle.
+            playbackInfo.RedirectStandardOutput = false;
+            playbackInfo.RedirectStandardInput = true;
+
+            _capture = Process.Start(captureInfo);
+            _playback = Process.Start(playbackInfo);
+            if (_capture is null || _playback is null)
             {
-                DiscardOnBufferOverflow = true,
-                ReadFully = true
-            };
-            var outputDevice = Resolve(DataFlow.Render, outputDeviceId);
-            _output = outputDevice is null
-                ? new WasapiOut(AudioClientShareMode.Shared, true, 100)
-                : new WasapiOut(outputDevice, AudioClientShareMode.Shared, true, 100);
-            _output.Init(_buffer);
-            _capture.DataAvailable += OnData;
-            _capture.StartRecording();
-            _output.Play();
-            _outputDeviceId = outputDeviceId;
+                Error = "PulseAudio capture could not be started.";
+                Stop();
+                return;
+            }
+
+            _source = source;
+            _sink = outputDeviceId;
             _running = true;
+            _pump = new Thread(() => Pump(_capture.StandardOutput.BaseStream, _playback.StandardInput.BaseStream))
+            {
+                IsBackground = true,
+                Name = $"Microphone {_index + 1}"
+            };
+            _pump.Start();
         }
         catch (Exception ex)
         {
@@ -109,36 +130,38 @@ public sealed class MicrophoneFeed : IDisposable
         }
     }
 
-    void OnData(object? sender, WaveInEventArgs e)
+    void Pump(Stream input, Stream output)
     {
-        if (e.BytesRecorded <= 0) return;
-        // The monitor level is applied to the captured samples, so the level the room hears is the
-        // one set on the dock and nothing downstream has to know about it.
-        var buffer = e.Buffer;
-        if (_volume < 0.999)
+        var buffer = new byte[16384];
+        try
         {
-            buffer = new byte[e.BytesRecorded];
-            Array.Copy(e.Buffer, buffer, e.BytesRecorded);
-            Scale(buffer, e.BytesRecorded, (float)Math.Clamp(_volume, 0, 1));
+            while (_running)
+            {
+                var read = input.Read(buffer, 0, buffer.Length);
+                if (read <= 0) break;
+                Scale(buffer, read);
+                output.Write(buffer, 0, read);
+                output.Flush();
+            }
         }
-        try { _buffer?.AddSamples(buffer, 0, e.BytesRecorded); } catch { }
+        catch { }
+        finally
+        {
+            if (_running)
+            {
+                Error = $"Microphone {_index + 1} stopped.";
+                _running = false;
+            }
+        }
     }
 
-    /// <summary>Scales a capture buffer in place; WASAPI mix formats are 32-bit float, 16-bit is the fallback.</summary>
-    void Scale(byte[] buffer, int bytes, float amount)
+    /// <summary>The monitor level is applied to the captured float samples before they reach the sink.</summary>
+    void Scale(byte[] buffer, int bytes)
     {
-        var format = _capture?.WaveFormat;
-        if (format is { Encoding: WaveFormatEncoding.IeeeFloat, BitsPerSample: 32 })
-        {
-            var samples = MemoryMarshal.Cast<byte, float>(buffer.AsSpan(0, bytes - bytes % 4));
-            for (var index = 0; index < samples.Length; index++) samples[index] *= amount;
-            return;
-        }
-        if (format is { BitsPerSample: 16 })
-        {
-            var samples = MemoryMarshal.Cast<byte, short>(buffer.AsSpan(0, bytes - bytes % 2));
-            for (var index = 0; index < samples.Length; index++) samples[index] = (short)(samples[index] * amount);
-        }
+        var volume = (float)Math.Clamp(_volume, 0, 1);
+        if (volume >= 0.999f) return;
+        var samples = MemoryMarshal.Cast<byte, float>(buffer.AsSpan(0, bytes - bytes % 4));
+        for (var index = 0; index < samples.Length; index++) samples[index] *= volume;
     }
 
     /// <summary>Changes where the microphone is heard, without releasing the capture device.</summary>
@@ -146,60 +169,86 @@ public sealed class MicrophoneFeed : IDisposable
     {
         if (!_running)
         {
-            _outputDeviceId = outputDeviceId;
+            _sink = outputDeviceId;
             return;
         }
         Start(outputDeviceId);
     }
 
-    public void SetVolume(double volume)
-    {
-        // The capture callback reads this on the next buffer, so a level change is immediate.
-        _volume = Math.Clamp(volume, 0, 1);
-    }
+    public void SetVolume(double volume) => _volume = Math.Clamp(volume, 0, 1);
 
     public void Stop()
     {
         _running = false;
-        if (_capture is not null)
+        var capture = _capture;
+        var playback = _playback;
+        _capture = null;
+        _playback = null;
+        try { playback?.StandardInput.Close(); } catch { }
+        try { if (capture is { HasExited: false }) capture.Kill(true); } catch { }
+        try { if (playback is { HasExited: false }) playback.Kill(true); } catch { }
+        var pump = _pump;
+        _pump = null;
+        if (pump is not null && pump != Thread.CurrentThread)
         {
-            _capture.DataAvailable -= OnData;
-            try { _capture.StopRecording(); } catch { }
-            try { _capture.Dispose(); } catch { }
-            _capture = null;
+            try { pump.Join(800); } catch { }
         }
-        try { _output?.Stop(); } catch { }
-        try { _output?.Dispose(); } catch { }
-        _output = null;
-        _buffer = null;
-        try { _enumerator?.Dispose(); } catch { }
-        _enumerator = null;
+        try { capture?.Dispose(); } catch { }
+        try { playback?.Dispose(); } catch { }
+        _source = null;
+        _sink = null;
     }
 
-    /// <summary>An active capture or render device by its position in Windows' order.</summary>
-    MMDevice? Resolve(DataFlow flow, int index)
+    static string? SourceName(int index)
     {
-        try
-        {
-            var devices = _enumerator!.EnumerateAudioEndPoints(flow, DeviceState.Active);
-            return index >= 0 && index < devices.Count ? devices[index] : null;
-        }
-        catch { return null; }
+        var devices = PulseSources();
+        return index >= 0 && index < devices.Count ? devices[index].Name : null;
     }
 
-    /// <summary>A render device by the id or friendly name the items store.</summary>
-    MMDevice? Resolve(DataFlow flow, string? deviceId)
+    static IReadOnlyList<MicrophoneDevice> PulseSources()
     {
-        if (string.IsNullOrWhiteSpace(deviceId)) return null;
+        if (MediaProbe.PulseAudio is null) return [];
         try
         {
-            var devices = _enumerator!.EnumerateAudioEndPoints(flow, DeviceState.Active);
-            var match = devices.FirstOrDefault(device => string.Equals(device.ID, deviceId, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(device.FriendlyName, deviceId, StringComparison.OrdinalIgnoreCase));
-            return match is null ? null : _enumerator.GetDevice(match.ID) ?? match;
+            var info = MediaProbe.Start(MediaProbe.PulseAudio, "list", "sources");
+            info.RedirectStandardError = false;
+            using var process = Process.Start(info);
+            if (process is null) return [];
+            var text = process.StandardOutput.ReadToEnd();
+            process.WaitForExit(2000);
+            return ParseSources(text);
         }
-        catch { return null; }
+        catch { return []; }
     }
+
+    /// <summary>
+    /// Reads `pactl list sources` output. Monitor sources echo a sink, so they are not microphones;
+    /// the description is what an operator recognises in the picker.
+    /// </summary>
+    public static IReadOnlyList<MicrophoneDevice> ParseSources(string text)
+    {
+        var devices = new List<MicrophoneDevice>();
+        foreach (var block in (text ?? "").Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+        {
+            string? name = null;
+            string? description = null;
+            foreach (var raw in block.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.StartsWith("Name:", StringComparison.Ordinal)) name = line["Name:".Length..].Trim();
+                else if (line.StartsWith("Description:", StringComparison.Ordinal)) description = line["Description:".Length..].Trim();
+            }
+            if (string.IsNullOrWhiteSpace(name) || name.EndsWith(".monitor", StringComparison.OrdinalIgnoreCase)) continue;
+            devices.Add(new MicrophoneDevice(devices.Count,
+                string.IsNullOrWhiteSpace(description) ? FriendlyName(name) : description));
+        }
+        return devices;
+    }
+
+    static string FriendlyName(string source) =>
+        source.Replace("alsa_input.", "", StringComparison.Ordinal)
+            .Replace(".analog-stereo", "", StringComparison.Ordinal)
+            .Replace('_', ' ');
 
     public void Dispose() => Stop();
 }

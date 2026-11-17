@@ -1931,7 +1931,7 @@ public partial class ScorebugEditorWindow : Window
             var element=_catalog.Layout.Elements.FirstOrDefault(x=>x.Id==selectedId);
             if(element is not null)_dragOrigins[selectedId]=(element.X,element.Y);
         }
-        host.CaptureMouse();
+        e.Pointer.Capture(host);
         e.Handled=true;
     }
 
@@ -1961,7 +1961,7 @@ public partial class ScorebugEditorWindow : Window
     void Element_MouseUp(object? sender,PointerEventArgs e)
     {
         if(_resizing)return;
-        if(sender is Border host)host.ReleaseMouseCapture();
+        if(sender is Border host)e.Pointer.Capture(null);
         SaveDrag();
         e.Handled=true;
     }
@@ -2006,7 +2006,7 @@ public partial class ScorebugEditorWindow : Window
         _resizeStartX=origin.X; _resizeStartY=origin.Y;
         _resizeStartWidth=item.Width; _resizeStartHeight=item.Height;
         _resizeStartFontSize=item.FontSize;
-        handle.CaptureMouse();
+        e.Pointer.Capture(handle);
         e.Handled=true;
     }
 
@@ -2056,7 +2056,7 @@ public partial class ScorebugEditorWindow : Window
 
     void Resize_MouseUp(object? sender,PointerEventArgs e)
     {
-        if(sender is Border handle)handle.ReleaseMouseCapture();
+        if(sender is Border handle)e.Pointer.Capture(null);
         if(_dragElement is { } item)
         {
             var id=item.Id; var w=item.Width; var h=item.Height;

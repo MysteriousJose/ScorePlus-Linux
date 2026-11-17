@@ -3,10 +3,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
-using Avalonia.Media;
 using Avalonia.Threading;
 
 namespace Scoreboard.Desktop;
@@ -90,8 +88,7 @@ public sealed class ReplayBoothWindow : Window
         catch { }
         _windowLabel.Text = WindowLabel();
         _labelsCheck.IsChecked = _booth.ShowLabels;
-        _labelsCheck.Checked += (_, _) => SetLabels(true);
-        _labelsCheck.Unchecked += (_, _) => SetLabels(false);
+        _labelsCheck.IsCheckedChanged += (_, _) => SetLabels(_labelsCheck.IsChecked == true);
         Content = BuildChrome();
         BuildBigView();
         _booth.RefreshCameras();

@@ -14,7 +14,7 @@ using Scoreboard.Core;
 
 namespace Scoreboard.Desktop;
 
-public partial class MainWindow : Window, IControlPanelHost
+public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
 {
     readonly GameEngine _engine = new();
     readonly GameEngine _publishedEngine = new();
@@ -81,6 +81,9 @@ public partial class MainWindow : Window, IControlPanelHost
     /// change sports while driving the console, and a modal warning would stall an unattended run.
     /// </summary>
     public static bool WarnOnSportSwitch { get; set; } = true;
+
+    /// <summary>Lets an unattended check start a window without reaching the update feed.</summary>
+    public static bool CheckForUpdatesOnLoad { get; set; } = true;
 
     /// <param name="mode">How the app was started: <see cref="LaunchMode.New"/> skips the autosave,
     /// <see cref="LaunchMode.Open"/> loads <paramref name="gamePath"/>. Null keeps the legacy
@@ -301,6 +304,38 @@ public partial class MainWindow : Window, IControlPanelHost
 
     public void OpenNewPanel() => OpenControlPanel();
 
+    // The phone can preview any display and move that display's staged layout without taking the
+    // desktop preview away from whatever the operator is working on.
+    public IReadOnlyList<(string Id, string Name)> RemoteDisplays =>
+        _scorebug.Displays.Select(display => (display.Id, display.Name)).ToArray();
+
+    public string RemoteDisplayId => _program.DisplayId;
+
+    public string RemoteLayoutLabel(string displayId) => _program.LabelFor(displayId);
+
+    public void RemoteSelectDisplay(string displayId)
+    {
+        if (string.IsNullOrWhiteSpace(displayId)) return;
+        _program.SelectDisplay(displayId);
+        _preview?.Rebuild();
+        SyncDisplayPicker();
+        RefreshLayoutIndicators();
+        _panel.Refresh();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
+    }
+
+    public void RemoteShiftLayout(string displayId, int delta)
+    {
+        var target = string.IsNullOrWhiteSpace(displayId) ? _program.DisplayId : displayId;
+        _program.ShiftFor(target, delta);
+        _preview?.Rebuild();
+        RefreshLayoutIndicators();
+        var display = _scorebug.FindDisplay(target);
+        StatusText.Text = $"REMOTE LAYOUT · {display?.Name ?? "Display"} · {_program.LabelFor(target)} · preview only";
+        _panel.Refresh();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
+    }
+
     /// <summary>
     /// Sends the game data (score, clocks, down, stats) to the audience copies. It deliberately
     /// touches no layout, so a detached panel can publish its own display right after it.
@@ -315,6 +350,9 @@ public partial class MainWindow : Window, IControlPanelHost
 
     public void PublishOutput()
     {
+        // Arm the hand-over while the operator is still on the preview, so the first frame is
+        // decoded before the switch instead of starting with a black gap.
+        PrepareTransitionForStagedLayout();
         // The chosen layouts go on air with the game data: the preview and output still read
         // different copies, so the switch only happens here.
         PublishGameState();
@@ -329,6 +367,7 @@ public partial class MainWindow : Window, IControlPanelHost
     public void ShiftLayout(int delta)
     {
         _program.Shift(delta);
+        PrepareTransitionForStagedLayout();
         _preview?.Rebuild();
         RefreshLayoutIndicators();
         StatusText.Text = _program.HasStagedChanges
@@ -342,7 +381,20 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         SyncDisplayPicker();
         RefreshLayoutIndicators();
+        PrepareTransitionForStagedLayout();
         _preview?.Rebuild();
+    }
+
+    /// <summary>
+    /// Arms the staged layout's hand-over video on the preview and every visible output, so a
+    /// layout with a transition clip starts on its first frame instead of a black gap.
+    /// </summary>
+    void PrepareTransitionForStagedLayout()
+    {
+        _preview?.PrepareTransition(_program.Layout);
+        foreach (var output in _outputs.Where(output => output.IsVisible))
+            if (_program.LayoutFor(output.DisplayId) is { } layout)
+                output.PrepareTransition(layout);
     }
 
     /// <summary>Fills the display picker without treating the sync as the operator's choice.</summary>
@@ -750,7 +802,7 @@ public partial class MainWindow : Window, IControlPanelHost
     /// </summary>
     async Task CheckForUpdatesAsync()
     {
-        if (!_preferences.CheckForUpdates || !AppInfo.CanUpdate) return;
+        if (!CheckForUpdatesOnLoad || !_preferences.CheckForUpdates || !AppInfo.CanUpdate) return;
         var manifest = await UpdateChecker.CheckAsync(_preferences.UpdateFeedUrl, AppInfo.Kind);
         if (manifest is null) return;
         var detail = $"Version {manifest.Version} is ready (this build is {AppInfo.Version}). " +

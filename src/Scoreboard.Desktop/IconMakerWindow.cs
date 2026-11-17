@@ -3,8 +3,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Controls;
-using Avalonia.Media;
 using Microsoft.Win32;
 using Scoreboard.Core;
 
@@ -265,8 +263,7 @@ public sealed class IconMakerWindow : Window
             FontSize = 10, Opacity = 0.65, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0)
         });
         _round.Margin = new Thickness(0, 8, 0, 0);
-        _round.Checked += (_, _) => UpdatePreview();
-        _round.Unchecked += (_, _) => UpdatePreview();
+        _round.IsCheckedChanged += (_, _) => UpdatePreview();
         editor.Children.Add(_round);
 
         var positionRow = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
@@ -343,7 +340,7 @@ public sealed class IconMakerWindow : Window
         _stateName.TextChanged += (_, _) =>
         {
             if (_filling || _designTarget is null) return;
-            _designTarget.Name = _stateName.Text.Trim();
+            _designTarget.Name = (_stateName.Text ?? "").Trim();
             RefreshStateLabels();
         };
         _stateField.SelectionChanged += (_, _) =>
@@ -366,7 +363,7 @@ public sealed class IconMakerWindow : Window
         {
             if (_filling || _designTarget is null) return;
             var condition = _designTarget.Condition;
-            if (AutomationRules.IsTextField(condition.Field)) condition.Text = _stateValue.Text.Trim();
+            if (AutomationRules.IsTextField(condition.Field)) condition.Text = (_stateValue.Text ?? "").Trim();
             else if (AutomationRules.IsNumericField(condition.Field) && double.TryParse(_stateValue.Text, out var number))
                 condition.Value = number;
             RefreshStateLabels();
@@ -557,10 +554,10 @@ public sealed class IconMakerWindow : Window
         var design = _designTarget;
         if (design is null)
         {
-            _editing.Glyph = _glyph.Text.Trim();
+            _editing.Glyph = (_glyph.Text ?? "").Trim();
             _editing.ImagePath = _imagePath;
-            _editing.Color = _color.Text.Trim();
-            _editing.Plate = _plate.Text.Trim();
+            _editing.Color = (_color.Text ?? "").Trim();
+            _editing.Plate = (_plate.Text ?? "").Trim();
             _editing.Round = _round.IsChecked == true;
             if (double.TryParse(_offsetX.Text, out var x)) _editing.OffsetX = x;
             if (double.TryParse(_offsetY.Text, out var y)) _editing.OffsetY = y;
@@ -570,17 +567,17 @@ public sealed class IconMakerWindow : Window
         }
         else
         {
-            design.Glyph = _glyph.Text.Trim();
+            design.Glyph = (_glyph.Text ?? "").Trim();
             design.ImagePath = _imagePath;
-            design.Color = _color.Text.Trim();
-            design.Plate = _plate.Text.Trim();
+            design.Color = (_color.Text ?? "").Trim();
+            design.Plate = (_plate.Text ?? "").Trim();
             design.Round = _round.IsChecked == true;
             if (double.TryParse(_offsetX.Text, out var x)) design.OffsetX = x;
             if (double.TryParse(_offsetY.Text, out var y)) design.OffsetY = y;
             if (double.TryParse(_scale.Text, out var scale)) design.Scale = scale;
             if (double.TryParse(_opacity.Text, out var opacity)) design.Opacity = opacity;
             if (double.TryParse(_rotation.Text, out var rotation)) design.Rotation = rotation;
-            design.Name = _stateName.Text.Trim();
+            design.Name = (_stateName.Text ?? "").Trim();
         }
     }
 
@@ -689,9 +686,9 @@ public sealed class IconMakerWindow : Window
             try { _previewImage.Source = ScorebugRender.LoadLogo(imagePath); }
             catch { _previewImage.Source = null; _previewImage.Visibility = Visibility.Collapsed; _previewGlyph.Visibility = Visibility.Visible; }
         }
-        var glyph = _glyph.Text.Trim();
-        var colour = _color.Text.Trim();
-        var plate = _plate.Text.Trim();
+        var glyph = (_glyph.Text ?? "").Trim();
+        var colour = (_color.Text ?? "").Trim();
+        var plate = (_plate.Text ?? "").Trim();
         _previewGlyph.Text = string.IsNullOrWhiteSpace(glyph) ? "★" : glyph;
         var glyphBrush = ScorebugRender.ParseBrush(string.IsNullOrWhiteSpace(colour) ? "#FFFFFF" : colour);
         _previewGlyph.Foreground = glyphBrush;
@@ -715,7 +712,7 @@ public sealed class IconMakerWindow : Window
     {
         CommitDesign();
         var icon = _editing.Copy();
-        icon.Name = _name.Text.Trim();
+        icon.Name = (_name.Text ?? "").Trim();
         icon.Normalize();
         _editing = CustomIconStore.Save(icon);
         Fill(_editing);

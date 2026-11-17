@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using System.Globalization;
 using Microsoft.Win32;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
@@ -98,6 +99,7 @@ public partial class MediaDock : UserControl
         ThemeManager.SetSkipTheme(this, true);
         TagBox.ItemsSource = MediaLibrary.SuggestedTags;
         TagBox.Text = MediaLibrary.DefaultTag;
+        TransitionBox.ItemsSource = MediaLibrary.TransitionOptions;
         ApplyTheme("Dark");
         // A UserControl's children only reach the visual tree when its template is applied, so the
         // size swap has to run once more after load or the first pass finds nothing to restyle.
@@ -207,6 +209,7 @@ public partial class MediaDock : UserControl
                 PlaylistLoopBox.IsChecked = playlist.Loop;
                 PlaylistLoopBox.IsEnabled = true;
                 PlaylistAddButton.IsEnabled = _session.Selected is not null;
+                PlaylistUpButton.IsEnabled = PlaylistDownButton.IsEnabled = entries.Count > 1 && _session.Selected is not null;
                 PlaylistRunButton.IsEnabled = entries.Count > 0;
                 PlaylistStopButton.IsEnabled = _session.ActivePlaylist is not null;
                 RefreshTiles(entries, playlist);
@@ -238,6 +241,24 @@ public partial class MediaDock : UserControl
             }
             ClipLoopBox.IsChecked = selected?.Loop == true;
             ClipLoopBox.IsEnabled = selected is not null;
+            TransitionBox.IsEnabled = selected?.IsVideo == true;
+            TransitionBox.SelectedItem = MediaLibrary.NormalizeTransition(selected?.Transition);
+            TransitionSecondsBox.IsEnabled = selected?.IsVideo == true;
+            if (!TransitionSecondsBox.IsKeyboardFocusWithin)
+                TransitionSecondsBox.Text = (selected?.TransitionSeconds ?? MediaLibrary.DefaultTransitionSeconds)
+                    .ToString("0.##", CultureInfo.CurrentCulture);
+
+            // Speaker buses: the selected one, or how many the show has when none is picked.
+            var speakerItem = selected?.IsSpeaker == true ? selected
+                : _session.Current?.IsSpeaker == true ? _session.Current : null;
+            SpeakerRouteButton.IsEnabled = speakerItem is not null;
+            SpeakerPowerButton.IsEnabled = speakerItem is not null;
+            SpeakerPowerButton.Content = speakerItem is { SpeakerMuted: false } ? "Bus off" : "Bus on";
+            SpeakerStatus.Text = speakerItem is not null
+                ? $"{speakerItem.Label} · {(speakerItem.SpeakerMuted ? "OFF" : "ON")} · {speakerItem.VolumePercent}%"
+                : _session.HasSpeakerBuses
+                    ? $"{_session.Library.Count(entry => entry.IsSpeaker)} buses · tag routes clips to them"
+                    : "none added yet";
 
             // Audio: the selected clip's own level and speaker.
             var level = Math.Round((selected?.Volume ?? 1) * 100);
@@ -1139,6 +1160,22 @@ public partial class MediaDock : UserControl
         Refresh();
     }
 
+    void PlaylistUp_Click(object sender, RoutedEventArgs e) => MovePlaylistSelection(-1);
+
+    void PlaylistDown_Click(object sender, RoutedEventArgs e) => MovePlaylistSelection(1);
+
+    void MovePlaylistSelection(int delta)
+    {
+        if (_session is null || OpenPlaylist() is not { } playlist || _session.Selected is not { } selected) return;
+        var entries = _session.PlaylistEntries(playlist);
+        var from = entries.ToList().FindIndex(entry => string.Equals(entry.Path, selected.Path, StringComparison.OrdinalIgnoreCase));
+        if (from < 0) return;
+        var to = Math.Clamp(from + delta, 0, entries.Count - 1);
+        if (to == from) return;
+        _session.MovePlaylistItem(playlist, from, to);
+        Refresh();
+    }
+
     void PlaylistRun_Click(object sender, RoutedEventArgs e)
     {
         if (_session is null || OpenPlaylist() is not { } playlist) return;
@@ -1162,6 +1199,26 @@ public partial class MediaDock : UserControl
         if (_syncing || _session is null || OpenPlaylist() is not { } playlist) return;
         _session.SetPlaylistLoop(playlist, PlaylistLoopBox.IsChecked == true);
         Refresh();
+    }
+
+    void Transition_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || _session?.Selected is not { } selected) return;
+        _session.SetClipTransition(selected, TransitionBox.SelectedItem as string);
+    }
+
+    void TransitionSeconds_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_syncing || _session?.Selected is not { } selected) return;
+        if (!double.TryParse(TransitionSecondsBox.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out var seconds)
+            && !double.TryParse(TransitionSecondsBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds)) return;
+        _session.SetClipTransitionSeconds(selected, seconds);
+    }
+
+    void TransitionSeconds_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_session?.Selected is { } selected)
+            TransitionSecondsBox.Text = selected.TransitionSeconds.ToString("0.##", CultureInfo.CurrentCulture);
     }
 
     void PlayPause_Click(object sender, RoutedEventArgs e) => _session?.TogglePlayPause();
@@ -1264,6 +1321,33 @@ public partial class MediaDock : UserControl
         _session.AddMicrophone(index, MediaLibrary.NormalizeTag(TagBox.Text));
         Refresh();
     }
+
+    void Speaker_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null) return;
+        var index = 0;
+        while (_session.Library.Any(entry => entry.IsSpeaker && entry.SpeakerSlot == index)) index++;
+        _session.AddSpeaker(index, MediaLibrary.NormalizeTag(TagBox.Text));
+        Refresh();
+    }
+
+    void SpeakerRoute_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null || SpeakerItem() is not { } speaker) return;
+        var owner = Window.GetWindow(this);
+        if (owner is not null) SpeakerRoutingWindow.Ask(owner, _session, speaker, _theme);
+        Refresh();
+    }
+
+    void SpeakerPower_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null || SpeakerItem() is not { } speaker) return;
+        _session.ToggleOnAir(speaker);
+        Refresh();
+    }
+
+    MediaEntry? SpeakerItem() => _session?.Selected?.IsSpeaker == true ? _session.Selected
+        : _session?.Current?.IsSpeaker == true ? _session.Current : null;
 
     void Camera_Click(object sender, RoutedEventArgs e)
     {

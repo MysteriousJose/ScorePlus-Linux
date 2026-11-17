@@ -33,9 +33,9 @@
     <AvaloniaResource Include="app.ico" />
   </ItemGroup>
   <ItemGroup>
-    <!-- No Windows-only packages: HtmlSurface's browser path has an inert, cross-platform
-         stand-in, and media/audio/camera go through ffmpeg and PulseAudio. Keeping WPF's WebView2
-         here would drag Windows assemblies into every macOS/Linux build for no code that uses them. -->
+    <!-- No Windows-only packages: HTML is captured with headless system Chromium/Chrome, and
+         media/audio/camera go through ffmpeg and PulseAudio. Keeping WPF's WebView2 here would
+         drag Windows assemblies into every macOS/Linux build. -->
     <PackageReference Include="Avalonia" Version="11.3.22" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />

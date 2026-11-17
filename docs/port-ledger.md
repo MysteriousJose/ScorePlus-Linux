@@ -23,6 +23,11 @@ here and is not named in this file with an `excluded` or `deferred` status.
 | Replay booth + feed | `src/Scoreboard.Desktop/ReplayBooth.cs`, `ReplayBoothWindow.cs`, `ReplayFeed.cs` | ported | Header action; history is sampled from the live game clocks. |
 | Horn | `src/Scoreboard.Desktop/HornPlayer.cs` and `Assets/horn-*.mp3` | ported | Three shipped horn assets; playback uses the PulseAudio router. |
 | Speaker routing / meter | `src/Scoreboard.Desktop/SpeakerRoutingWindow.cs`, `AudioRouter.cs`, `SoundLevelMeter.cs` | ported | `pactl` sinks and ffplay output; meter listens to the default monitor. |
+| Speaker buses | `src/Scoreboard.Desktop/MediaSession.cs`, `Media.cs`, `MediaDock.axaml(.cs)` | ported | Tag-routed output buses with add, route, on/off and level; clips, video surfaces, microphones and the background bed all pass through the matching bus. |
+| Background audio bed | `src/Scoreboard.Desktop/MediaSession.cs` | ported | A second player keeps an audio clip under a video, camera or microphone; Stop and Clear end it. |
+| Clip switch settings | `src/Scoreboard.Desktop/MediaSession.cs`, `MediaDock.axaml(.cs)`, `ScorebugCanvasView.cs` | ported | Per-clip Cut/Fade/Slide/Zoom and a 0–5s duration; staged hand-overs are preloaded before Update Output. |
+| Media transport + playlists | `src/Scoreboard.Desktop/MediaSession.cs`, `Media.cs` | ported | Per-clip volume, speaker and loop; playlist add/remove/reorder/loop; Clear off air blanks the screen but keeps the library. |
+| Phone remote | `src/Scoreboard.Desktop/RemoteControl.cs`, `RemotePage.cs` | ported | Local-network `/watch` console for game state, media transport and per-display layout; `MainWindow` hosts `IRemoteDisplayHost`. |
 | Fullscreen / geometry | `src/Scoreboard.Desktop/OutputWindow.axaml.cs`, `ScreenFit.cs` | ported | F11/Escape and monitor fitting are implemented natively. |
 | WPF fullscreen helper | `src/Scoreboard.Desktop/WindowFullscreen.cs` | excluded | Replaced by native F11/Escape and monitor fitting. |
 | WPF icon name converter | `src/Scoreboard.Desktop/IconNameConverter.cs` | excluded | Avalonia binds the model labels directly. |
@@ -31,9 +36,12 @@ here and is not named in this file with an `excluded` or `deferred` status.
 | Camera/replay recording | `src/Scoreboard.Desktop/WpfCompat.cs` (ffmpeg-backed capture/writer) | ported | `VideoCapture`/`VideoWriter` shell out to ffmpeg; OpenCV is no longer required. |
 | Chroma key | `src/Scoreboard.Desktop/ChromaKeyEffect.cs`, `Assets/ChromaKey.ps` | ported | The shader is replaced by an ffmpeg `colorkey` filter in the decoder; the studio colour and tolerance reach score videos and video surfaces. |
 | Telestrator | `src/Scoreboard.Desktop/AnnotationBoard.cs` | ported | Native Avalonia pointer canvas, one ink board per display, hold fade and dismiss; `T` opens it on the audience window. |
+| Native file dialogs | runtime (no upstream file) | ported | zenity, then kdialog, then the app's typed-path window; every save/open/import/export site uses them, including multi-file import. |
+| Microphone capture | `src/Scoreboard.Desktop/MicrophoneFeed.cs`, `MicrophonePickerWindow.cs`, `MicrophoneRoutingWindow.cs` | ported | `parec` piped to `pacat` on the chosen PulseAudio sink; loopback monitors are hidden and the dock level scales the stream. |
+| Image surfaces | `src/Scoreboard.Desktop/WpfCompat.cs` image shims | ported | Real Avalonia render targets, crops, scaled stills and Skia JPEG encoding for the camera wall and scorebug transitions. |
 | Windows installer | `src/ScorePlus.Setup/**` | excluded | Replaced by AppImage, `.deb` and tar.gz packaging. |
 | Marketing site | `site/**`, `.github/workflows/pages.yml` | excluded | Not application code. |
-| WebView2 HTML surface | `src/Scoreboard.Desktop/HtmlSurface.cs` | excluded | No WebView2 on Linux; inert stand-in is pinned by the HTML suite. |
+| HTML surface | `src/Scoreboard.Desktop/HtmlSurface.cs` | ported | Headless Chromium/Chrome screenshots with virtual-time animation sampling; RGBA frames are captured to Avalonia images, with an explained placeholder when no browser is installed. |
 | WPF animations | `BeginAnimation` call sites | excluded | Avalonia clock implementation is permanent. |
 
 ## Promotion

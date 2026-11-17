@@ -1,15 +1,13 @@
-using Avalonia.Interactivity;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
-using Avalonia.Media;
-using Avalonia.Controls;
 using Avalonia.Media;
 
 namespace Scoreboard.Desktop;
 
 /// <summary>
-/// Names a speaker bus and chooses the Windows output device it represents. The bus's level is
+/// Names a speaker bus and chooses the PulseAudio output it represents. The bus's level is
 /// controlled from the dock's normal VOLUME slider, so this dialog deliberately stays about identity
 /// and routing only.
 /// </summary>
@@ -38,7 +36,7 @@ internal sealed class SpeakerRoutingWindow : Window
         });
         root.Children.Add(new TextBlock
         {
-            Text = "Give this output a name the crew recognises, then choose the Windows device it controls. Clips and microphones carry this bus's tag play through it at its slider level, and fall silent while the bus is switched off.",
+            Text = "Give this output a name the crew recognises, then choose the PulseAudio device it controls. Clips and microphones carrying this bus's tag play through it at its slider level, and fall silent while the bus is switched off.",
             FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.75,
@@ -67,7 +65,7 @@ internal sealed class SpeakerRoutingWindow : Window
         if (devices.Count == 0)
             root.Children.Add(new TextBlock
             {
-                Text = "No speaker could be opened just now. Check that it is plugged in and available to Windows.",
+                Text = "No speaker could be opened just now. Check that it is plugged in and available to PulseAudio.",
                 FontSize = 11,
                 TextWrapping = TextWrapping.Wrap,
                 Opacity = 0.7
