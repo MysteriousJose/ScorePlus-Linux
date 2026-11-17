@@ -958,9 +958,9 @@ try
         rtdState=rtd.Feed(DaktronicsFrame(offset,text)) ?? rtdState;
     Check(rtdState?.ClockSeconds==969&&rtdState.HomeScore==12&&rtdState.AwayScore==7&&rtdState.Period==2,
         "Daktronics RTD packets splice clock, score and period fields into the persistent buffer");
-    Check(rtdState.HomeTimeouts==3&&rtdState.AwayTimeouts==1&&rtdState.PlayClockSeconds==25,
+    Check(rtdState is { HomeTimeouts: 3, AwayTimeouts: 1, PlayClockSeconds: 25 },
         "Daktronics RTD decodes timeouts and the football play clock");
-    Check(rtdState.Down==1&&rtdState.YardsToGo==10&&rtdState.BallOn==35,
+    Check(rtdState is { Down: 1, YardsToGo: 10, BallOn: 35 },
         "Daktronics RTD decodes down, distance and ball spot");
     var hardwareGame=new GameEngine();hardwareGame.NewGame("football");hardwareGame.HardwareControlled=true;
     Check(hardwareGame.ApplyHardwareSnapshot(rtdState!),
