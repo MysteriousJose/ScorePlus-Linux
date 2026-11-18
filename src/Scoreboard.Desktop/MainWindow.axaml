@@ -94,7 +94,7 @@
           <Button Classes="header-button" Content="Animation Maker" Click="AnimationMaker_Click" ToolTip.Tip="Key motion a value follows — a loop while it is up, or a flourish when it changes"/>
           <Button Classes="header-button" Content="Multiview" Click="Multiview_Click" ToolTip.Tip="Every camera at once, with the replay preview beside the live picture"/>
           <Button Classes="header-button" Content="Replay Booth" Click="ReplayBooth_Click" ToolTip.Tip="Review the last replay window of every camera with the clocks that were showing"/>
-          <Button Classes="header-button" Content="Scorebug Studio" Click="ScorebugStudio_Click"/>
+          <Button Classes="header-button" Content="Display Studio" Click="ScorebugStudio_Click"/>
           <Button Classes="header-button" Content="Sport Profiles" Click="SportProfiles_Click"/>
           <Button Classes="header-button" Content="New Game" Click="NewGame_Click"/>
         </StackPanel>
