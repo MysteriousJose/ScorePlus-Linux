@@ -103,6 +103,12 @@
           <ComboBox x:Name="SportSelector" Width="220" SelectionChanged="Sport_Changed">
             <ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}"/></DataTemplate></ComboBox.ItemTemplate>
           </ComboBox>
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+            <TextBlock Text="GAME" Foreground="#93A0B2" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
+            <TextBox x:Name="GameNameBox" Width="140" MinHeight="32" Padding="8,4" FontSize="12"
+                     MaxLength="120" VerticalContentAlignment="Center" TextChanged="GameName_Changed"
+                     ToolTip.Tip="Name this game; it is saved with the game and shown in autosaves, reports and league cloud uploads"/>
+          </StackPanel>
           <TextBlock x:Name="SportHint" Text="Everything you need for the game is on this page." Foreground="#5C6B7E" VerticalAlignment="Center" Margin="12,0,0,0" FontSize="11" IsVisible="False"/>
         </StackPanel>
       </DockPanel>

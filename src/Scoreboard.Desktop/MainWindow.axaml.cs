@@ -60,6 +60,8 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     // Set while the sport picker is being filled in for the operator, so syncing the control cannot
     // be mistaken for the operator choosing a sport (which starts a new game).
     bool _sportSync;
+    // Set while the game-name box is being filled from the engine, so that does not count as typing.
+    bool _gameNameSync;
     // The next autosave starts a fresh recoverable point instead of updating the newest one. Set
     // when a new game starts or a game is loaded, so the previous game keeps its own autosave.
     bool _startNewAutosavePoint = true;
@@ -495,6 +497,13 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
             try { SportSelector.SelectedValue = s.SportId; }
             finally { _sportSync = false; }
         }
+        // Follow a new or loaded game without overwriting a name the operator is currently typing.
+        if (GameNameBox is not null && !GameNameBox.IsKeyboardFocusWithin && GameNameBox.Text != s.GameName)
+        {
+            _gameNameSync = true;
+            try { GameNameBox.Text = s.GameName; }
+            finally { _gameNameSync = false; }
+        }
         _eventCount = s.Events.Count;
     }
 
@@ -865,6 +874,12 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         _panel.Refresh();
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
         StatusText.Text = $"SPORT PROFILES SAVED · {_engine.Sport.Name} · start a new game to use the new rules";
+    }
+
+    void GameName_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_initializing || _gameNameSync) return;
+        _engine.SetGameName(GameNameBox.Text);
     }
 
     void Sport_Changed(object sender, SelectionChangedEventArgs e)

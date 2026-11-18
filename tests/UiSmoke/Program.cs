@@ -1140,6 +1140,12 @@ internal static class Program
         var main = new MainWindow(LaunchMode.New) { Width = 1280, Height = 860 };
         main.Show();
         main.UpdateLayout();
+        var gameNameBox = (TextBox)main.FindName("GameNameBox")!;
+        gameNameBox.Text = "Friday Night";
+        // TextChanged is raised after the text is rendered, not at the moment Text is assigned.
+        Pump(TimeSpan.FromMilliseconds(50));
+        Check(main.Engine.State.GameName == "Friday Night" && gameNameBox.Text == "Friday Night",
+            "the top bar names the current game");
         Check(main.RemoteDisplays.Count == main.Scorebug.Displays.Count
               && main.Scorebug.Displays.Any(display => string.Equals(display.Id, main.RemoteDisplayId, StringComparison.OrdinalIgnoreCase)),
             "the phone remote lists every program display and starts on the previewed one");
@@ -1196,6 +1202,8 @@ internal static class Program
         Check(main.PublishedState.HomeScore == 0 && main.PublishedState.Down == 1 && main.PublishedState.HomeTeam != "Old Home",
             "New Game leaves nothing of the previous game on air");
         Check(main.Scorebug.Layouts.Count == 1, "New Game starts again with one layout");
+        Check(main.Engine.State.GameName.Length == 0 && gameNameBox.Text?.Length == 0,
+            "New Game clears the previous game name");
         Check(string.IsNullOrEmpty(((TextBox)dock.FindName("SearchBox")!).Text), "New Game clears the media search box");
         var preview = All<ScorebugCanvasView>(main).FirstOrDefault() ?? throw new Exception("FAIL: the main window has no program preview");
         var previewText = All<TextBlock>(preview).Select(text => text.Text ?? "").ToArray();
@@ -1212,6 +1220,7 @@ internal static class Program
         saved.UpdateLayout();
         saved.Engine.SetTeams("Loaded Home", "Loaded Away");
         saved.Engine.SetTeamIdentity(false, "Loaded Away", "LAW", logo, "#FFCC3355", "#FF223344");
+        saved.Engine.SetGameName("Championship Night");
         saved.Engine.Score(true, 7);
         saved.Engine.Save(game);
         saved.Close();
@@ -1222,6 +1231,9 @@ internal static class Program
         Check(reopened.PublishedState.HomeTeam == "Loaded Home" && reopened.PublishedState.HomeScore == 7
               && reopened.PublishedState.AwayTeam == "Loaded Away",
             "reopening a saved game restores its teams and score");
+        Check(reopened.Engine.State.GameName == "Championship Night"
+              && ((TextBox)reopened.FindName("GameNameBox")!).Text == "Championship Night",
+            "a saved game restores its name in the top bar");
         var reopenedPreview = All<ScorebugCanvasView>(reopened).FirstOrDefault()
             ?? throw new Exception("FAIL: the reopened game has no program preview");
         var restoredLogo = All<Image>(reopenedPreview).FirstOrDefault(image => image.Source is not null)
