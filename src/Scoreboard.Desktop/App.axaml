@@ -64,6 +64,17 @@
       <Setter Property="Padding" Value="10,5"/>
       <Setter Property="MinHeight" Value="30"/>
     </Style>
+    <!-- A UniformGrid cell has no width of its own: a button left at its content size leaves the
+         cell's extra width as a gap, which is exactly what a widened console must not do. Stack
+         panels and auto columns still size their buttons to the content. -->
+    <Style Selector="UniformGrid > Button">
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="UniformGrid > ToggleButton">
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    </Style>
     <Style Selector="Button:pointerover">
       <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}"/>
       <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>

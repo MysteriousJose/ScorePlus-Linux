@@ -189,7 +189,6 @@ public sealed class Stepper : Grid
         Fill(_minusRow, minus);
     }
 
-
     void Fill(UniformGrid row, IEnumerable<StepButton> buttons)
     {
         row.Children.Clear();
@@ -205,7 +204,9 @@ public sealed class Stepper : Grid
                 Padding = new Thickness(2, 6, 2, 6),
                 Margin = new Thickness(2, 0, 2, 0),
                 MinWidth = 0,
-                MinHeight = 30,
+                MinHeight = 36,
+                HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = global::Avalonia.Layout.HorizontalAlignment.Center,
                 Tag = item.ActionId,
                 ToolTip = item.Tip
             };
