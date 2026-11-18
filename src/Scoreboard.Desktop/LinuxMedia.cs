@@ -192,6 +192,7 @@ public sealed class FfmpegVideoDecoder : IDisposable
     volatile bool _paused;
     volatile bool _disposed;
     bool _frameQueued;
+    readonly Stopwatch _paceClock = new();
 
     public event Action<WriteableBitmap>? FrameReady;
     public event Action? Ended;
@@ -221,6 +222,7 @@ public sealed class FfmpegVideoDecoder : IDisposable
         Duration = info.Duration;
         _baseSeconds = Math.Max(0, startSeconds);
         _frames = 0;
+        _paceClock.Reset();
         _paused = false;
         _disposed = false;
         _bitmap = new WriteableBitmap(new Avalonia.PixelSize(_width, _height), new Avalonia.Vector(96, 96),
@@ -239,6 +241,12 @@ public sealed class FfmpegVideoDecoder : IDisposable
         var info = MediaProbe.Start(ffmpeg,
             "-v", "error",
             "-ss", Math.Max(0, start).ToString("0.###", CultureInfo.InvariantCulture),
+            // Decode at the clip's own pace. Without -re ffmpeg reads a file as fast as the pipe
+            // drains, so even a long cue reaches EOF and reports Ended almost immediately.
+            "-re",
+            // Threaded decoding can otherwise hold the first pictures back for a second, which
+            // leaves a freshly cued box black even though the file is already being read.
+            "-flags", "+low_delay",
             "-i", path,
             "-an",
             "-vf", (_videoFilter is null ? "" : _videoFilter + ",") + $"scale={_width}:{_height}:force_original_aspect_ratio=decrease,pad={_width}:{_height}:(ow-iw)/2:(oh-ih)/2",
@@ -269,6 +277,10 @@ public sealed class FfmpegVideoDecoder : IDisposable
                 _frames++;
                 var copy = (byte[])_pixels.Clone();
                 QueueFrame(copy);
+                // -re throttles the input, but buffered frames can arrive in a burst. Presenting
+                // them on the clip's own clock keeps the picture and its audio on screen for the
+                // full duration instead of racing to EOF early.
+                PaceFrame();
             }
         }
         catch (Exception ex) when (!token.IsCancellationRequested)
@@ -279,6 +291,13 @@ public sealed class FfmpegVideoDecoder : IDisposable
         {
             if (!_disposed) Dispatcher.BeginInvoke(() => Ended?.Invoke());
         }
+    }
+
+    void PaceFrame()
+    {
+        if (!_paceClock.IsRunning) _paceClock.Start();
+        var wait = TimeSpan.FromSeconds(_frames / Math.Max(1, _fps)) - _paceClock.Elapsed;
+        if (wait > TimeSpan.Zero) Thread.Sleep(wait);
     }
 
     void QueueFrame(byte[] copy)
@@ -304,8 +323,17 @@ public sealed class FfmpegVideoDecoder : IDisposable
         });
     }
 
-    public void Pause() => _paused = true;
-    public void Resume() => _paused = false;
+    public void Pause()
+    {
+        _paused = true;
+        _paceClock.Stop();
+    }
+
+    public void Resume()
+    {
+        _paceClock.Start();
+        _paused = false;
+    }
 
     public void Seek(string path, double seconds)
     {
@@ -325,6 +353,7 @@ public sealed class FfmpegVideoDecoder : IDisposable
         var thread = _thread;
         _thread = null;
         if (thread is not null && thread != Thread.CurrentThread) { try { thread.Join(300); } catch { } }
+        _paceClock.Reset();
         cancel?.Dispose();
     }
 

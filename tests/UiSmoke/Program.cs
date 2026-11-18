@@ -744,6 +744,8 @@ internal static class Program
         player.Close();
 
         var surface = new MediaElement { Volume = 0 };
+        var ended = false;
+        surface.MediaEnded += (_, _) => ended = true;
         var host = new Window { Width = 320, Height = 180, Content = surface };
         host.Show();
         host.UpdateLayout();
@@ -751,6 +753,11 @@ internal static class Program
         surface.Play();
         Pump(TimeSpan.FromMilliseconds(900));
         Check(surface.CurrentFrame is not null, "ffmpeg frames reach the Avalonia image surface");
+        Check(!ended, "a two-second cue is still playing after less than a second");
+        Pump(TimeSpan.FromMilliseconds(800));
+        Check(!ended, "a two-second cue is still playing before its duration is up");
+        Pump(TimeSpan.FromMilliseconds(700));
+        Check(ended, "a two-second cue ends after its frames have played");
         surface.Pause();
         surface.Close();
         host.Close();
