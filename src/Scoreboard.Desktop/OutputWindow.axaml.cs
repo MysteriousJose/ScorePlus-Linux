@@ -3,7 +3,6 @@ using Avalonia;
 using Avalonia.Controls;
 
 using Avalonia.Media;
-using System.Runtime.InteropServices;
 using Scoreboard.Core;
 namespace Scoreboard.Desktop;
 public partial class OutputWindow : Window
@@ -12,6 +11,8 @@ public partial class OutputWindow : Window
     readonly ScorebugCatalog _catalog;
     GameState _displayState;
     readonly ScorebugCanvasView _scorebugView;
+    readonly AnnotationBoard _annotationBoard;
+    readonly TelestratorOverlay _annotationInk;
     // Which display this window is the audience output for. Only that display's published layout
     // is ever drawn here, so two screens can be on air with completely different designs.
     readonly string _displayId;
@@ -25,7 +26,42 @@ public partial class OutputWindow : Window
         _displayId=(catalog.FindDisplay(displayId)??catalog.Displays[0]).Id;
         // The audience only ever sees the layout that was published, never the one being designed.
         _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState,playback,muteVideo:false,layoutProvider:()=>_catalog.PublishedLayoutOf(_displayId),displayId:_displayId);
-        ScorebugHost.Children.Add(_scorebugView); _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update();
+        ScorebugHost.Children.Add(_scorebugView);
+        var saved = PreferencesStore.Load();
+        _annotationBoard = AnnotationBoard.ForDisplay(_displayId, TimeSpan.FromSeconds(saved.AnnotationFadeSeconds));
+        _annotationInk = new TelestratorOverlay(_annotationBoard) { IsVisible = false };
+        ScorebugHost.Children.Add(_annotationInk);
+        _engine.Changed+=Update; _engine.Changed+=_scorebugView.Refresh; _catalog.Changed+=Publish; Update();
+    }
+
+    /// <summary>True while the operator is drawing on this output.</summary>
+    public bool AnnotationToolsOpen => _annotationBoard.IsOpen;
+
+    /// <summary>Shows the pen layer and lets the operator draw over the live graphic.</summary>
+    public void OpenAnnotationTools()
+    {
+        _annotationBoard.Open();
+        _annotationInk.IsVisible = true;
+        _annotationInk.IsHitTestVisible = true;
+        _annotationInk.InvalidateVisual();
+        _annotationInk.Focus();
+    }
+
+    /// <summary>Shows existing ink read-only, for a projector that should not draw.</summary>
+    public void ShowAudienceInk()
+    {
+        _annotationBoard.Open();
+        _annotationInk.IsVisible = true;
+        _annotationInk.IsHitTestVisible = false;
+        _annotationInk.InvalidateVisual();
+    }
+
+    /// <summary>Ends the draw session and clears the ink from every output for this display.</summary>
+    public void CloseAnnotationTools()
+    {
+        _annotationBoard.Dismiss();
+        _annotationInk.IsVisible = false;
+        _annotationInk.InvalidateVisual();
     }
 
     /// <summary>The display this window shows.</summary>
@@ -34,6 +70,8 @@ public partial class OutputWindow : Window
     /// <summary>The display's name, for the window title and the chooser.</summary>
     public string DisplayName => _catalog.FindDisplay(_displayId)?.Name ?? "Program";
     public void Publish(){_displayState=_engine.CloneState();Update();_scorebugView.Refresh();}
+    /// <summary>Opens a staged layout's hand-over video before the layout is sent to air.</summary>
+    public void PrepareTransition(ScorebugLayout layout) => _scorebugView.PrepareTransition(layout);
     /// <summary>Re-creates the on-air visuals; used when a new game replaces everything.</summary>
     public void Rebuild(){Update();_scorebugView.Rebuild();}
     public void UpdateLiveScoreClock(GameState source)
@@ -147,40 +185,21 @@ public partial class OutputWindow : Window
     /// <summary>Takes the window to the full bounds of the monitor it is on, taskbar included.</summary>
     void FillMonitor()
     {
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle == IntPtr.Zero) return;
-        var monitor = MonitorFromWindow(handle, MonitorDefaultToNearest);
-        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-        if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return;
-        // GetMonitorInfo is in physical pixels; WPF's Left/Top/Width/Height are device-independent.
-        var dpi = VisualTreeHelper.GetDpi(this);
-        Left = info.Monitor.Left / dpi.DpiScaleX;
-        Top = info.Monitor.Top / dpi.DpiScaleY;
-        Width = (info.Monitor.Right - info.Monitor.Left) / dpi.DpiScaleX;
-        Height = (info.Monitor.Bottom - info.Monitor.Top) / dpi.DpiScaleY;
-    }
-
-    const uint MonitorDefaultToNearest = 2;
-
-    [DllImport("user32.dll")]
-    static extern IntPtr MonitorFromWindow(IntPtr handle, uint flags);
-
-    [DllImport("user32.dll")]
-    static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct NativeRect
-    {
-        public int Left, Top, Right, Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct MonitorInfo
-    {
-        public int Size;
-        public NativeRect Monitor;
-        public NativeRect Work;
-        public uint Flags;
+        try
+        {
+            // The screen backend already knows the monitor geometry: xrandr under X11, the portal
+            // under Wayland. Divide its physical bounds by that monitor's scale, just as ScreenFit
+            // does for ordinary windows; no win32 handle is involved.
+            var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+            if (screen is null) return;
+            var scale = screen.Scaling > 0 ? screen.Scaling : RenderScaling;
+            if (scale <= 0) scale = 1;
+            Left = screen.Bounds.X / scale;
+            Top = screen.Bounds.Y / scale;
+            Width = screen.Bounds.Width / scale;
+            Height = screen.Bounds.Height / scale;
+        }
+        catch (Exception) { }
     }
 
     /// <summary>
@@ -195,6 +214,18 @@ public partial class OutputWindow : Window
             e.Handled = true;
             return;
         }
+        if (e.Key == Avalonia.Input.Key.T)
+        {
+            if (AnnotationToolsOpen) CloseAnnotationTools(); else OpenAnnotationTools();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Avalonia.Input.Key.Escape && AnnotationToolsOpen)
+        {
+            CloseAnnotationTools();
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Avalonia.Input.Key.Escape && _full)
         {
             ToggleFullscreen();
@@ -203,5 +234,5 @@ public partial class OutputWindow : Window
         }
         base.OnKeyDown(e);
     }
-    protected override void OnClosed(EventArgs e) { _engine.Changed-=Update; _engine.Changed-=_scorebugView.Refresh; _catalog.Changed-=Publish; _scorebugView.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { _engine.Changed-=Update; _engine.Changed-=_scorebugView.Refresh; _catalog.Changed-=Publish; _annotationBoard.EndStroke(); _scorebugView.Dispose(); base.OnClosed(e); }
 }

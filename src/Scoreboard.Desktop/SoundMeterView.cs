@@ -95,7 +95,9 @@ public sealed class SoundMeterView : Border
             var unlit = new SolidColorBrush(Color.FromRgb(0x1B, 0x24, 0x30));
             unlit.Freeze();
             for (var index = 0; index < _bars.Length; index++)
-                _bars[index].Background = index < lit ? new SolidColorBrush((Color)_bars[index].Tag) : unlit;
+                _bars[index].Background = index < lit && _bars[index].Tag is Color barColor
+                    ? new SolidColorBrush(barColor)
+                    : unlit;
         }
         _level.Text = level <= 0
             ? (SoundLevelMeter.Available ? "−∞ dB" : "no output")

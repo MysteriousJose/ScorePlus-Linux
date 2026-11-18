@@ -1,6 +1,5 @@
-// ScorePlus Linux port — dirty WPF compatibility shims, layer 4 (layout read-back, text casing,
-// win32 chrome and the inert WebView2 capture surface). Everything here is glue so the partially
-// ported WPF code compiles on Avalonia; TODO(port) marks what still needs a real implementation.
+// ScorePlus Linux port — WPF compatibility shims, layer 4 (layout read-back and text casing).
+// Everything here is glue over Avalonia's real layout controls.
 using System;
 using System.Collections.Generic;
 using Avalonia;
@@ -54,20 +53,3 @@ public static class WpfCompat4Extensions
     }
 }
 
-/// <summary>
-/// WPF's win32 window-handle helper. There is no win32 HWND here, so the handle is always zero and
-/// every caller that measures monitors through it short-circuits to the Avalonia path instead.
-/// TECH DEBT: delete once ScreenFit and OutputWindow read Avalonia's Screens API.
-/// </summary>
-public sealed class WindowInteropHelper
-{
-    public WindowInteropHelper(Window window) { }
-    public WindowInteropHelper(object owner) { }
-    public IntPtr Handle => IntPtr.Zero;
-}
-
-/// <summary>
-/// The WebView2 capture-format enum, mirrored for the inert Linux stand-in in WpfCompat3.
-/// TODO(port): replace with a real headless raster path when HtmlSurface is ported.
-/// </summary>
-public enum CoreWebView2CapturePreviewImageFormat { Png = 0, Jpeg = 1 }

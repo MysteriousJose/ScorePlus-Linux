@@ -85,12 +85,12 @@
         <Border Height="1" Background="#F4F7FB" Margin="0,9"/>
         <TextBlock Text="UPDATES" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
         <CheckBox x:Name="CheckUpdatesInput" Content="Check for a newer version when ScorePlus starts" Checked="Update_Changed" Unchecked="Update_Changed"/>
-        <TextBlock Text="Only an installed copy checks. The built-in feed reads this project's GitHub releases, prereleases included, so publishing a release is all it takes — leave the address empty for that. Paste your own manifest URL (JSON: version, url, sha256, notes) to use another host."
+        <TextBlock Text="Only an installed copy checks. The built-in feed reads this repository's GitHub releases (MysteriousJose/ScorePlus-Linux), prereleases included, so publishing a release is all it takes — leave the address empty for that. Paste your own manifest URL (JSON: version, url, sha256, notes) to use another host."
                    TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,2,6,6"/>
         <DockPanel Margin="4,0,4,0">
           <Button DockPanel.Dock="Right" Content="Check now" MinHeight="32" Padding="12,4" Margin="8,0,0,0" Click="CheckUpdates_Click"/>
           <TextBox x:Name="UpdateFeedInput" MinHeight="32" Padding="8,4" TextChanged="Update_Changed"
-                   ToolTip.Tip="Empty uses the built-in GitHub feed. Or paste https://example.com/scoreplus/win.json"/>
+                   ToolTip.Tip="Empty uses the built-in GitHub feed. Or paste https://example.com/scoreplus/linux.json"/>
         </DockPanel>
         <TextBlock x:Name="UpdateStatus" Text="Updates are checked only when the app was installed." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,8"/>
         <Border Height="1" Background="#F4F7FB" Margin="0,9"/>

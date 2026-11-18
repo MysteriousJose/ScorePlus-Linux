@@ -133,7 +133,7 @@ public partial class ControlPanelView : UserControl
     /// <summary>The steppers the tests and the host inspect.</summary>
     public string HomeScoreText => _homeScore.Text;
     public string AwayScoreText => _awayScore.Text;
-    public string PlayClockText => PlayClockValue.Text;
+    public string PlayClockText => PlayClockValue.Text ?? "";
     public Stepper HomeScore => _homeScore;
     public Stepper AwayScore => _awayScore;
     public Stepper BallOn => _ballOn;
@@ -411,10 +411,13 @@ public partial class ControlPanelView : UserControl
         RefreshSportControlValues(state);
     }
 
-    /// <summary>A compact − / value / + control: label on the left, typed-over value in the middle.</summary>
+    /// <summary>A full-size − / value / + control: label on the left, typed-over value in the middle.</summary>
     FrameworkElement BuildCounterControl(SportControl control)
     {
-        var grid = new Grid { Width = 186, Height = 34, Margin = new Thickness(0, 0, 6, 5) };
+        // No fixed width: the two-column sport grid gives each control half the card, and the
+        // label takes whatever the full-size step buttons leave. A fixed narrow cell kept these
+        // buttons tiny while the rest of the console grew with the window.
+        var grid = new Grid { Height = 40, Margin = new Thickness(0, 0, 6, 4) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (var i = 0; i < 3; i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -438,8 +441,8 @@ public partial class ControlPanelView : UserControl
         var value = new TextBox
         {
             Text = "0",
-            Width = 38,
-            Height = 30,
+            Width = 40,
+            Height = 32,
             FontSize = 15,
             FontWeight = FontWeights.Bold,
             TextAlignment = TextAlignment.Center,
@@ -485,11 +488,11 @@ public partial class ControlPanelView : UserControl
     {
         var toggle = new ToggleButton
         {
-            Height = 34,
-            MinWidth = 150,
+            Height = 38,
+            MinWidth = 0,
             Padding = new Thickness(9, 4, 9, 4),
-            Margin = new Thickness(0, 0, 6, 5),
-            FontSize = 11,
+            Margin = new Thickness(0, 0, 6, 4),
+            FontSize = 12,
             FontWeight = FontWeights.SemiBold,
             HorizontalContentAlignment = global::Avalonia.Layout.HorizontalAlignment.Center,
             Tag = $"sport.{control.Id}.toggle",
@@ -541,13 +544,15 @@ public partial class ControlPanelView : UserControl
         {
             Content = text,
             Tag = actionId,
-            Width = 30,
-            Height = 30,
+            Width = 40,
+            Height = 40,
             MinWidth = 0,
             MinHeight = 0,
             Padding = new Thickness(0),
             Margin = new Thickness(1, 0, 1, 0),
-            FontSize = 14,
+            FontSize = 18,
+            HorizontalContentAlignment = global::Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalContentAlignment = global::Avalonia.Layout.VerticalAlignment.Center,
             ToolTip = tip
         };
         button.Click += Action_Click;
@@ -630,7 +635,7 @@ public partial class ControlPanelView : UserControl
         return host;
     }
 
-    void Name_KeyDown(object sender, KeyEventArgs e)
+    void Name_KeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter) return;
         e.Handled = true;
@@ -638,7 +643,7 @@ public partial class ControlPanelView : UserControl
         Keyboard.ClearFocus();
     }
 
-    void Name_LostFocus(object sender, FocusChangedEventArgs e) => CommitNames();
+    void Name_LostFocus(object? sender, FocusChangedEventArgs e) => CommitNames();
 
     void CommitNames()
     {
@@ -710,7 +715,7 @@ public partial class ControlPanelView : UserControl
         _host.LiveScoreClock = enabled;
     }
 
-    void Action_Click(object sender, RoutedEventArgs e)
+    void Action_Click(object? sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: string actionId }) Execute(actionId);
     }
@@ -827,6 +832,7 @@ public partial class ControlPanelView : UserControl
     {
         if (_engine.State.SportId != "football") return;
         var owner = Window.GetWindow(this);
+        if (owner is null) return;
         if (_engine.State.Down == 4
             && !ConfirmWindow.Ask(owner, PreferencesStore.Load().Theme, "NEW SERIES",
                 "Fourth down: start a new series and reset distance?", "Start new series"))
@@ -880,7 +886,7 @@ public partial class ControlPanelView : UserControl
         var hints = _keybinds.Bindings;
         foreach (var button in FindTaggedButtons(this))
         {
-            var id = (string)button.Tag;
+            if (button.Tag is not string id) continue;
             var label = ControlActions.LabelFor(id);
             button.ToolTip = hints.TryGetValue(id, out var gesture) ? $"{label}  ·  {gesture}" : label;
         }

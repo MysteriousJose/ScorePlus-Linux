@@ -1,9 +1,7 @@
-// ScorePlus Linux port — dirty WPF compatibility shims.
+// ScorePlus Linux port — WPF compatibility types still used by ported code.
 //
-// TECH DEBT: these exist only so the ported code compiles while the real Avalonia/ffmpeg/pulse
-// replacements land. Media/audio/camera paths remain compatibility stubs; animation calls now use
-// a real Avalonia dispatcher clock so transitions and completion callbacks are time-based. Grep
-// "WpfCompat" to find every shim site.
+// These are thin surfaces over Avalonia, ffmpeg and PulseAudio: media playback, pictures, animation
+// clocks and image encoding are real. Grep "WpfCompat" to find every compatibility site.
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Avalonia;
@@ -30,70 +28,208 @@ public sealed class BitmapCacheOption
 
 public class BitmapSource : Avalonia.Media.IImage
 {
-    public int PixelWidth { get; init; } = 1;
-    public int PixelHeight { get; init; } = 1;
+    protected Avalonia.Media.IImage? Image { get; set; }
+    protected byte[]? Pixels { get; set; }
+    public int PixelWidth { get; set; } = 1;
+    public int PixelHeight { get; set; } = 1;
     public Avalonia.Size Size => new(PixelWidth, PixelHeight);
 
     public static BitmapSource Create(int width, int height, double dpiX, double dpiY,
         PixelFormats format, byte[]? palette, IntPtr pixels, int count, int stride)
-        => new() { PixelWidth = Math.Max(1, width), PixelHeight = Math.Max(1, height) };
+    {
+        width = Math.Max(1, width);
+        height = Math.Max(1, height);
+        var bitmap = new Avalonia.Media.Imaging.WriteableBitmap(new Avalonia.PixelSize(width, height),
+            new Avalonia.Vector(96, 96), Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Opaque);
+        var source = new byte[Math.Max(0, count)];
+        if (pixels != IntPtr.Zero && count > 0) System.Runtime.InteropServices.Marshal.Copy(pixels, source, 0, count);
+        var target = new byte[width * height * 4];
+        for (var y = 0; y < height; y++)
+        {
+            var row = y * stride;
+            var outRow = y * width * 4;
+            for (var x = 0; x < width; x++)
+            {
+                var from = row + x * (format == PixelFormats.Bgr24 ? 3 : 4);
+                var to = outRow + x * 4;
+                if (from + 2 >= source.Length) continue;
+                target[to] = source[from];
+                target[to + 1] = source[from + 1];
+                target[to + 2] = source[from + 2];
+                target[to + 3] = format == PixelFormats.Bgr24 ? (byte)255 : source.Length > from + 3 ? source[from + 3] : (byte)255;
+            }
+        }
+        using (var locked = bitmap.Lock())
+            System.Runtime.InteropServices.Marshal.Copy(target, 0, locked.Address, target.Length);
+        return new BitmapSource { PixelWidth = width, PixelHeight = height, Image = bitmap, Pixels = target };
+    }
 
-    public void CopyPixels(byte[] buffer, int stride, int offset) { } // stub: flat black
+    /// <summary>Wraps an already-decoded Avalonia image in the WPF-shaped surface.</summary>
+    public static BitmapSource Wrap(Avalonia.Media.IImage image) => new()
+    {
+        PixelWidth = Math.Max(1, (int)Math.Round(image.Size.Width)),
+        PixelHeight = Math.Max(1, (int)Math.Round(image.Size.Height)),
+        Image = image
+    };
+
+    public void CopyPixels(byte[] buffer, int stride, int offset)
+    {
+        var pixels = Pixels ?? Snapshot();
+        if (pixels is null || pixels.Length == 0) return;
+        for (var y = 0; y < PixelHeight; y++)
+        {
+            var from = y * PixelWidth * 4;
+            var to = offset + y * stride;
+            if (from >= pixels.Length || to >= buffer.Length) break;
+            var count = Math.Min(Math.Min(PixelWidth * 4, pixels.Length - from), buffer.Length - to);
+            if (count > 0) System.Buffer.BlockCopy(pixels, from, buffer, to, count);
+        }
+    }
+
+    /// <summary>BGRA bytes for encoders and blank-frame checks; decoded images are read once.</summary>
+    internal byte[]? PixelSnapshot() => Pixels ?? Snapshot();
+
+    protected byte[]? Snapshot()
+    {
+        if (Pixels is not null) return Pixels;
+        if (Image is not Avalonia.Media.Imaging.Bitmap bitmap) return null;
+        try
+        {
+            var stride = PixelWidth * 4;
+            var data = new byte[stride * PixelHeight];
+            var handle = System.Runtime.InteropServices.GCHandle.Alloc(data, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try
+            {
+                bitmap.CopyPixels(new Avalonia.PixelRect(0, 0, PixelWidth, PixelHeight),
+                    handle.AddrOfPinnedObject(), data.Length, stride);
+            }
+            finally { handle.Free(); }
+            Pixels = data;
+            return data;
+        }
+        catch { return null; }
+    }
+
     public void Freeze() { }
     public bool IsFrozen => true;
 
-    // Dirty port shim: bitmap data is intentionally not decoded or rendered yet.
     void Avalonia.Media.IImage.Draw(Avalonia.Media.DrawingContext context,
-        Avalonia.Rect sourceRect, Avalonia.Rect destRect) { }
+        Avalonia.Rect sourceRect, Avalonia.Rect destRect) => Image?.Draw(context, sourceRect, destRect);
 }
 
 public sealed class BitmapImage : BitmapSource
 {
+    Avalonia.Media.Imaging.Bitmap? _decoded;
+
+    /// <summary>The Avalonia bitmap behind the WPF-shaped loader, for image brushes and masks.</summary>
+    public Avalonia.Media.Imaging.Bitmap? Decoded => _decoded;
     public BitmapCacheOption CacheOption { get; set; } = BitmapCacheOption.OnLoad;
-    public Uri? UriSource { get; set; }
-    // Dirty: the decoded stream is dropped; frames come back as a 1x1 placeholder until the
-    // ffmpeg/imaging pass lands. TODO(port): Avalonia Bitmap over the given stream.
-    public System.IO.Stream? StreamSource { get; set; }
+    public Uri? UriSource
+    {
+        get => null;
+        set { if (value is not null) Load(value.IsFile ? value.LocalPath : value.ToString()); }
+    }
+    public System.IO.Stream? StreamSource
+    {
+        get => null;
+        set { if (value is not null) { try { _decoded = new Avalonia.Media.Imaging.Bitmap(value); PixelWidth = _decoded.PixelSize.Width; PixelHeight = _decoded.PixelSize.Height; Image = _decoded; } catch { } } }
+    }
+    void Load(string path) { try { using var stream = System.IO.File.OpenRead(path); _decoded = new Avalonia.Media.Imaging.Bitmap(stream); PixelWidth = _decoded.PixelSize.Width; PixelHeight = _decoded.PixelSize.Height; Image = _decoded; } catch { } }
     public void BeginInit() { }
     public void EndInit() { }
 }
 
+/// <summary>A real scaled still; the camera wall asks for these before encoding its JPEG tiles.</summary>
+public sealed class TransformedBitmap : BitmapSource
+{
+    public TransformedBitmap(Avalonia.Media.IImage source, Avalonia.Media.ITransform transform)
+    {
+        var scaleX = Math.Abs(transform.Value.M11);
+        var scaleY = Math.Abs(transform.Value.M22);
+        if (scaleX < 0.001) scaleX = 1;
+        if (scaleY < 0.001) scaleY = 1;
+        PixelWidth = Math.Max(1, (int)Math.Round(source.Size.Width * scaleX));
+        PixelHeight = Math.Max(1, (int)Math.Round(source.Size.Height * scaleY));
+        var target = new Avalonia.Media.Imaging.RenderTargetBitmap(
+            new Avalonia.PixelSize(PixelWidth, PixelHeight), new Avalonia.Vector(96, 96));
+        using (var context = target.CreateDrawingContext())
+            context.DrawImage(source, new Avalonia.Rect(0, 0, source.Size.Width, source.Size.Height),
+                new Avalonia.Rect(0, 0, PixelWidth, PixelHeight));
+        Image = target;
+    }
+}
+
+public sealed class BitmapFrame
+{
+    public Avalonia.Media.IImage Source { get; }
+    BitmapFrame(Avalonia.Media.IImage source) => Source = source;
+    public static BitmapFrame Create(Avalonia.Media.IImage source) => new(source);
+}
+
+/// <summary>JPEG encoding through the Skia build Avalonia already loads; Bitmap.Save writes PNG only.</summary>
+public sealed class JpegBitmapEncoder
+{
+    public int QualityLevel { get; set; } = 75;
+    public List<BitmapFrame> Frames { get; } = [];
+
+    public void Save(System.IO.Stream stream)
+    {
+        if (Frames.Count == 0 || Frames[0].Source is not BitmapSource frame) return;
+        var pixels = frame.PixelSnapshot();
+        if (pixels is null || frame.PixelWidth <= 0 || frame.PixelHeight <= 0) return;
+        var info = new SkiaSharp.SKImageInfo(frame.PixelWidth, frame.PixelHeight,
+            SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Opaque);
+        using var bitmap = new SkiaSharp.SKBitmap(info);
+        System.Runtime.InteropServices.Marshal.Copy(pixels, 0, bitmap.GetPixels(),
+            Math.Min(pixels.Length, info.BytesSize));
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, Math.Clamp(QualityLevel, 1, 100));
+        data.SaveTo(stream);
+    }
+}
+
+/// <summary>A real Avalonia render target: scorebug transitions and layout thumbnails need pixels.</summary>
 public sealed class RenderTargetBitmap : BitmapSource
 {
+    readonly Avalonia.Media.Imaging.RenderTargetBitmap _target;
+
     public RenderTargetBitmap(int width, int height, double dpiX, double dpiY, PixelFormats format)
     {
         PixelWidth = Math.Max(1, width);
         PixelHeight = Math.Max(1, height);
+        _target = new Avalonia.Media.Imaging.RenderTargetBitmap(
+            new Avalonia.PixelSize(PixelWidth, PixelHeight), new Avalonia.Vector(96, 96));
+        Image = _target;
     }
-    public void Render(object visual) { }
+
+    public void Render(object visual)
+    {
+        try { if (visual is Avalonia.Visual target) _target.Render(target); }
+        catch { }
+        Pixels = null;
+    }
 }
 
-// Cropping preserves the requested placeholder dimensions, but does not create pixel data.
+/// <summary>A real crop: the transition overlay draws this straight from the outgoing still.</summary>
 public sealed class CroppedBitmap : BitmapSource
 {
     public CroppedBitmap(Avalonia.Media.IImage source)
+        : this(source, new Int32Rect(0, 0, (int)Math.Round(source.Size.Width), (int)Math.Round(source.Size.Height)))
     {
-        PixelWidth = Math.Max(1, (int)Math.Round(source.Size.Width));
-        PixelHeight = Math.Max(1, (int)Math.Round(source.Size.Height));
     }
 
     public CroppedBitmap(Avalonia.Media.IImage source, Int32Rect sourceRect)
     {
         PixelWidth = Math.Max(1, sourceRect.Width);
         PixelHeight = Math.Max(1, sourceRect.Height);
+        var target = new Avalonia.Media.Imaging.RenderTargetBitmap(
+            new Avalonia.PixelSize(PixelWidth, PixelHeight), new Avalonia.Vector(96, 96));
+        using (var context = target.CreateDrawingContext())
+            context.DrawImage(source,
+                new Avalonia.Rect(sourceRect.X, sourceRect.Y, PixelWidth, PixelHeight),
+                new Avalonia.Rect(0, 0, PixelWidth, PixelHeight));
+        Image = target;
     }
-}
-
-public sealed class DrawingVisual
-{
-    public DrawingContext RenderOpen() => new();
-}
-
-public sealed class DrawingContext : IDisposable
-{
-    public void DrawVideo(MediaPlayer player, Avalonia.Rect rect) { } // stub: no frame source on Linux yet
-    public void DrawRectangle(Brush? fill, Pen? pen, Avalonia.Rect rect) { }
-    public void Dispose() { }
 }
 
 // ---------- media: MediaPlayer / MediaElement (real playback lands with the ffmpeg player) ----------
@@ -111,13 +247,43 @@ public struct DurationLike
     public static readonly DurationLike Automatic = default;
 }
 
-public class MediaPlayer
+/// <summary>The transport player: a real clock and real audio, no picture (surfaces draw that).</summary>
+public class MediaPlayer : IDisposable
 {
+    readonly FfmpegAudioPlayer _audio = new();
+    readonly Avalonia.Threading.DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(100) };
+    readonly System.Diagnostics.Stopwatch _clock = new();
+    bool _playing;
+    double _base;
+    double _duration;
+    string? _path;
+    bool _ended;
+
+    public MediaPlayer()
+    {
+        _timer.Tick += (_, _) => Tick();
+        _timer.Start();
+    }
+
     public bool ScrubbingEnabled { get; set; }
-    public double Volume { get; set; } = 1;
-    public TimeSpan Position { get; set; }
+    public bool IsMuted { get; set; }
+    public double Volume { get => _audioVolume; set { _audioVolume = Math.Clamp(value, 0, 1); _audio.SetVolume(_audioVolume); } }
+    double _audioVolume = 1;
+
+    public TimeSpan Position
+    {
+        get => TimeSpan.FromSeconds(_playing ? Math.Min(_duration > 0 ? _duration : double.MaxValue, _base + _clock.Elapsed.TotalSeconds) : _base);
+        set
+        {
+            _base = Math.Max(0, value.TotalSeconds);
+            _clock.Restart();
+            _ended = false;
+            if (_path is not null && _audio.IsPlaying) _audio.Seek(_base);
+        }
+    }
+
     public DurationLike NaturalDuration { get; private set; }
-    public Uri? Source { get; set; }
+    public Uri? Source { get; private set; }
 
     public event EventHandler MediaOpened = delegate { };
     public event EventHandler MediaEnded = delegate { };
@@ -125,41 +291,226 @@ public class MediaPlayer
 
     public void Open(Uri uri)
     {
+        Close();
         Source = uri;
-        Position = TimeSpan.Zero;
-        NaturalDuration = new DurationLike(TimeSpan.Zero);
-        // TODO(ffmpeg): real duration/playback arrives with the LinuxVideoPlayer pass.
+        _path = uri.IsFile ? uri.LocalPath : uri.ToString();
+        var info = MediaFiles.Probe(_path);
+        _duration = info.Duration;
+        NaturalDuration = new DurationLike(TimeSpan.FromSeconds(_duration));
+        _base = 0;
+        _clock.Restart();
+        _ended = false;
+        if (!info.HasVideo && !info.HasAudio)
+        {
+            var failure = new MediaFailedEventArgsStub { ErrorException = new InvalidOperationException("the file has no readable audio or video") };
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => MediaFailed(this, failure));
+            return;
+        }
         Avalonia.Threading.Dispatcher.UIThread.Post(() => MediaOpened(this, EventArgs.Empty));
     }
-    public void Close() { Source = null; }
-    public void Play() { }
-    public void Pause() { }
-    public void Stop() { Position = TimeSpan.Zero; }
+
+    public void Close()
+    {
+        _audio.Stop();
+        _playing = false;
+        _base = 0;
+        _duration = 0;
+        _path = null;
+        Source = null;
+        NaturalDuration = default;
+    }
+
+    public void Play()
+    {
+        if (_path is null) return;
+        if (_ended)
+        {
+            _base = 0;
+            _ended = false;
+        }
+        if (!_playing) _clock.Restart();
+        _playing = true;
+        var at = Position.TotalSeconds;
+        if (_audioVolume > 0.001) _audio.Play(_path, null, _audioVolume, at);
+    }
+
+    public void Pause()
+    {
+        _base = Position.TotalSeconds;
+        _clock.Stop();
+        _playing = false;
+        _audio.Pause();
+    }
+
+    public void Stop()
+    {
+        _base = 0;
+        _clock.Reset();
+        _playing = false;
+        _ended = false;
+        _audio.Stop();
+    }
+
+    void Tick()
+    {
+        if (!_playing || _duration <= 0) return;
+        if (Position.TotalSeconds < _duration - 0.05) return;
+        _base = _duration;
+        _playing = false;
+        _audio.Stop();
+        if (_ended) return;
+        _ended = true;
+        MediaEnded(this, EventArgs.Empty);
+    }
+
+    public void Dispose()
+    {
+        _timer.Stop();
+        Close();
+        _audio.Dispose();
+    }
 }
 
-public sealed class MediaElement : Avalonia.Controls.Control
+/// <summary>
+/// The picture inside a scorebug video box. It is a real Avalonia Image fed by an ffmpeg decoder;
+/// the public surface keeps the WPF-shaped members the ported cue/seek/loop code already speaks.
+/// </summary>
+public sealed class MediaElement : Avalonia.Controls.Image, IDisposable
 {
+    FfmpegVideoDecoder? _decoder;
+    FfmpegAudioPlayer? _audio;
+    string? _path;
+    double _duration;
+    double _position;
+    bool _playing;
+    bool _muted;
+    double _volume = 1;
+
     public MediaState LoadedBehavior { get; set; }
     public MediaState UnloadedBehavior { get; set; }
-    public Stretch Stretch { get; set; }
-    public bool IsMuted { get; set; }
-    public double Volume { get; set; } = 1;
+    public bool IsMuted
+    {
+        get => _muted;
+        set { _muted = value; ApplyAudio(); }
+    }
+    public double Volume
+    {
+        get => _volume;
+        set { _volume = Math.Clamp(value, 0, 1); _audio?.SetVolume(_volume); }
+    }
     public bool ScrubbingEnabled { get; set; }
-    public Uri? Source { get; set; }
-    public Visibility Visibility { get; set; } = Visibility.Visible;
-    public TimeSpan Position { get; set; }
-    public DurationLike NaturalDuration { get; private set; }
+    public ChromaKeyEffect? ChromaKey { get; set; }
+    public new Uri? Source
+    {
+        get => _path is null ? null : new Uri(_path);
+        set => OpenSource(value);
+    }
+    public TimeSpan Position
+    {
+        get => TimeSpan.FromSeconds(_position);
+        set => Seek(value.TotalSeconds);
+    }
+    public DurationLike NaturalDuration => new(TimeSpan.FromSeconds(_duration));
+    /// <summary>The bitmap currently drawn, exposed for the media checks and diagnostics.</summary>
+    public Avalonia.Media.IImage? CurrentFrame => base.Source;
 
     public event EventHandler MediaOpened = delegate { };
     public event EventHandler MediaEnded = delegate { };
     public event EventHandler<MediaFailedEventArgsStub> MediaFailed = delegate { };
 
-    public void Play() { }
-    public void Pause() { }
-    public void Stop() { Position = TimeSpan.Zero; }
-    public void Close() { Source = null; }
+    public MediaElement()
+    {
+        Stretch = Stretch.Uniform;
+    }
 
-    protected override Size MeasureOverride(Size availableSize) => new(0, 0);
+    void OpenSource(Uri? uri)
+    {
+        DisposePlayback();
+        if (uri is null) { base.Source = null; return; }
+        _path = uri.IsFile ? uri.LocalPath : uri.ToString();
+        var info = MediaFiles.Probe(_path);
+        _duration = info.Duration;
+        _position = 0;
+        _decoder = new FfmpegVideoDecoder();
+        _decoder.FrameReady += frame => base.Source = frame;
+        _decoder.Ended += () => { _playing = false; _audio?.Stop(); MediaEnded(this, EventArgs.Empty); };
+        _decoder.Failed += message =>
+        {
+            var failure = new MediaFailedEventArgsStub { ErrorException = new InvalidOperationException(message) };
+            MediaFailed(this, failure);
+        };
+        _decoder.Open(_path, 0, info.Fps > 0 ? info.Fps : 30, ChromaKey?.Filter);
+        _decoder.Pause();
+        MediaOpened(this, EventArgs.Empty);
+    }
+
+    void ApplyAudio()
+    {
+        if (_path is null) return;
+        if (_muted || _volume <= 0.001)
+        {
+            _audio?.Stop();
+            return;
+        }
+        _audio ??= new FfmpegAudioPlayer();
+        if (_playing) _audio.Play(_path, null, _volume, _position);
+    }
+
+    public void Play()
+    {
+        if (_path is null) return;
+        if (_decoder is null || !_decoder.IsRunning) OpenSource(new Uri(_path));
+        _decoder?.Resume();
+        _playing = true;
+        ApplyAudio();
+    }
+
+    public void Pause()
+    {
+        _position = _decoder?.Position ?? _position;
+        _decoder?.Pause();
+        _playing = false;
+        _audio?.Pause();
+    }
+
+    public void Stop()
+    {
+        _position = 0;
+        _decoder?.Stop();
+        _playing = false;
+        _audio?.Stop();
+        base.Source = null;
+    }
+
+    public void Close()
+    {
+        DisposePlayback();
+        base.Source = null;
+    }
+
+    void Seek(double seconds)
+    {
+        if (_path is null) { _position = Math.Max(0, seconds); return; }
+        _position = Math.Max(0, seconds);
+        if (_decoder is null) return;
+        _decoder.Seek(_path, _position);
+        if (!_playing) _decoder.Pause();
+        if (_audio is not null) _audio.Seek(_position);
+    }
+
+    void DisposePlayback()
+    {
+        _decoder?.Dispose();
+        _decoder = null;
+        _audio?.Dispose();
+        _audio = null;
+        _playing = false;
+        _path = null;
+        _duration = 0;
+        _position = 0;
+    }
+
+    public void Dispose() => DisposePlayback();
 }
 
 internal static class MediaShimExt
@@ -219,6 +570,8 @@ public sealed class DoubleAnimation : WpfAnimation
     public IEasingFunction? EasingFunction { get; set; }
     public DoubleAnimation(double from, double to, TimeSpan duration)
     { From = from; To = to; Duration = duration; }
+    public DoubleAnimation(double to, TimeSpan duration)
+    { From = 0; To = to; Duration = duration; }
     public DoubleAnimation(object fromValue, object toValue, TimeSpan duration)
     { From = Convert.ToDouble(fromValue); To = Convert.ToDouble(toValue); Duration = duration; }
     internal override bool TryFinal(out object value) { value = To; return true; }
@@ -427,110 +780,16 @@ public static class WpfAnimationExtensions
 /// <summary>WPF's Slider value-change args; Avalonia handlers adapt to these at the wire sites.</summary>
 public sealed class RoutedPropertyChangedEventArgs<T> : EventArgs
 {
-    public T OldValue { get; init; }
-    public T NewValue { get; init; }
+    public T OldValue { get; init; } = default!;
+    public T NewValue { get; init; } = default!;
 }
 
-// ---------- NAudio stand-ins (WASAPI does not exist on Linux; real path = pw-play/ffmpeg) ----------
-// TECH DEBT: every method below is inert. Audio routing, mic monitor, and the output meter report
-// "available" but produce no sound. TODO(port): replace with PipeWire/ffmpeg players.
+// The old NAudio stand-ins were removed: AudioRouter, MicrophoneFeed and FfmpegAudioPlayer are the
+// real PulseAudio/ffmpeg path, and nothing in the port references WASAPI types.
 
-public enum DataFlow { Render, Capture }
-public enum DeviceState { Active = 1, Uninitialized = 2, Disabled = 4, NotPresent = 8 }
-public enum Role { Console, Multimedia, Communications }
-public enum AudioClientShareMode { Shared, Exclusive }
-public enum WaveFormatEncoding { Pcm = 1, IeeeFloat = 3, Extensible = 0xFFFE }
-
-public sealed class WaveFormat
-{
-    public int BitsPerSample { get; } = 32;
-    public WaveFormatEncoding Encoding { get; } = WaveFormatEncoding.IeeeFloat;
-    public int SampleRate { get; } = 48000;
-    public int Channels { get; } = 2;
-}
-
-public sealed class WaveInEventArgs : EventArgs
-{
-    public byte[] Buffer { get; init; } = [];
-    public int BytesRecorded { get; init; }
-}
-
-public interface IWavePlayer
-{
-    void Init(object audioSource);
-    void Play();
-    void Pause();
-    void Stop();
-    void Dispose();
-}
-
-public sealed class MMDevice : IDisposable
-{
-    public string ID { get; init; } = "stub-device";
-    public string FriendlyName { get; init; } = "Stub output";
-    public void Dispose() { }
-}
-
-public sealed class MMDeviceEnumerator : IDisposable
-{
-    public List<MMDevice> EnumerateAudioEndPoints(DataFlow flow, DeviceState states) => [];
-    public MMDevice? GetDefaultAudioEndpoint(DataFlow flow, Role role) => null; // stub: no devices
-    public MMDevice? GetDevice(string id) => null;
-    public void Dispose() { }
-}
-
-public sealed class AudioFileReader : IDisposable
-{
-    public float Volume { get; set; } = 1;
-    public TimeSpan TotalTime => TimeSpan.Zero;
-    public TimeSpan CurrentTime { get; set; }
-    public AudioFileReader(string path) { }
-    public void Dispose() { }
-}
-
-public sealed class BufferedWaveProvider
-{
-    public bool DiscardOnBufferOverflow { get; set; }
-    public bool ReadFully { get; set; }
-    public BufferedWaveProvider(WaveFormat format) { }
-    public void AddSamples(byte[] buffer, int offset, int count) { }
-}
-
-public abstract class WasapiDeviceStub : IDisposable
-{
-    public WaveFormat WaveFormat { get; } = new();
-    public event EventHandler<WaveInEventArgs>? DataAvailable;
-    public void StartRecording() { }
-    public void StopRecording() { }
-    public void Dispose() { }
-    protected void RaiseData(WaveInEventArgs e) => DataAvailable?.Invoke(this, e);
-}
-
-public sealed class WasapiCapture : WasapiDeviceStub
-{
-    public WasapiCapture() { }
-    public WasapiCapture(MMDevice device) { }
-}
-
-public sealed class WasapiLoopbackCapture : WasapiDeviceStub
-{
-    public WasapiLoopbackCapture() { }
-}
-
-public sealed class WasapiOut : IWavePlayer
-{
-    public WasapiOut(AudioClientShareMode shareMode, bool useEventSync, int latency) { }
-    public WasapiOut(MMDevice device, AudioClientShareMode shareMode, bool useEventSync, int latency) { }
-    public void Init(object audioSource) { }
-    public void Play() { }
-    public void Pause() { }
-    public void Stop() { }
-    public void Dispose() { }
-}
-
-// ---------- OpenCV stand-ins (OpenCvSharp4 was dropped; real path = ffmpeg/v4l2) ----------
-// TECH DEBT: cameras never open (IsOpened false) so live feed and replay stay unavailable.
-// TODO(port): ffmpeg-based LinuxCameraFeed.
+// ---------- OpenCV-compatible capture (OpenCvSharp4 was dropped; real path = ffmpeg/v4l2) ----------
+// The ported camera and replay code keeps the OpenCV shape; the implementations below start ffmpeg
+// on a v4l2 device or a file, so capture and replay are real.
 
 public enum VideoCaptureAPIs { ANY, V4L2, DSHOW }
 public enum VideoCaptureProperties { PosFrames = 1, FrameWidth = 3, FrameHeight = 4 }
@@ -540,33 +799,204 @@ public sealed class FourCC
     public static readonly FourCC MJPG = new();
 }
 
+/// <summary>One raw BGR frame. ffmpeg writes straight into this buffer, so no codec SDK is needed.</summary>
 public sealed class Mat : IDisposable
 {
-    public int Width => 0;
-    public int Height => 0;
-    public long Step() => 0;
-    public IntPtr Data => IntPtr.Zero;
-    public bool Empty() => true;
-    public void Dispose() { }
+    byte[] _pixels = [];
+    System.Runtime.InteropServices.GCHandle _handle;
+    public int Width { get; private set; }
+    public int Height { get; private set; }
+    public long Step() => Width * 3L;
+    public IntPtr Data => _handle.IsAllocated ? _handle.AddrOfPinnedObject() : IntPtr.Zero;
+    public bool Empty() => Width <= 0 || Height <= 0 || _pixels.Length == 0;
+
+    internal void SetFrame(byte[] pixels, int width, int height)
+    {
+        if (_handle.IsAllocated) _handle.Free();
+        _pixels = pixels;
+        Width = width;
+        Height = height;
+        _handle = System.Runtime.InteropServices.GCHandle.Alloc(_pixels, System.Runtime.InteropServices.GCHandleType.Pinned);
+    }
+
+    public void Dispose()
+    {
+        if (_handle.IsAllocated) _handle.Free();
+        _pixels = [];
+        Width = Height = 0;
+    }
 }
 
+/// <summary>ffmpeg-backed camera/file capture, replacing OpenCV's VideoCapture.</summary>
 public sealed class VideoCapture : IDisposable
 {
-    public VideoCapture(string path) { }
-    public VideoCapture(int index) { }
-    public VideoCapture(int index, VideoCaptureAPIs api) { }
-    public bool IsOpened() => false; // stub: no capture backend wired yet
-    public void Set(VideoCaptureProperties property, double value) { }
-    public bool Read(Mat frame) => false;
-    public void Release() { }
-    public void Dispose() { }
+    readonly object _gate = new();
+    Process? _process;
+    System.IO.Stream? _output;
+    string? _path;
+    int _width, _height;
+    double _fps = 30, _duration;
+    long _frameCount;
+    bool _camera;
+    int _index;
+    long _readFrames;
+
+    public VideoCapture(string path)
+    {
+        _path = path;
+        var info = MediaFiles.Probe(path);
+        _width = Math.Max(2, info.Width);
+        _height = Math.Max(2, info.Height);
+        _fps = info.Fps > 1 && info.Fps < 121 ? info.Fps : 30;
+        _duration = info.Duration;
+        _frameCount = (long)Math.Round(_duration * _fps);
+        Start(0);
+    }
+
+    public VideoCapture(int index) => OpenCamera(index);
+    public VideoCapture(int index, VideoCaptureAPIs api) => OpenCamera(index);
+
+    void OpenCamera(int index)
+    {
+        _camera = true;
+        _index = Math.Max(0, index);
+        _width = 1280;
+        _height = 720;
+        _fps = 15;
+        Start(0);
+    }
+
+    void Start(double seconds)
+    {
+        lock (_gate)
+        {
+            StopProcess();
+            if (MediaProbe.Ffmpeg is null) return;
+            var args = new List<string> { "-v", "error" };
+            if (seconds > 0.05)
+            {
+                args.Add("-ss");
+                args.Add(seconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (_camera)
+            {
+                args.AddRange(["-f", "v4l2", "-framerate", "15", "-i", $"/dev/video{_index}",
+                    "-vf", "scale=1280:720", "-an", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]);
+            }
+            else
+            {
+                args.AddRange(["-i", _path!, "-an", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]);
+                _frameCount = (long)Math.Max(0, _frameCount);
+            }
+            try
+            {
+                _process = Process.Start(MediaProbe.Start(MediaProbe.Ffmpeg, args.ToArray()));
+                _output = _process?.StandardOutput.BaseStream;
+                _readFrames = (long)Math.Round(seconds * _fps);
+            }
+            catch { _process = null; _output = null; }
+        }
+    }
+
+    public bool IsOpened() => _process is { HasExited: false };
+    public double Fps => _fps;
+    public long FrameCount => _frameCount;
+
+    public void Set(VideoCaptureProperties property, double value)
+    {
+        if (property != VideoCaptureProperties.PosFrames || _camera || _path is null) return;
+        var frame = Math.Max(0, value);
+        Start(frame / Math.Max(1, _fps));
+    }
+
+    public bool Read(Mat frame)
+    {
+        lock (_gate)
+        {
+            if (_output is null || _width <= 0 || _height <= 0) return false;
+            var size = _width * _height * 3;
+            var buffer = new byte[size];
+            var read = 0;
+            try
+            {
+                while (read < size)
+                {
+                    var count = _output.Read(buffer, read, size - read);
+                    if (count <= 0) return false;
+                    read += count;
+                }
+            }
+            catch { return false; }
+            _readFrames++;
+            frame.SetFrame(buffer, _width, _height);
+            return true;
+        }
+    }
+
+    public void Release() { lock (_gate) StopProcess(); }
+
+    void StopProcess()
+    {
+        try { _output?.Dispose(); } catch { }
+        _output = null;
+        var process = _process;
+        _process = null;
+        try { if (process is { HasExited: false }) process.Kill(true); } catch { }
+        try { process?.Dispose(); } catch { }
+    }
+
+    public void Dispose() => Release();
 }
 
+/// <summary>Real MJPEG AVI recording through ffmpeg, replacing OpenCV's VideoWriter.</summary>
 public sealed class VideoWriter : IDisposable
 {
-    public VideoWriter(string path, FourCC fourCC, double fps, Avalonia.Size frameSize) { }
-    public bool IsOpened() => false;
-    public void Write(Mat frame) { }
-    public void Release() { }
-    public void Dispose() { }
+    Process? _process;
+    System.IO.Stream? _input;
+    int _width, _height;
+
+    public VideoWriter(string path, FourCC fourCC, double fps, Avalonia.Size frameSize)
+    {
+        if (MediaProbe.Ffmpeg is null) return;
+        _width = Math.Max(2, (int)Math.Round(frameSize.Width));
+        _height = Math.Max(2, (int)Math.Round(frameSize.Height));
+        try
+        {
+            var info = MediaProbe.Start(MediaProbe.Ffmpeg,
+                "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
+                "-s", $"{_width}x{_height}", "-r", fps.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+                "-i", "-", "-an", "-c:v", "mjpeg", "-q:v", "5", path);
+            info.RedirectStandardInput = true;
+            info.RedirectStandardOutput = false;
+            _process = Process.Start(info);
+            _input = _process?.StandardInput.BaseStream;
+        }
+        catch { _process = null; _input = null; }
+    }
+
+    public bool IsOpened() => _process is { HasExited: false };
+
+    public void Write(Mat frame)
+    {
+        if (_input is null || frame.Empty()) return;
+        try
+        {
+            var bytes = new byte[frame.Step() * frame.Height];
+            System.Runtime.InteropServices.Marshal.Copy(frame.Data, bytes, 0, bytes.Length);
+            _input.Write(bytes, 0, bytes.Length);
+        }
+        catch { Release(); }
+    }
+
+    public void Release()
+    {
+        try { _input?.Close(); } catch { }
+        _input = null;
+        var process = _process;
+        _process = null;
+        try { if (process is { HasExited: false }) process.WaitForExit(1000); } catch { }
+        try { process?.Dispose(); } catch { }
+    }
+
+    public void Dispose() => Release();
 }

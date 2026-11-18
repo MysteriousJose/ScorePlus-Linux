@@ -14,6 +14,16 @@ public sealed class RosterPlayer
     public int Number { get; set; }
     public string Name { get; set; } = "";
     public string Position { get; set; } = "";
+
+    /// <summary>A portrait uploaded from the roster desk, copied into the app's PlayerPhotos folder.</summary>
+    public string PhotoPath { get; set; } = "";
+
+    /// <summary>
+    /// Which squad section this player sits in — "Defence", "Bench", "U12" — so a long roster can
+    /// be folded and read in pieces. Empty means ungrouped.
+    /// </summary>
+    public string Group { get; set; } = "";
+
     public List<GameStat> Stats { get; set; } = [];
 
     /// <summary>"#12 Smith" for lists and the event log.</summary>
@@ -96,6 +106,14 @@ public sealed class Roster : INotifyPropertyChanged
                 }
         return added;
     }
+
+    /// <summary>Every group this roster uses, alphabetical; empty groups are not listed.</summary>
+    public IReadOnlyList<string> Groups() => Players
+        .Select(player => (player.Group ?? "").Trim())
+        .Where(group => group.Length > 0)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(group => group, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 
     /// <summary>Every stat name used on this roster, in the order the players carry them.</summary>
     public IReadOnlyList<string> StatNames() => Players
@@ -193,7 +211,11 @@ public static class RosterStore
             foreach (var roster in book.Rosters)
             {
                 roster.Players ??= [];
-                foreach (var player in roster.Players) player.Stats ??= [];
+                foreach (var player in roster.Players)
+                {
+                    player.Stats ??= [];
+                    player.Group ??= "";
+                }
             }
             return book;
         }
@@ -345,6 +367,7 @@ public sealed class SelectedPlayer
     public int Number { get; set; }
     public string Name { get; set; } = "";
     public string Position { get; set; } = "";
+    public string PhotoPath { get; set; } = "";
     public List<GameStat> Stats { get; set; } = [];
 
     public static SelectedPlayer From(Roster roster, RosterPlayer player) => new()
@@ -354,6 +377,7 @@ public sealed class SelectedPlayer
         Number = player.Number,
         Name = player.Name,
         Position = player.Position,
+        PhotoPath = player.PhotoPath,
         Stats = player.Stats.Select(s => s with { Id = Guid.NewGuid().ToString("N") }).ToList()
     };
 

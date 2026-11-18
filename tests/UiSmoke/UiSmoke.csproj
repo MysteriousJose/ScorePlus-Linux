@@ -13,6 +13,9 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Scoreboard.Desktop/Scoreboard.Desktop.csproj" />
+    <!-- The desktop project copies the horn assets beside the app at publish time; a project
+         reference does not propagate Content items to this test output, so mirror them here. -->
+    <Content Include="../../src/Scoreboard.Desktop/Assets/horn-*.mp3" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Avalonia.Headless" Version="11.3.22" />
   </ItemGroup>
 </Project>

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
@@ -59,8 +60,14 @@ internal static class Program
             PaintTextureChecks(temps);
             ShellChecks();
             ControlPanelChecks();
+            TickerChecks();
+            LeagueCloudChecks();
+            MacroChecks(temps);
             StudioChecks(temps);
             WindowCatalogChecks(temps);
+            MediaBackendChecks(temps);
+            PortedFeatureChecks(temps);
+            DialogChecks();
             ThemeChecks();
             IconChecks(temps);
             VideoRoutingChecks(temps);
@@ -68,6 +75,7 @@ internal static class Program
             GameWindowChecks(temps);
             LayoutChecks(temps);
             DisplayChecks(temps);
+            UpdateChannelChecks();
 
             Console.WriteLine();
             Console.WriteLine("ALL UI CHECKS PASSED");
@@ -127,6 +135,21 @@ internal static class Program
         Check(All<Button>(picker).Any(button => (button.ToolTip as string) is not null), "the colour picker offers palette swatches");
         picker.Close();
         Console.WriteLine("PASS: dialogs are the app's own themed windows");
+    }
+
+    static void DialogChecks()
+    {
+        var filters = LinuxFileDialog.Filters("ScorePlus Game (*.spg)|*.spg|All files (*.*)|*.*");
+        Check(filters.Count == 2 && filters[0].Contains("*.spg") && filters[1].EndsWith(" | *"),
+            "WPF file filters become the Linux picker's filter list");
+        Check(LinuxFileDialog.ApplyDefaultExtension("highlights", "spg", true).EndsWith("highlights.spg"),
+            "a save path gets the dialog's default extension");
+        var sources = MicrophoneFeed.ParseSources(
+            "Source #0\n\tState: RUNNING\n\tName: alsa_input.pci-0000_00\n\tDescription: Headset microphone\n\n" +
+            "Source #1\n\tState: IDLE\n\tName: alsa_output.pci-0000.analog-stereo.monitor\n\tDescription: Monitor of Speakers\n");
+        Check(sources.Count == 1 && sources[0].Name == "Headset microphone",
+            "microphone sources skip loopback monitors and keep their description");
+        Console.WriteLine("PASS: native dialogs and PulseAudio microphone routing are wired");
     }
 
     static void PaintTextureChecks(List<string> temps)
@@ -229,10 +252,11 @@ internal static class Program
         Check(published == 1, "Update Output raises the publish request");
 
         var statsHost = (WrapPanel)panel.Panel.FindName("StatsHost")!;
-        engine.AddStat("Turnovers");
+        var statsBefore = engine.State.Stats.Count;
+        var takeaways = engine.AddStat("Takeaways");
         panel.UpdateLayout();
-        Check(statsHost.Children.Count == 1, "custom stats render as console rows");
-        engine.AdjustStat(engine.State.Stats[0].Id, 3);
+        Check(statsHost.Children.Count == statsBefore + 1, "custom stats render as console rows");
+        engine.AdjustStat(takeaways.Id, 3);
         panel.UpdateLayout();
         Check(panel.Panel.HomeScoreText == engine.State.HomeScore.ToString(),
             "the console refreshes after a stat change");
@@ -333,6 +357,112 @@ internal static class Program
         step.Close();
         panel.Close();
         Console.WriteLine("PASS: control panel actions, keybinds, steppers, stats and clocks all behave");
+    }
+
+    static void TickerChecks()
+    {
+        var engine = new GameEngine();
+        engine.NewGame("basketball");
+        engine.SetLeagueGames([
+            new LeagueGame
+            {
+                GameId = "ticker-a", HomeTeam = "Eagles", AwayTeam = "Tigers",
+                HomeScore = 54, AwayScore = 51, PeriodLabel = "Q3", Clock = "4:12", Status = "live"
+            },
+            new LeagueGame
+            {
+                GameId = "ticker-b", HomeTeam = "Bears", AwayTeam = "Wolves",
+                HomeScore = 40, AwayScore = 38, PeriodLabel = "Q2", Clock = "1:03", Status = "live"
+            }
+        ]);
+        var window = new TickerWindow(engine, "Dark");
+        window.Show();
+        window.UpdateLayout();
+        var news = All<TextBox>(window).FirstOrDefault(box => box.AcceptsReturn)
+            ?? throw new Exception("FAIL: ticker rotation has no news box");
+        news.Text = "League finals tonight";
+        Click(ButtonByContent(window, "Save"));
+        Check(engine.State.TickerGamesChosen
+              && engine.State.TickerGameIds.SequenceEqual(["ticker-a", "ticker-b"])
+              && engine.State.TickerNews.SequenceEqual(["League finals tonight"]),
+            "ticker rotation keeps the chosen games and headlines");
+        window.Close();
+    }
+
+    static void LeagueCloudChecks()
+    {
+        var preferences = new UserPreferences { Theme = "Dark" };
+        var engine = new GameEngine();
+        engine.NewGame("football");
+        engine.SetTeams("Cloud Home", "Cloud Away");
+        engine.SetLeagueGames([new LeagueGame
+        {
+            GameId = "cloud-1",
+            HomeTeam = "Riverside",
+            AwayTeam = "Northside",
+            HomeScore = 21,
+            AwayScore = 14,
+            Period = 3,
+            Clock = "07:42"
+        }]);
+        var service = new LeagueCloudService(engine, preferences);
+        var catalog = new ScorebugCatalog(TempFile([], ".json"));
+        var program = new ProgramSelection(catalog);
+        var window = new LeagueCloudWindow(service, preferences, catalog, program, engine) { Width = 700, Height = 700 };
+        window.Show();
+        window.UpdateLayout();
+        var games = All<ListBox>(window).Single();
+        Check(games.Items.Count == 1, "the league cloud window lists games already received from the feed");
+        games.SelectedIndex = 0;
+        var import = ButtonByContent(window, "Import selected fields")
+            ?? throw new Exception("FAIL: the league cloud window has no import action");
+        Check(All<CheckBox>(window).Any(box => (box.Content as string) == "Home score")
+              && All<CheckBox>(window).Any(box => (box.Content as string) == "Game clock"),
+            "cloud import lets an operator choose individual score and clock fields");
+        foreach (var label in new[] { "Home score", "Game clock" })
+            (All<CheckBox>(window).First(box => (box.Content as string) == label)).IsChecked = true;
+        Click(import);
+        Check(engine.State.HomeScore == 21 && engine.State.ClockSeconds == 462,
+            "importing a cloud game writes only the ticked fields");
+        Check(ButtonByContent(window, "Add league ticker layout") is not null,
+            "the cloud window can create a league ticker layout");
+        Click(ButtonByContent(window, "Add league ticker layout"));
+        Check(catalog.Layouts.Any(layout => layout.Name == "League Ticker")
+              && catalog.Layout.Elements.Any(element => element.Ticker && element.Content == "{{LEAGUE_GAMES}}"),
+            "the created league ticker is a real layout bound to the cloud feed");
+        Check(LeagueCloudImport.TryParseClock("07:42", out var seconds) && seconds == 462,
+            "league cloud clock strings are parsed for import");
+        window.Close();
+        service.Dispose();
+    }
+
+    static void MacroChecks(List<string> temps)
+    {
+        var engine = new GameEngine();
+        engine.NewGame("football");
+        var session = new MediaSession(new UserPreferences());
+        var catalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var published = 0;
+        var dock = new MacroDock(engine, session, "Dark", null, catalog, () => published++);
+        var host = new Window { Width = 1100, Height = 760, Content = dock };
+        host.Show();
+        host.UpdateLayout();
+        Check(ButtonByContent(dock, "+ New macro") is not null, "the macro desk opens with a new-macro action");
+        var macro = new SavedMacro
+        {
+            Label = "Touchdown",
+            Actions = [new MacroAction { Kind = MacroActionKind.Score, Home = true, Amount = 6, BypassOutput = true }]
+        };
+        engine.StoreMacros([macro]);
+        dock.RefreshView(force: true);
+        host.UpdateLayout();
+        var run = All<Button>(dock).FirstOrDefault(button => button.Tag is SavedMacro saved && saved.Id == macro.Id)
+            ?? throw new Exception("FAIL: the macro board did not draw its saved card");
+        Click(run);
+        Check(engine.State.HomeScore == 6 && published == 1,
+            "a macro card runs its ordered steps and publishes a bypassed change");
+        host.Close();
+        session.Dispose();
     }
 
     static void StudioChecks(List<string> temps)
@@ -565,8 +695,8 @@ internal static class Program
         ((TextBox)profile.FindName("ScoringInput")!).Text = "2, 3, 7";
         Click((Button)profile.FindName("SaveButton")!);
         var saved = profileCatalog.Find("football")!;
-        Check(saved.Timeouts == 6 && saved.ScoringOptions.SequenceEqual([2, 3, 7]) && profileCatalog.IsOverridden("football"),
-            "editing a built-in sport profile saves the timeout count and scoring buttons");
+        Check(saved.Timeouts == 3 && saved.ScoringOptions.SequenceEqual([2, 3, 7]) && profileCatalog.IsOverridden("football"),
+            "editing a built-in sport profile clamps football timeouts and saves scoring buttons");
         profile.Close();
 
         var logEngine = new GameEngine();
@@ -586,6 +716,129 @@ internal static class Program
         Check(All<TextBox>(identity).Count() == 4, "the team details box edits name, abbreviation and both colours");
         identity.Close();
         Console.WriteLine("PASS: keybind, sport, profile, event-log and team-detail windows all load");
+    }
+
+    static void MediaBackendChecks(List<string> temps)
+    {
+        Check(MediaProbe.VideoStatus.Length > 0 && MediaProbe.AudioStatus.Length > 0,
+            "the media probe names the graphics and audio tools it found");
+        if (!MediaProbe.HasVideo) { Console.WriteLine("SKIP: ffmpeg is not installed for the video backend checks"); return; }
+
+        var clip = TempFile(temps, ".mp4");
+        using (var make = Process.Start(MediaProbe.Start(MediaProbe.Ffmpeg,
+            "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10",
+            "-t", "2", "-pix_fmt", "yuv420p", clip)))
+            make?.WaitForExit(8000);
+        Check(File.Exists(clip) && new FileInfo(clip).Length > 1000, "the test clip is generated by ffmpeg");
+
+        using var player = new MediaPlayer { Volume = 0 };
+        var opened = false;
+        player.MediaOpened += (_, _) => opened = true;
+        player.Open(new Uri(clip));
+        Pump(TimeSpan.FromMilliseconds(350));
+        Check(opened && player.NaturalDuration.HasTimeSpan && player.NaturalDuration.TimeSpan.TotalSeconds >= 1.5,
+            "the transport reads a clip's duration through ffprobe");
+        player.Play();
+        Pump(TimeSpan.FromMilliseconds(650));
+        Check(player.Position.TotalSeconds > 0.15, "the transport clock advances while a clip plays");
+        player.Close();
+
+        var surface = new MediaElement { Volume = 0 };
+        var ended = false;
+        surface.MediaEnded += (_, _) => ended = true;
+        var host = new Window { Width = 320, Height = 180, Content = surface };
+        host.Show();
+        host.UpdateLayout();
+        surface.Source = new Uri(clip);
+        surface.Play();
+        Pump(TimeSpan.FromMilliseconds(900));
+        Check(surface.CurrentFrame is not null, "ffmpeg frames reach the Avalonia image surface");
+        Check(!ended, "a two-second cue is still playing after less than a second");
+        Pump(TimeSpan.FromMilliseconds(800));
+        Check(!ended, "a two-second cue is still playing before its duration is up");
+        Pump(TimeSpan.FromMilliseconds(700));
+        Check(ended, "a two-second cue ends after its frames have played");
+        surface.Pause();
+        surface.Close();
+        host.Close();
+        Console.WriteLine("PASS: ffmpeg video, ffprobe duration and the transport clock all work");
+    }
+
+    static void PortedFeatureChecks(List<string> temps)
+    {
+        var adPath = TempFile(temps, ".json");
+        AdLogStore.UsePath(adPath);
+        AdLogStore.Count(Path.Combine(temps.Count == 0 ? "" : Path.GetTempPath(), "sponsor.mp4"), "Sponsor spot", 12);
+        Check(AdLogStore.All().Count == 1 && AdLogStore.TotalPlays == 1,
+            "the ad log records one counted impression");
+        var ad = new AdLogWindow("Dark");
+        ad.Show();
+        ad.UpdateLayout();
+        Pump(TimeSpan.FromMilliseconds(80));
+        ad.UpdateLayout();
+        Check(All<TextBlock>(ad).Any(text => (text.Text ?? "").Contains("ADVERTISEMENT LOG", StringComparison.Ordinal))
+              && All<TextBlock>(ad).Any(text => text.Text == "Sponsor spot"),
+            "the ad log lists the counted clip");
+        ad.Close();
+        AdLogStore.Reset();
+        AdLogStore.UsePath(null);
+
+        var catalogPath = TempFile(temps, ".json");
+        var catalog = new ScorebugCatalog(catalogPath);
+        var engine = new GameEngine();
+        engine.NewGame("football");
+        var service = new HardwareService(engine);
+        var hardware = new HardwareWindow(new UserPreferences(), service);
+        hardware.Show();
+        hardware.UpdateLayout();
+        Check(All<TextBlock>(hardware).Any(text => text.Text == "HARDWARE")
+              && All<ComboBox>(hardware).Count() >= 3, "the hardware window offers controller, transport and port pickers");
+        hardware.Close();
+        service.Dispose();
+
+        var automation = new AutomationWindow(catalog, engine, "Dark", null, null);
+        automation.Show();
+        automation.UpdateLayout();
+        automation.AddRule();
+        Check(automation.Rules.Count > 0, "the conditionals window can create a rule");
+        automation.Close();
+
+        var icons = new IconMakerWindow("Dark");
+        icons.Show();
+        icons.UpdateLayout();
+        Check(All<TextBlock>(icons).Any(text => (text.Text ?? "").Contains("ICON", StringComparison.OrdinalIgnoreCase)),
+            "the icon creator opens its editing surface");
+        icons.Close();
+
+        var prefs = new UserPreferences { Theme = "Dark" };
+        var session = new MediaSession(prefs);
+        var playback = session.Playback;
+        var program = new ProgramSelection(catalog);
+        var runtime = new AutomationRuntime(catalog, engine);
+        var multiview = new MultiviewWindow(session, prefs, catalog, engine, engine, program, runtime, playback);
+        multiview.Show();
+        multiview.UpdateLayout();
+        Check(All<TextBlock>(multiview).Any(text => (text.Text ?? "").Contains("MULTIVIEW", StringComparison.OrdinalIgnoreCase)),
+            "the multiview window opens with its camera wall");
+        multiview.Close();
+        var booth = new ReplayBoothController(session, engine, prefs);
+        var replay = new ReplayBoothWindow(booth, prefs);
+        replay.Show();
+        replay.UpdateLayout();
+        Check(All<Button>(replay).Any(button => (button.Content as string) == "Live edge"),
+            "the replay booth offers its live-edge transport");
+        replay.Close();
+        booth.Dispose();
+        runtime.Dispose();
+        session.Dispose();
+        program.Dispose();
+
+        Check(OperatorLock.Matches("secret", OperatorLock.Hash("secret"))
+              && !OperatorLock.Matches("wrong", OperatorLock.Hash("secret")),
+            "the operator lock hashes and verifies its password");
+        Check(File.Exists(Path.Combine(AppContext.BaseDirectory, "horn-air.mp3")),
+            "the horn assets ship beside the app");
+        Console.WriteLine("PASS: ad log, hardware, conditionals, icons, multiview, replay booth and operator lock are reachable");
     }
 
     static void ThemeChecks()
@@ -627,7 +880,7 @@ internal static class Program
         delayBox.Text = "2.5";
         // Enter is intercepted on the window's tunnel route, so it has to enter through the
         // focused window rather than being raised on the box itself.
-        delayWindow.KeyPress(Key.Enter, RawInputModifiers.None);
+        delayWindow.KeyPressQwerty(PhysicalKey.Enter, RawInputModifiers.None);
         Check(delayWindow.IsVisible, "Enter in a preference field does not close the page");
         Check(Math.Abs(delayPrefs.ValueSwitchDelay - 2.5) < 0.001, "Enter in a preference field saves the typed value");
         delayWindow.Close();
@@ -675,7 +928,13 @@ internal static class Program
         Check(stack.Orientation == global::Avalonia.Layout.Orientation.Horizontal, "timeout bars sit in a row");
         engine.Timeout(true);
         view.Update();
-        Check(All<Rectangle>(view).Count() == engine.State.HomeTimeouts, "the timeout icon follows a used timeout");
+        var timeoutBars = All<Rectangle>(view).ToList();
+        Check(engine.State.HomeTimeoutLimit > engine.State.HomeTimeouts
+              && timeoutBars.Count == engine.State.HomeTimeoutLimit,
+            "the timeout icon keeps the full allotment after a timeout");
+        Check(timeoutBars.Skip(engine.State.HomeTimeouts)
+              .All(bar => (bar.Fill as ISolidColorBrush)?.Color == Color.FromRgb(0x9A, 0xA5, 0xB2)),
+            "a used timeout turns grey");
 
         var dotItem = new ScorebugElement { Name = "Possession", Content = "{{POSSESSION}}", Kind = ScorebugElementKind.Text, Icon = ScorebugIcon.PossessionDot, Width = 200, Height = 60, FontSize = 24 };
         var dotView = new ScorebugIconView(dotItem, () => engine.State);
@@ -813,6 +1072,39 @@ internal static class Program
                 "Clear empties the media library and blanks what was on air");
             Check(!session.IsReplaying && !session.PlayReplay(), "Start replay refuses when no replay is open");
 
+            var adClip = new MediaEntry(Path.Combine("media", "smoke-bus.mp4"), "Ads");
+            var musicClip = new MediaEntry(Path.Combine("media", "smoke-bed.mp3"), "Music");
+            session.Library.Add(adClip);
+            session.Library.Add(musicClip);
+            session.SetClipTransition(adClip, "Fade");
+            session.SetClipTransitionSeconds(adClip, 1.25);
+            var tuned = session.Library.First(entry => string.Equals(entry.Path, adClip.Path, StringComparison.OrdinalIgnoreCase));
+            Check(tuned.Transition == "Fade" && Math.Abs(tuned.TransitionSeconds - 1.25) < 0.001,
+                "a clip carries its own switch animation and duration");
+            var bus = session.AddSpeaker(0, "Ads");
+            Check(bus.IsSpeaker && session.HasSpeakerBuses && Math.Abs(session.SpeakerGain(adClip) - 1) < 0.001,
+                "a speaker bus carries clips with its tag");
+            session.ToggleOnAir(bus);
+            Check(Math.Abs(session.SpeakerGain(adClip)) < 0.001,
+                "switching a speaker bus off silences its tag");
+            session.ToggleOnAir(session.Selected!);
+            Check(Math.Abs(session.SpeakerGain(adClip) - 1) < 0.001,
+                "switching a speaker bus back on restores its tag");
+            var order = session.CreatePlaylist("Smoke order");
+            session.AddToPlaylist(order, adClip);
+            session.AddToPlaylist(order, musicClip);
+            session.MovePlaylistItem(order, 0, 1);
+            Check(order.Paths.Count == 2 && string.Equals(order.Paths[0], musicClip.Path, StringComparison.OrdinalIgnoreCase),
+                "a playlist clip moves up and down its play order");
+            var cameraEntry = new MediaEntry(MediaLibrary.CameraPath(0), "Smoke cam");
+            session.Library.Add(cameraEntry);
+            session.Select(cameraEntry);
+            Check(string.Equals(session.ReplaySource?.Path, cameraEntry.Path, StringComparison.OrdinalIgnoreCase),
+                "ReplaySource follows the selected camera");
+            session.ClearOnAir();
+            Check(session.Library.Count > 0 && session.Current is null && session.Playback.NowPlaying is null,
+                "Clear off air blanks the screen but keeps the library");
+
             var mic = session.AddMicrophone(0, "Commentary");
             Check(mic.IsMicrophone && session.Library.Contains(mic) && mic.Tag == "Commentary",
                 "Add microphone files the item in the library");
@@ -855,6 +1147,49 @@ internal static class Program
         var main = new MainWindow(LaunchMode.New) { Width = 1280, Height = 860 };
         main.Show();
         main.UpdateLayout();
+        var gameNameBox = (TextBox)main.FindName("GameNameBox")!;
+        gameNameBox.Text = "Friday Night";
+        // TextChanged is raised after the text is rendered, not at the moment Text is assigned.
+        Pump(TimeSpan.FromMilliseconds(50));
+        Check(main.Engine.State.GameName == "Friday Night" && gameNameBox.Text == "Friday Night",
+            "the top bar names the current game");
+        Check(main.RemoteDisplays.Count == main.Scorebug.Displays.Count
+              && main.Scorebug.Displays.Any(display => string.Equals(display.Id, main.RemoteDisplayId, StringComparison.OrdinalIgnoreCase)),
+            "the phone remote lists every program display and starts on the previewed one");
+
+        var selectorHost = new Window { Width = 240, Height = 120 };
+        var selector = new ComboBox
+        {
+            ItemsSource = new[] { new CompatChoice("football", "Football"), new CompatChoice("basketball", "Basketball") }
+        };
+        selector.SelectedValuePath = "Id";
+        selectorHost.Content = selector;
+        selectorHost.Show();
+        selectorHost.UpdateLayout();
+        selector.SelectedValue = "basketball";
+        selectorHost.UpdateLayout();
+        Check(selector.SelectedItem is CompatChoice { Id: "basketball" },
+            "SelectedValuePath selects the item by its real property");
+        selectorHost.Close();
+
+        var displayHost = new Window { Width = 240, Height = 160 };
+        var displayList = new ListBox
+        {
+            ItemsSource = new[] { new CompatChoice("alpha", "Alpha") },
+            DisplayMemberPath = "Label"
+        };
+        displayHost.Content = displayList;
+        displayHost.Show();
+        displayHost.UpdateLayout();
+        Check(All<TextBlock>(displayList).Any(text => text.Text == "Alpha"),
+            "DisplayMemberPath renders the chosen property");
+        displayHost.Close();
+
+        var scalingProbe = new Image();
+        Scoreboard.Desktop.RenderOptions.SetBitmapScalingMode(scalingProbe, BitmapScalingMode.NearestNeighbor);
+        Check(Scoreboard.Desktop.RenderOptions.GetBitmapScalingMode(scalingProbe) == BitmapScalingMode.NearestNeighbor
+              && Avalonia.Media.RenderOptions.GetBitmapInterpolationMode(scalingProbe) == Avalonia.Media.Imaging.BitmapInterpolationMode.None,
+            "bitmap scaling mode reaches Avalonia's interpolation setting");
 
         // New Game clears both the live game and the on-air copy.
         main.Engine.SetTeams("Old Home", "Old Away");
@@ -868,12 +1203,15 @@ internal static class Program
         main.PublishOutput();
         main.StartNewGame("football");
         main.UpdateLayout();
-        Check(main.Engine.State.HomeScore == 0 && main.Engine.State.Down == 1 && main.Engine.State.Stats.Count == 0,
-            "New Game clears the previous game's state");
+        Check(main.Engine.State.HomeScore == 0 && main.Engine.State.Down == 1
+              && main.Engine.State.Stats.Select(stat => stat.Name).SequenceEqual(CommonStats.DefaultsFor("football")),
+            "New Game resets the previous game to the sport's starting stats");
         Check(main.PublishedState.HomeScore == 0 && main.PublishedState.Down == 1 && main.PublishedState.HomeTeam != "Old Home",
             "New Game leaves nothing of the previous game on air");
         Check(main.Scorebug.Layouts.Count == 1, "New Game starts again with one layout");
-        Check(((TextBox)dock.FindName("SearchBox")!).Text.Length == 0, "New Game clears the media search box");
+        Check(main.Engine.State.GameName.Length == 0 && gameNameBox.Text?.Length == 0,
+            "New Game clears the previous game name");
+        Check(string.IsNullOrEmpty(((TextBox)dock.FindName("SearchBox")!).Text), "New Game clears the media search box");
         var preview = All<ScorebugCanvasView>(main).FirstOrDefault() ?? throw new Exception("FAIL: the main window has no program preview");
         var previewText = All<TextBlock>(preview).Select(text => text.Text ?? "").ToArray();
         Check(!previewText.Any(text => text.Contains("Old Home", StringComparison.Ordinal) || text.Contains("Old Away", StringComparison.Ordinal) || text == "21"),
@@ -889,6 +1227,7 @@ internal static class Program
         saved.UpdateLayout();
         saved.Engine.SetTeams("Loaded Home", "Loaded Away");
         saved.Engine.SetTeamIdentity(false, "Loaded Away", "LAW", logo, "#FFCC3355", "#FF223344");
+        saved.Engine.SetGameName("Championship Night");
         saved.Engine.Score(true, 7);
         saved.Engine.Save(game);
         saved.Close();
@@ -899,6 +1238,9 @@ internal static class Program
         Check(reopened.PublishedState.HomeTeam == "Loaded Home" && reopened.PublishedState.HomeScore == 7
               && reopened.PublishedState.AwayTeam == "Loaded Away",
             "reopening a saved game restores its teams and score");
+        Check(reopened.Engine.State.GameName == "Championship Night"
+              && ((TextBox)reopened.FindName("GameNameBox")!).Text == "Championship Night",
+            "a saved game restores its name in the top bar");
         var reopenedPreview = All<ScorebugCanvasView>(reopened).FirstOrDefault()
             ?? throw new Exception("FAIL: the reopened game has no program preview");
         var restoredLogo = All<Image>(reopenedPreview).FirstOrDefault(image => image.Source is not null)
@@ -1085,12 +1427,80 @@ internal static class Program
         Console.WriteLine("PASS: displays, independent windows and layout links behave");
     }
 
+    /// <summary>
+    /// The updater must fetch the asset that matches how this copy was installed: handing a tarball
+    /// install the .deb would replace nothing it can use, and an AppImage must never receive the
+    /// tarball. Detection lives in AppInfo, selection here, so this pins the pairing.
+    /// </summary>
+    static void UpdateChannelChecks()
+    {
+        Check(UpdateFeed.IsAssetFor(InstallKind.Tarball, "ScorePlusLinuxSetup.tar.gz")
+              && !UpdateFeed.IsAssetFor(InstallKind.Tarball, "scoreplus_1.5.0_amd64.deb"),
+            "a tarball install looks for the stable tarball asset only");
+        Check(UpdateFeed.IsAssetFor(InstallKind.AppImage, "ScorePlus-a1.5L-x86_64.AppImage")
+              && !UpdateFeed.IsAssetFor(InstallKind.AppImage, "ScorePlusLinuxSetup.tar.gz"),
+            "an AppImage install looks for its own AppImage asset only");
+        Check(UpdateFeed.IsAssetFor(InstallKind.SystemPackage, "scoreplus_1.5.0_amd64.deb")
+              && !UpdateFeed.IsAssetFor(InstallKind.SystemPackage, "ScorePlus-a1.5L-x86_64.AppImage"),
+            "a .deb install looks for the package asset only");
+
+        const string feed = """
+        [
+          {
+            "tag_name": "a1.5L",
+            "name": "ScorePlus a1.5L (Linux)",
+            "draft": false,
+            "assets": [
+              { "name": "ScorePlus-a1.5L-x86_64.AppImage", "browser_download_url": "https://example.test/appimage", "state": "uploaded" },
+              { "name": "scoreplus_1.5.0_amd64.deb", "browser_download_url": "https://example.test/deb", "state": "uploaded" },
+              { "name": "ScorePlusLinuxSetup.tar.gz", "browser_download_url": "https://example.test/tarball", "state": "uploaded" }
+            ]
+          }
+        ]
+        """;
+
+        Check(UpdateChecker.ParseReleases(feed, InstallKind.Tarball)?.Url == "https://example.test/tarball"
+              && UpdateChecker.ParseReleases(feed, InstallKind.AppImage)?.Url == "https://example.test/appimage"
+              && UpdateChecker.ParseReleases(feed, InstallKind.SystemPackage)?.Url == "https://example.test/deb",
+            "each install kind resolves the release asset built for it");
+        Check(UpdateChecker.ParseReleases(feed, InstallKind.Folder) is null
+              && UpdateChecker.VersionFromTag("a1.4L") == "1.4.0",
+            "a folder build is offered nothing, and a release label maps to a comparable version");
+
+        // Chroma key is applied in the decoder, so the ffmpeg filter carries the layout's colour
+        // and tolerance rather than sitting in a Windows-only shader.
+        var chroma = new ChromaKeyEffect { KeyColor = Color.FromRgb(0, 177, 64), Tolerance = 0.25 };
+        Check(chroma.Filter == "colorkey=0x00B140:0.25:0.1",
+            "a chroma key becomes an ffmpeg colorkey filter");
+
+        // The telestrator owns one ink board per display and clears it on dismiss.
+        var sharedA = AnnotationBoard.ForDisplay("smoke-display", TimeSpan.FromSeconds(2));
+        var sharedB = AnnotationBoard.ForDisplay("smoke-display");
+        Check(ReferenceEquals(sharedA, sharedB) && sharedA.Hold == TimeSpan.FromSeconds(2),
+            "every window on a display shares one telestrator board");
+        var board = new AnnotationBoard(TimeSpan.FromSeconds(1));
+        board.Open();
+        board.BeginStroke();
+        var stroke = new AnnotationStroke { Width = 3 };
+        stroke.Points.Add(new Point(1, 1));
+        stroke.Points.Add(new Point(5, 5));
+        board.Strokes.Add(stroke);
+        board.EndStroke();
+        Check(board.IsOpen && !board.IsDrawing && board.Strokes.Count == 1,
+            "the telestrator records a finished stroke");
+        board.Dismiss();
+        Check(!board.IsOpen && board.Strokes.Count == 0,
+            "dismissing the telestrator clears the display's ink");
+    }
+
     // ---------------------------------------------------------------- helpers
 
     sealed class HeadlessApp : App
     {
         public override void OnFrameworkInitializationCompleted() { }
     }
+
+    sealed record CompatChoice(string Id, string Label);
 
     static void Check(bool condition, string message)
     {

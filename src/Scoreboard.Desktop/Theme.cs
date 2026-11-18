@@ -39,6 +39,66 @@ public sealed class UserPreferences
     public bool CheckForUpdates { get; set; } = true;
 
     /// <summary>
+    /// Next down prints the new down alone ("2nd Down") until the distance is set, instead of
+    /// showing the previous series' distance beside it.
+    /// </summary>
+    public bool NextDownPreview { get; set; }
+
+    /// <summary>New series goes straight to air instead of waiting for Update Output.</summary>
+    public bool NewSeriesLive { get; set; }
+
+    /// <summary>The pen width the operator last used, kept across shows.</summary>
+    public double AnnotationWidth { get; set; } = 3;
+
+    /// <summary>Seconds before annotation ink fades; zero keeps it until Clear.</summary>
+    public double AnnotationFadeSeconds { get; set; } = 1;
+
+    /// <summary>
+    /// Minutes between recovery points. Five is the default, 0 turns autosave off, and every
+    /// positive value is a whole number of minutes.
+    /// </summary>
+    public int AutosaveMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// Off by default: when the final period or full time expires, add the result to each team's
+    /// win-loss-tie record. A side with no record is left alone.
+    /// </summary>
+    public bool AutoUpdateRecord { get; set; }
+
+    /// <summary>
+    /// "PlayUntilWinner" holds a tie at End of Reg. and keeps overtime available indefinitely;
+    /// "AllowTie" permits the game to finish level once <see cref="TieAllowPeriod"/> is reached.
+    /// </summary>
+    public string TieRule { get; set; } = "PlayUntilWinner";
+
+    /// <summary>The last period that may end level and still be recorded as a tie.</summary>
+    public int TieAllowPeriod { get; set; } = 4;
+
+    /// <summary>Off by default: after the scheduled periods, FINAL reads FINAL/OT.</summary>
+    public bool ShowOvertimeFinal { get; set; }
+
+    /// <summary>The built-in horn selected on the console, or Custom. The buzzer ships as the default.</summary>
+    public string HornSound { get; set; } = nameof(Desktop.HornSound.Buzzer);
+
+    /// <summary>Audio file used when <see cref="HornSound"/> is Custom.</summary>
+    public string HornCustomPath { get; set; } = "";
+
+    /// <summary>Off by default: sound the selected horn when the game clock expires.</summary>
+    public bool HornOnGameClockZero { get; set; }
+
+    /// <summary>Off by default: sound the selected horn when the play clock expires.</summary>
+    public bool HornOnPlayClockZero { get; set; }
+
+    /// <summary>Off until a league cloud endpoint is configured.</summary>
+    public bool LeagueCloudEnabled { get; set; }
+    public string LeagueCloudUploadUrl { get; set; } = "";
+    public string LeagueCloudFeedUrl { get; set; } = "";
+    public string LeagueCloudLeagueId { get; set; } = "default";
+    /// <summary>Optional bearer token. It stays on this computer with the other preferences.</summary>
+    public string LeagueCloudApiKey { get; set; } = "";
+    public int LeagueCloudPollSeconds { get; set; } = 15;
+
+    /// <summary>
     /// How long the graphic holds an old value before printing the new one, in seconds. 0 is
     /// instant. This is a show-wide timing choice, not a property of one element.
     /// </summary>
@@ -58,6 +118,21 @@ public sealed class UserPreferences
     /// sends it to air, which is faster but updates output without a second confirmation.
     /// </summary>
     public bool QuickLayoutsPublish { get; set; }
+
+    /// <summary>Twelve quick-media buttons, each pointing at one library item.</summary>
+    public List<QuickMediaBinding> QuickMedia { get; set; } = [];
+
+    /// <summary>The operator's saved multiview wall, one entry per tile.</summary>
+    public List<MultiviewTileBinding> MultiviewTiles { get; set; } = [];
+    public bool MultiviewShowLabels { get; set; } = true;
+    public bool ReplayBoothShowLabels { get; set; } = true;
+    public int ReplaySeconds { get; set; } = 120;
+
+    /// <summary>A salted hash of the operator lock password; empty means the desk is unlocked.</summary>
+    public string OperatorLockPasswordHash { get; set; } = "";
+
+    /// <summary>The controller connection, remembered beside the other operator settings.</summary>
+    public HardwareSettings Hardware { get; set; } = new();
 
     public List<MediaEntry> Media { get; set; } = [];
 
@@ -82,15 +157,68 @@ public sealed class UserPreferences
         RemotePassword = RemotePassword,
         UpdateFeedUrl = UpdateFeedUrl,
         CheckForUpdates = CheckForUpdates,
+        NextDownPreview = NextDownPreview,
+        NewSeriesLive = NewSeriesLive,
+        AnnotationWidth = AnnotationWidth,
+        AnnotationFadeSeconds = AnnotationFadeSeconds,
+        AutosaveMinutes = AutosaveMinutes,
+        AutoUpdateRecord = AutoUpdateRecord,
+        TieRule = TieRule,
+        TieAllowPeriod = TieAllowPeriod,
+        ShowOvertimeFinal = ShowOvertimeFinal,
+        HornSound = HornSound,
+        HornCustomPath = HornCustomPath,
+        HornOnGameClockZero = HornOnGameClockZero,
+        HornOnPlayClockZero = HornOnPlayClockZero,
+        LeagueCloudEnabled = LeagueCloudEnabled,
+        LeagueCloudUploadUrl = LeagueCloudUploadUrl,
+        LeagueCloudFeedUrl = LeagueCloudFeedUrl,
+        LeagueCloudLeagueId = LeagueCloudLeagueId,
+        LeagueCloudApiKey = LeagueCloudApiKey,
+        LeagueCloudPollSeconds = LeagueCloudPollSeconds,
         ValueSwitchDelay = ValueSwitchDelay,
         LastSport = LastSport,
         QuickLayouts = QuickLayouts.Select(binding => new QuickLayoutBinding { Label = binding.Label, DisplayId = binding.DisplayId, LayoutId = binding.LayoutId }).ToList(),
         QuickLayoutsPublish = QuickLayoutsPublish,
+        QuickMedia = QuickMedia.Select(binding => new QuickMediaBinding { Label = binding.Label, Path = binding.Path }).ToList(),
+        MultiviewTiles = MultiviewTiles.Select(tile => new MultiviewTileBinding { Source = tile.Source, DisplayId = tile.DisplayId, CameraIndex = tile.CameraIndex, LayoutId = tile.LayoutId }).ToList(),
+        MultiviewShowLabels = MultiviewShowLabels,
+        ReplayBoothShowLabels = ReplayBoothShowLabels,
+        ReplaySeconds = ReplaySeconds,
+        OperatorLockPasswordHash = OperatorLockPasswordHash,
+        Hardware = Hardware.Clone(),
         Media = [.. Media],
         Playlists = Playlists.Select(p => new MediaPlaylist { Name = p.Name, Loop = p.Loop, Paths = p.Paths.ToList() }).ToList(),
         MediaFolders = [.. MediaFolders],
         MediaFiles = [.. MediaFiles]
     };
+}
+
+/// <summary>One quick-media button: a short name and the library item it cues.</summary>
+public sealed class QuickMediaBinding
+{
+    public string Label { get; set; } = "";
+    public string Path { get; set; } = "";
+    public bool IsSet => !string.IsNullOrWhiteSpace(Path);
+}
+
+/// <summary>Trims an operator's quick-button label without stripping meaningful punctuation.</summary>
+public static class QuickLabels
+{
+    public static string Clean(string? value) => (value ?? "").Trim();
+}
+
+/// <summary>Hashes and checks the operator lock without ever storing the password in clear text.</summary>
+public static class OperatorLock
+{
+    public static string Hash(string? password) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(password ?? string.Empty)));
+
+    public static bool Matches(string? password, string? hash) =>
+        !string.IsNullOrWhiteSpace(hash)
+        && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.ASCII.GetBytes(Hash(password)),
+            System.Text.Encoding.ASCII.GetBytes(hash.Trim()));
 }
 
 /// <summary>One of the four quick-layout buttons: a name the operator sees, and where it points.</summary>
@@ -119,6 +247,7 @@ public static class PreferencesStore
             if (!File.Exists(FilePath)) return new();
             var loaded = JsonSerializer.Deserialize<UserPreferences>(File.ReadAllText(FilePath)) ?? new();
             Migrate(loaded);
+            ApplyPreferences(loaded);
             return loaded;
         }
         catch { return new(); }
@@ -131,6 +260,12 @@ public static class PreferencesStore
         preferences.MediaFolders ??= [];
         preferences.MediaFiles ??= [];
         preferences.QuickLayouts ??= [];
+        preferences.QuickMedia ??= [];
+        preferences.MultiviewTiles ??= [];
+        preferences.Hardware ??= new HardwareSettings();
+        if (string.IsNullOrWhiteSpace(preferences.HornSound)) preferences.HornSound = nameof(Desktop.HornSound.Buzzer);
+        preferences.ReplaySeconds = Math.Clamp(preferences.ReplaySeconds, 10, 900);
+        preferences.OperatorLockPasswordHash = (preferences.OperatorLockPasswordHash ?? "").Trim();
         if (preferences.Media.Count == 0 && preferences.MediaFiles.Count > 0)
             preferences.Media = preferences.MediaFiles.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => new MediaEntry(p)).ToList();
         preferences.MediaFiles.Clear();
@@ -145,11 +280,50 @@ public static class PreferencesStore
             preferences.Schema = 2;
             try { Save(preferences); } catch { }
         }
+        // a1.6 ships the buzzer as the console's horn. A file still carrying the old air-horn
+        // default takes the new one once; a deliberate Siren or Custom choice is left alone.
+        if (preferences.Schema < 3)
+        {
+            if (string.Equals(preferences.HornSound, nameof(Desktop.HornSound.AirHorn), StringComparison.OrdinalIgnoreCase))
+                preferences.HornSound = nameof(Desktop.HornSound.Buzzer);
+            preferences.Schema = 3;
+            try { Save(preferences); } catch { }
+        }
+        // A negative interval is not a setting; the shipped default is five minutes. Zero is a real
+        // choice and means never autosave.
+        if (preferences.AutosaveMinutes < 0) preferences.AutosaveMinutes = 5;
+        // Annotation settings are real choices, but a malformed or out-of-range file must not make
+        // the toolbar unusable. Zero fade is Permanent and is preserved.
+        if (!double.IsFinite(preferences.AnnotationWidth)) preferences.AnnotationWidth = 3;
+        preferences.AnnotationWidth = Math.Clamp(preferences.AnnotationWidth, 1, 24);
+        if (!double.IsFinite(preferences.AnnotationFadeSeconds) || preferences.AnnotationFadeSeconds < 0)
+            preferences.AnnotationFadeSeconds = 1;
+        preferences.AnnotationFadeSeconds = Math.Clamp(preferences.AnnotationFadeSeconds, 0, 10);
+        if (preferences.AnnotationFadeSeconds is > 0 and < 0.5) preferences.AnnotationFadeSeconds = 0.5;
         if (preferences.Theme is not ("System" or "Dark" or "Light")) preferences.Theme = "System";
+        if (preferences.TieRule is not ("PlayUntilWinner" or "AllowTie")) preferences.TieRule = "PlayUntilWinner";
+        preferences.TieAllowPeriod = Math.Clamp(preferences.TieAllowPeriod, 1, 99);
+        preferences.LeagueCloudUploadUrl = (preferences.LeagueCloudUploadUrl ?? "").Trim();
+        preferences.LeagueCloudFeedUrl = (preferences.LeagueCloudFeedUrl ?? "").Trim();
+        preferences.LeagueCloudLeagueId = (preferences.LeagueCloudLeagueId ?? "").Trim();
+        if (preferences.LeagueCloudLeagueId.Length == 0) preferences.LeagueCloudLeagueId = "default";
+        preferences.LeagueCloudApiKey = (preferences.LeagueCloudApiKey ?? "").Trim();
+        preferences.LeagueCloudPollSeconds = Math.Clamp(preferences.LeagueCloudPollSeconds, 5, 300);
+    }
+
+    /// <summary>Pushes the saved non-visual preferences into the engine.</summary>
+    public static void ApplyPreferences(UserPreferences preferences)
+    {
+        GameEngine.AutoUpdateRecordEnabled = preferences.AutoUpdateRecord;
+        GameEngine.TieAllowedAtPeriod = string.Equals(preferences.TieRule, "AllowTie", StringComparison.OrdinalIgnoreCase)
+            ? Math.Clamp(preferences.TieAllowPeriod, 1, 99)
+            : 0;
+        GameEngine.OvertimeFinalLabelEnabled = preferences.ShowOvertimeFinal;
     }
 
     public static void Save(UserPreferences preferences)
     {
+        ApplyPreferences(preferences);
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
         var temp = FilePath + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(preferences, new JsonSerializerOptions { WriteIndented = true }));
@@ -198,7 +372,15 @@ public static class ThemeManager
         return "Dark";
     }
 
-    public static void Apply(Window window, string theme)
+    public static void ApplyTo(Avalonia.Controls.Window window, string theme) => Apply(window, theme);
+
+    /// <summary>Applies the theme to a detached editor hosted in a tab; bare controls have no window resources.</summary>
+    public static void ApplyTo(Avalonia.Controls.Control control, string theme)
+    {
+        if (control is Avalonia.Controls.Window window) Apply(window, theme);
+    }
+
+    public static void Apply(Avalonia.Controls.Window window, string theme)
     {
         var light = Resolve(theme) == "Light";
         var background = light ? "#FFF3F5F8" : "#FF000000";
@@ -237,7 +419,7 @@ public static class ThemeManager
             ApplyAccent(window, accent, secondary);
         }
         window.Loaded += (_, _) => ApplyTheme();
-        if (window.IsLoaded) window.Dispatcher.BeginInvoke(ApplyTheme);
+        if (window.IsLoaded) Avalonia.Threading.Dispatcher.UIThread.Post(ApplyTheme);
     }
 
     static Brush Brush(string color) => new SolidColorBrush(Color.Parse(color));

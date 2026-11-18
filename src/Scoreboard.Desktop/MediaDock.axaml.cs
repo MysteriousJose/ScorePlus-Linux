@@ -5,6 +5,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
+using System.Globalization;
 using Microsoft.Win32;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
@@ -25,6 +27,7 @@ public partial class MediaDock : UserControl
     enum MediaView { Library, Playlist }
 
     const string ClipFormat = "ScorePlus.MediaPath";
+    static readonly DataFormat<string> ClipDataFormat = DataFormat.CreateStringApplicationFormat(ClipFormat);
 
     static readonly Brush BorderSelected = Frozen("#38D7A3");
     static readonly Brush BorderOnAir = Frozen("#FFD166");
@@ -96,6 +99,7 @@ public partial class MediaDock : UserControl
         ThemeManager.SetSkipTheme(this, true);
         TagBox.ItemsSource = MediaLibrary.SuggestedTags;
         TagBox.Text = MediaLibrary.DefaultTag;
+        TransitionBox.ItemsSource = MediaLibrary.TransitionOptions;
         ApplyTheme("Dark");
         // A UserControl's children only reach the visual tree when its template is applied, so the
         // size swap has to run once more after load or the first pass finds nothing to restyle.
@@ -205,6 +209,7 @@ public partial class MediaDock : UserControl
                 PlaylistLoopBox.IsChecked = playlist.Loop;
                 PlaylistLoopBox.IsEnabled = true;
                 PlaylistAddButton.IsEnabled = _session.Selected is not null;
+                PlaylistUpButton.IsEnabled = PlaylistDownButton.IsEnabled = entries.Count > 1 && _session.Selected is not null;
                 PlaylistRunButton.IsEnabled = entries.Count > 0;
                 PlaylistStopButton.IsEnabled = _session.ActivePlaylist is not null;
                 RefreshTiles(entries, playlist);
@@ -236,6 +241,24 @@ public partial class MediaDock : UserControl
             }
             ClipLoopBox.IsChecked = selected?.Loop == true;
             ClipLoopBox.IsEnabled = selected is not null;
+            TransitionBox.IsEnabled = selected?.IsVideo == true;
+            TransitionBox.SelectedItem = MediaLibrary.NormalizeTransition(selected?.Transition);
+            TransitionSecondsBox.IsEnabled = selected?.IsVideo == true;
+            if (!TransitionSecondsBox.IsKeyboardFocusWithin)
+                TransitionSecondsBox.Text = (selected?.TransitionSeconds ?? MediaLibrary.DefaultTransitionSeconds)
+                    .ToString("0.##", CultureInfo.CurrentCulture);
+
+            // Speaker buses: the selected one, or how many the show has when none is picked.
+            var speakerItem = selected?.IsSpeaker == true ? selected
+                : _session.Current?.IsSpeaker == true ? _session.Current : null;
+            SpeakerRouteButton.IsEnabled = speakerItem is not null;
+            SpeakerPowerButton.IsEnabled = speakerItem is not null;
+            SpeakerPowerButton.Content = speakerItem is { SpeakerMuted: false } ? "Bus off" : "Bus on";
+            SpeakerStatus.Text = speakerItem is not null
+                ? $"{speakerItem.Label} · {(speakerItem.SpeakerMuted ? "OFF" : "ON")} · {speakerItem.VolumePercent}%"
+                : _session.HasSpeakerBuses
+                    ? $"{_session.Library.Count(entry => entry.IsSpeaker)} buses · tag routes clips to them"
+                    : "none added yet";
 
             // Audio: the selected clip's own level and speaker.
             var level = Math.Round((selected?.Volume ?? 1) * 100);
@@ -598,7 +621,8 @@ public partial class MediaDock : UserControl
             e.Handled = true;
             if (_session is null) return;
             // Files dropped from Explorer join the library in this folder; library clips move here.
-            if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            var files = DroppedFiles(e);
+            if (files.Length > 0)
             {
                 _session.Import(files, MediaLibrary.NormalizeTag(TagBox.Text), folder);
                 Refresh();
@@ -709,7 +733,8 @@ public partial class MediaDock : UserControl
             e.Handled = true;
             if (_session is null) return;
             // Files from Explorer are imported, then appended to the playlist in one step.
-            if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            var files = DroppedFiles(e);
+            if (files.Length > 0)
             {
                 _session.Import(files, MediaLibrary.NormalizeTag(TagBox.Text));
                 foreach (var path in files)
@@ -728,10 +753,10 @@ public partial class MediaDock : UserControl
         return tile;
     }
 
-    void HighlightDrop(object sender, DragEventArgs e)
+    void HighlightDrop(object? sender, DragEventArgs e)
     {
-        var files = e.Data.GetDataPresent(DataFormats.FileDrop);
-        if (!files && !e.Data.GetDataPresent(ClipFormat)) return;
+        var files = e.DataTransfer.Contains(DataFormat.File);
+        if (!files && !e.DataTransfer.Contains(ClipDataFormat)) return;
         e.Effects = files ? DragDropEffects.Copy : DragDropEffects.Move;
         e.Handled = true;
         if (sender is Border border) border.BorderBrush = BorderSelected;
@@ -739,9 +764,14 @@ public partial class MediaDock : UserControl
 
     MediaEntry? DraggedEntry(DragEventArgs e)
     {
-        if (_session is null || e.Data.GetData(ClipFormat) is not string path) return null;
+        if (_session is null || e.DataTransfer.TryGetValue(ClipDataFormat) is not string path) return null;
         return _session.Library.FirstOrDefault(entry => string.Equals(entry.Path, path, StringComparison.OrdinalIgnoreCase));
     }
+
+    static string[] DroppedFiles(DragEventArgs e) =>
+        e.DataTransfer.TryGetFiles() is { Length: > 0 } items
+            ? items.Select(item => item.TryGetLocalPath()).OfType<string>().ToArray()
+            : [];
 
     static FrameworkElement FolderGlyph(Brush fill, double width, double height) => new Avalonia.Controls.Shapes.Path
     {
@@ -902,12 +932,11 @@ public partial class MediaDock : UserControl
             if (Math.Abs(position.X - _dragOrigin.X) < 9 && Math.Abs(position.Y - _dragOrigin.Y) < 9) return;
             var path = _dragEntry.Path;
             _dragEntry = null;
-            // WPF's DataObject(format, value): Avalonia's data object is set-then-drag, and the drag
-            // starts from the pointer event that began it. TECH DEBT: DataObject is obsolete in
-            // Avalonia 11.3 (DataTransfer replaces it); the custom in-process format stays the same.
-            var data = new DataObject();
-            data.Set(ClipFormat, path);
-            _ = DragDrop.DoDragDrop(e, data, DragDropEffects.Move);
+            // Avalonia 11.3 data transfers are set-then-drag; the drag starts from the pointer event
+            // that began it. The custom application format keeps clip drags in-process.
+            var data = new DataTransfer();
+            data.Add(DataTransferItem.Create(ClipDataFormat, path));
+            _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
         });
         return tile;
     }
@@ -1131,6 +1160,22 @@ public partial class MediaDock : UserControl
         Refresh();
     }
 
+    void PlaylistUp_Click(object sender, RoutedEventArgs e) => MovePlaylistSelection(-1);
+
+    void PlaylistDown_Click(object sender, RoutedEventArgs e) => MovePlaylistSelection(1);
+
+    void MovePlaylistSelection(int delta)
+    {
+        if (_session is null || OpenPlaylist() is not { } playlist || _session.Selected is not { } selected) return;
+        var entries = _session.PlaylistEntries(playlist);
+        var from = entries.ToList().FindIndex(entry => string.Equals(entry.Path, selected.Path, StringComparison.OrdinalIgnoreCase));
+        if (from < 0) return;
+        var to = Math.Clamp(from + delta, 0, entries.Count - 1);
+        if (to == from) return;
+        _session.MovePlaylistItem(playlist, from, to);
+        Refresh();
+    }
+
     void PlaylistRun_Click(object sender, RoutedEventArgs e)
     {
         if (_session is null || OpenPlaylist() is not { } playlist) return;
@@ -1154,6 +1199,26 @@ public partial class MediaDock : UserControl
         if (_syncing || _session is null || OpenPlaylist() is not { } playlist) return;
         _session.SetPlaylistLoop(playlist, PlaylistLoopBox.IsChecked == true);
         Refresh();
+    }
+
+    void Transition_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || _session?.Selected is not { } selected) return;
+        _session.SetClipTransition(selected, TransitionBox.SelectedItem as string);
+    }
+
+    void TransitionSeconds_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_syncing || _session?.Selected is not { } selected) return;
+        if (!double.TryParse(TransitionSecondsBox.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out var seconds)
+            && !double.TryParse(TransitionSecondsBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds)) return;
+        _session.SetClipTransitionSeconds(selected, seconds);
+    }
+
+    void TransitionSeconds_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_session?.Selected is { } selected)
+            TransitionSecondsBox.Text = selected.TransitionSeconds.ToString("0.##", CultureInfo.CurrentCulture);
     }
 
     void PlayPause_Click(object sender, RoutedEventArgs e) => _session?.TogglePlayPause();
@@ -1257,6 +1322,33 @@ public partial class MediaDock : UserControl
         Refresh();
     }
 
+    void Speaker_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null) return;
+        var index = 0;
+        while (_session.Library.Any(entry => entry.IsSpeaker && entry.SpeakerSlot == index)) index++;
+        _session.AddSpeaker(index, MediaLibrary.NormalizeTag(TagBox.Text));
+        Refresh();
+    }
+
+    void SpeakerRoute_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null || SpeakerItem() is not { } speaker) return;
+        var owner = Window.GetWindow(this);
+        if (owner is not null) SpeakerRoutingWindow.Ask(owner, _session, speaker, _theme);
+        Refresh();
+    }
+
+    void SpeakerPower_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null || SpeakerItem() is not { } speaker) return;
+        _session.ToggleOnAir(speaker);
+        Refresh();
+    }
+
+    MediaEntry? SpeakerItem() => _session?.Selected?.IsSpeaker == true ? _session.Selected
+        : _session?.Current?.IsSpeaker == true ? _session.Current : null;
+
     void Camera_Click(object sender, RoutedEventArgs e)
     {
         if (_session is null) return;
@@ -1337,13 +1429,13 @@ public partial class MediaDock : UserControl
 
     void Stop_Click(object sender, RoutedEventArgs e) => _session?.Stop();
 
-    void Scrub_Start(object sender, PointerEventArgs e)
+    void Scrub_Start(object? sender, PointerEventArgs e)
     {
         _scrubbing = true;
         _session?.BeginScrub();
     }
 
-    void Scrub_End(object sender, PointerEventArgs e)
+    void Scrub_End(object? sender, PointerEventArgs e)
     {
         if (_session is null) { _scrubbing = false; return; }
         if (_session.IsReplaying) _session.SeekReplay(Math.Max(0, ScrubBar.Maximum - ScrubBar.Value));

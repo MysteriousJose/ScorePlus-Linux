@@ -41,9 +41,13 @@ public partial class SettingsWindow : Window
         UpdateFeedInput.Text = _draft.UpdateFeedUrl;
         _loading = false;
         UpdateRemoteStatus();
-        UpdateStatus.Text = AppInfo.IsInstalled
-            ? $"Installed build {AppInfo.Version}. Updates are checked at launch when a feed is set."
-            : "This copy runs from a folder, so it does not check for updates. Install ScorePlus to enable updates.";
+        UpdateStatus.Text = AppInfo.Kind switch
+        {
+            InstallKind.Tarball => $"Installed build {AppInfo.Release} as a per-user tarball. Updates are checked at launch and installed with install.sh.",
+            InstallKind.AppImage => $"Running as an AppImage ({AppInfo.Release}). Updates replace the AppImage file in place.",
+            InstallKind.SystemPackage => $"Installed build {AppInfo.Release} as a .deb. Updates download the package and install it through the package manager.",
+            _ => "This copy runs from a folder, so it does not update itself. Install it from the tarball, .deb or AppImage to enable updates.",
+        };
     }
 
     // ---------- interface colours ----------
@@ -149,16 +153,16 @@ public partial class SettingsWindow : Window
 
     async void CheckUpdates_Click(object sender, RoutedEventArgs e)
     {
-        if (!AppInfo.IsInstalled)
+        if (!AppInfo.CanUpdate)
         {
-            UpdateStatus.Text = "This copy runs from a folder, so it does not update itself. Use the installer, then updates work here.";
+            UpdateStatus.Text = "This copy runs from a folder, so it does not update itself. Install it from the tarball, .deb or AppImage, then updates work here.";
             return;
         }
         var feed = UpdateFeed.Resolve(UpdateFeedInput.Text);
         UpdateStatus.Text = string.IsNullOrWhiteSpace(UpdateFeedInput.Text)
             ? "Checking the built-in feed…"
             : "Checking…";
-        var manifest = await UpdateChecker.CheckAsync(feed);
+        var manifest = await UpdateChecker.CheckAsync(feed, AppInfo.Kind);
         UpdateStatus.Text = manifest is null
             ? $"You are on the newest version ({AppInfo.Version})."
             : $"Version {manifest.Version} is ready. {(string.IsNullOrWhiteSpace(manifest.Notes) ? "" : manifest.Notes)}";
@@ -224,7 +228,7 @@ public partial class SettingsWindow : Window
     /// Save is the window's default button, so without this a stray Enter mid-edit saved and
     /// dismissed the whole page. Enter anywhere else still reaches its own control.
     /// </summary>
-    void InterceptEnterKey(object sender, KeyEventArgs e)
+    void InterceptEnterKey(object? sender, KeyEventArgs e)
     {
         // Avalonia reports the keystroke source as Source (WPF's OriginalSource).
         if (e.Key != Key.Enter || e.Source is not (TextBox or PasswordBox)) return;
@@ -260,8 +264,6 @@ public partial class SettingsWindow : Window
     void Save_Click(object sender, RoutedEventArgs e)
     {
         Commit();
-        // DialogResult is only valid for a modal dialog; the window may also be shown modelessly.
-        if (false) DialogResult = true;
         Close();
     }
 

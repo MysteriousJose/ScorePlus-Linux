@@ -14,7 +14,7 @@ using Scoreboard.Core;
 
 namespace Scoreboard.Desktop;
 
-public partial class MainWindow : Window, IControlPanelHost
+public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
 {
     readonly GameEngine _engine = new();
     readonly GameEngine _publishedEngine = new();
@@ -31,6 +31,14 @@ public partial class MainWindow : Window, IControlPanelHost
     // display at the same time; only Update Output sends anything to an audience.
     readonly ProgramSelection _program;
     readonly MediaSession _session;
+    readonly ReplayBoothController _booth;
+    readonly HardwareService _hardware;
+    readonly AutomationRuntime _automation;
+    QuickMediaBar? _quickMedia;
+    AutomationWindow? _automationWindow;
+    IconMakerWindow? _iconMaker;
+    bool _operatorLocked;
+    bool _workspaceEnabled = true;
     bool _displaySync;
     readonly MediaPlayback _playback;
     // Every audience window ever opened this session. Opening the output again adds another one
@@ -42,6 +50,8 @@ public partial class MainWindow : Window, IControlPanelHost
     AudiencePreview? _audience;
     // The four assignable quick-layout buttons above the rail's meter.
     QuickLayoutBar? _quickLayouts;
+    MacroDock? _macroDock;
+    LeagueCloudService? _leagueCloud;
     int _eventCount = -1;
     readonly UserPreferences _preferences = PreferencesStore.Load();
     string? _projectPath;
@@ -50,6 +60,8 @@ public partial class MainWindow : Window, IControlPanelHost
     // Set while the sport picker is being filled in for the operator, so syncing the control cannot
     // be mistaken for the operator choosing a sport (which starts a new game).
     bool _sportSync;
+    // Set while the game-name box is being filled from the engine, so that does not count as typing.
+    bool _gameNameSync;
     // The next autosave starts a fresh recoverable point instead of updating the newest one. Set
     // when a new game starts or a game is loaded, so the previous game keeps its own autosave.
     bool _startNewAutosavePoint = true;
@@ -72,6 +84,9 @@ public partial class MainWindow : Window, IControlPanelHost
     /// </summary>
     public static bool WarnOnSportSwitch { get; set; } = true;
 
+    /// <summary>Lets an unattended check start a window without reaching the update feed.</summary>
+    public static bool CheckForUpdatesOnLoad { get; set; } = true;
+
     /// <param name="mode">How the app was started: <see cref="LaunchMode.New"/> skips the autosave,
     /// <see cref="LaunchMode.Open"/> loads <paramref name="gamePath"/>. Null keeps the legacy
     /// behaviour of restoring the last autosave, which the tests rely on.</param>
@@ -84,12 +99,20 @@ public partial class MainWindow : Window, IControlPanelHost
         // the console off the screen; the console itself is reflowable down to its minimum width.
         ScreenFit.Track(this);
         _session = new MediaSession(_preferences);
+        _booth = new ReplayBoothController(_session, _engine, _preferences);
+        _hardware = new HardwareService(_engine);
+        _hardware.Snapshot += snapshot => Dispatcher.BeginInvoke(() => ApplyHardware(snapshot));
+        _hardware.Status += message => Dispatcher.BeginInvoke(() => StatusText.Text = message);
+        _automation = new AutomationRuntime(_scorebug, _publishedEngine, _engine);
         _playback = _session.Playback;
         ThemeManager.Apply(this, _preferences.Theme);
         BuildSoundMeter();
         _meterTimer.Tick += (_, _) => UpdateSoundMeter();
         _meterTimer.Start();
         DisplayTiming.Apply(_preferences);
+        _quickMedia = new QuickMediaBar(_session, _preferences.Theme);
+        _quickMedia.Status += message => StatusText.Text = message;
+        QuickMediaHost.Content = _quickMedia;
         _quickLayouts = new QuickLayoutBar(_scorebug, _engine, _preferences.Theme);
         _quickLayouts.Status += message => StatusText.Text = message;
         QuickLayoutsHost.Content = _quickLayouts;
@@ -99,6 +122,10 @@ public partial class MainWindow : Window, IControlPanelHost
 
         _engine.Changed += Refresh;
         _engine.Changed += EngineChanged;
+        _engine.Changed += () => ReplayBoothHistory.Sample(_engine.State);
+        _leagueCloud = new LeagueCloudService(_engine, _preferences);
+        _leagueCloud.Status += message => Dispatcher.BeginInvoke(new Action(() => StatusText.Text = message));
+        _engine.Changed += () => _leagueCloud?.MarkDirty();
         _timer.Tick += (_, _) => _engine.Tick();
         _timer.Start();
         _autosave.Tick += (_, _) => AutoSave();
@@ -106,7 +133,7 @@ public partial class MainWindow : Window, IControlPanelHost
 
         _program = new ProgramSelection(_scorebug);
         _program.Changed += ProgramChanged;
-        _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback, layoutProvider: () => _program.Layout, displayId: _program.DisplayId);
+        _preview = new ScorebugCanvasView(_scorebug, _publishedEngine, playback: _playback, layoutProvider: () => _program.Layout, displayId: _program.DisplayId, automation: _automation);
         PreviewHost.Content = _preview;
         // The monitor reads the published engine and the published layout, so it is a real
         // reflection of the audience window rather than another staged preview.
@@ -121,7 +148,7 @@ public partial class MainWindow : Window, IControlPanelHost
         {
             ApplyTabVisuals();
             // The remote and the update check belong to a live window, not to the launch sequence.
-            if (!waitForLaunch) { StartRemote(); _ = CheckForUpdatesAsync(); }
+            if (!waitForLaunch) { StartRemote(); StartHardware(); _leagueCloud?.Start(); _ = CheckForUpdatesAsync(); }
         };
 
         // Exit prompt: the world has no OnClosing override; Avalonia's Closing event carries the same
@@ -157,12 +184,15 @@ public partial class MainWindow : Window, IControlPanelHost
                 e.Handled = true;
                 return;
             }
-            if (_panel.TryHandleKey(key, e.KeyModifiers)) { e.Handled = true; return; }
+            if (_panel?.TryHandleKey(key, e.KeyModifiers) == true) { e.Handled = true; return; }
         }), RoutingStrategies.Tunnel);
 
         _panel = new ControlPanelView(_engine, this);
         ControlHost.Content = _panel;
         _panel.SetHintVisibility(_preferences.ShowHeadingHints);
+        _macroDock = new MacroDock(_engine, _session, _preferences.Theme, _panel.Execute, _scorebug, PublishGameState);
+        _macroDock.Status += message => StatusText.Text = message;
+        MacroHost.Content = _macroDock;
 
         RosterControl.Attach(_engine);
         RosterControl.ApplyTheme(_preferences.Theme);
@@ -230,15 +260,19 @@ public partial class MainWindow : Window, IControlPanelHost
         SetWorkspaceEnabled(true);
         Activate();
         StartRemote();
+        StartHardware();
+        _leagueCloud?.Start();
         _ = CheckForUpdatesAsync();
     }
 
     /// <summary>Locks or unlocks everything inside the window while the launch box is up.</summary>
     void SetWorkspaceEnabled(bool enabled)
     {
-        Root.IsEnabled = enabled;
+        _workspaceEnabled = enabled;
+        Root.IsEnabled = enabled && !_operatorLocked;
+        LockButton.IsEnabled = enabled && !_operatorLocked;
         // A locked window reads as dimmed, so nobody tries to type into a game that is not there.
-        Root.Opacity = enabled ? 1 : 0.55;
+        Root.Opacity = _operatorLocked ? 0.35 : enabled ? 1 : 0.55;
     }
 
     /// <summary>The live game, exposed so the operator surface (and the checks) can drive it.</summary>
@@ -272,6 +306,38 @@ public partial class MainWindow : Window, IControlPanelHost
 
     public void OpenNewPanel() => OpenControlPanel();
 
+    // The phone can preview any display and move that display's staged layout without taking the
+    // desktop preview away from whatever the operator is working on.
+    public IReadOnlyList<(string Id, string Name)> RemoteDisplays =>
+        _scorebug.Displays.Select(display => (display.Id, display.Name)).ToArray();
+
+    public string RemoteDisplayId => _program.DisplayId;
+
+    public string RemoteLayoutLabel(string displayId) => _program.LabelFor(displayId);
+
+    public void RemoteSelectDisplay(string displayId)
+    {
+        if (string.IsNullOrWhiteSpace(displayId)) return;
+        _program.SelectDisplay(displayId);
+        _preview?.Rebuild();
+        SyncDisplayPicker();
+        RefreshLayoutIndicators();
+        _panel.Refresh();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
+    }
+
+    public void RemoteShiftLayout(string displayId, int delta)
+    {
+        var target = string.IsNullOrWhiteSpace(displayId) ? _program.DisplayId : displayId;
+        _program.ShiftFor(target, delta);
+        _preview?.Rebuild();
+        RefreshLayoutIndicators();
+        var display = _scorebug.FindDisplay(target);
+        StatusText.Text = $"REMOTE LAYOUT · {display?.Name ?? "Display"} · {_program.LabelFor(target)} · preview only";
+        _panel.Refresh();
+        foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
+    }
+
     /// <summary>
     /// Sends the game data (score, clocks, down, stats) to the audience copies. It deliberately
     /// touches no layout, so a detached panel can publish its own display right after it.
@@ -286,6 +352,9 @@ public partial class MainWindow : Window, IControlPanelHost
 
     public void PublishOutput()
     {
+        // Arm the hand-over while the operator is still on the preview, so the first frame is
+        // decoded before the switch instead of starting with a black gap.
+        PrepareTransitionForStagedLayout();
         // The chosen layouts go on air with the game data: the preview and output still read
         // different copies, so the switch only happens here.
         PublishGameState();
@@ -300,6 +369,7 @@ public partial class MainWindow : Window, IControlPanelHost
     public void ShiftLayout(int delta)
     {
         _program.Shift(delta);
+        PrepareTransitionForStagedLayout();
         _preview?.Rebuild();
         RefreshLayoutIndicators();
         StatusText.Text = _program.HasStagedChanges
@@ -313,7 +383,20 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         SyncDisplayPicker();
         RefreshLayoutIndicators();
+        PrepareTransitionForStagedLayout();
         _preview?.Rebuild();
+    }
+
+    /// <summary>
+    /// Arms the staged layout's hand-over video on the preview and every visible output, so a
+    /// layout with a transition clip starts on its first frame instead of a black gap.
+    /// </summary>
+    void PrepareTransitionForStagedLayout()
+    {
+        _preview?.PrepareTransition(_program.Layout);
+        foreach (var output in _outputs.Where(output => output.IsVisible))
+            if (_program.LayoutFor(output.DisplayId) is { } layout)
+                output.PrepareTransition(layout);
     }
 
     /// <summary>Fills the display picker without treating the sync as the operator's choice.</summary>
@@ -358,16 +441,22 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void RosterTab_Click(object sender, RoutedEventArgs e) => ShowTab(GameControlWindow.ConsoleTab.Rosters);
 
-    /// <summary>Switches the operator surface between the console, the media desk and the roster desk.</summary>
+    void MacrosTab_Click(object sender, RoutedEventArgs e) => ShowTab(GameControlWindow.ConsoleTab.Macros);
+
+    /// <summary>Switches the operator surface between the console, media, roster and macro desks.</summary>
     void ShowTab(GameControlWindow.ConsoleTab tab)
     {
+        if (_tab == GameControlWindow.ConsoleTab.Macros && tab != GameControlWindow.ConsoleTab.Macros)
+            _macroDock?.CommitPendingEdits();
         _tab = tab;
         ControlHost.Visibility = tab == GameControlWindow.ConsoleTab.Control ? Visibility.Visible : Visibility.Collapsed;
         MediaControl.Visibility = tab == GameControlWindow.ConsoleTab.Media ? Visibility.Visible : Visibility.Collapsed;
         RosterControl.Visibility = tab == GameControlWindow.ConsoleTab.Rosters ? Visibility.Visible : Visibility.Collapsed;
+        MacroHost.Visibility = tab == GameControlWindow.ConsoleTab.Macros ? Visibility.Visible : Visibility.Collapsed;
         ApplyTabVisuals();
         if (tab == GameControlWindow.ConsoleTab.Media) MediaControl.RefreshView();
         if (tab == GameControlWindow.ConsoleTab.Rosters) RosterControl.RefreshView();
+        if (tab == GameControlWindow.ConsoleTab.Macros) _macroDock?.RefreshView();
     }
 
     /// <summary>
@@ -383,7 +472,7 @@ public partial class MainWindow : Window, IControlPanelHost
         var onBorder = UiPalette.Frozen(accent);
         var offBorder = new SolidColorBrush(Color.Parse("#28323F"));
         var muted = new SolidColorBrush(Color.Parse("#93A0B2"));
-        Button[] tabs = [ControlTab, MediaTab, RosterTab];
+        Button[] tabs = [ControlTab, MediaTab, RosterTab, MacrosTab];
         var active = (int)_tab;
         for (var i = 0; i < tabs.Length; i++)
         {
@@ -407,6 +496,13 @@ public partial class MainWindow : Window, IControlPanelHost
             _sportSync = true;
             try { SportSelector.SelectedValue = s.SportId; }
             finally { _sportSync = false; }
+        }
+        // Follow a new or loaded game without overwriting a name the operator is currently typing.
+        if (GameNameBox is not null && !GameNameBox.IsKeyboardFocusWithin && GameNameBox.Text != s.GameName)
+        {
+            _gameNameSync = true;
+            try { GameNameBox.Text = s.GameName; }
+            finally { _gameNameSync = false; }
         }
         _eventCount = s.Events.Count;
     }
@@ -456,7 +552,9 @@ public partial class MainWindow : Window, IControlPanelHost
             _meterLit = lit;
             var unlit = new SolidColorBrush(Color.Parse("#1B2430"));
             for (var index = 0; index < _meterBars.Length; index++)
-                _meterBars[index].Background = index < lit ? new SolidColorBrush((Color)_meterBars[index].Tag) : unlit;
+                _meterBars[index].Background = index < lit && _meterBars[index].Tag is Color barColor
+                    ? new SolidColorBrush(barColor)
+                    : unlit;
         }
         SoundLevelText.Text = level <= 0
             ? (SoundLevelMeter.Available ? "−∞ dB" : "no output")
@@ -473,7 +571,128 @@ public partial class MainWindow : Window, IControlPanelHost
         SportHint.Visibility = PreviewAudienceHint.Visibility = visibility;
         MediaControl.SetHintVisibility(_preferences.ShowHeadingHints);
         RosterControl.SetHintVisibility(_preferences.ShowHeadingHints);
+        _macroDock?.SetHintVisibility(_preferences.ShowHeadingHints);
         _log?.SetHintVisibility(_preferences.ShowHeadingHints);
+    }
+
+    void AdLog_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AdLogWindow(_preferences.Theme) { Owner = this };
+        dialog.ShowDialog();
+    }
+
+    void Hardware_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new HardwareWindow(_preferences, _hardware) { Owner = this };
+        dialog.ShowDialog();
+    }
+
+    void Automation_Click(object sender, RoutedEventArgs e)
+    {
+        if (_automationWindow is { IsVisible: true }) { _automationWindow.Activate(); return; }
+        var dialog = new AutomationWindow(_scorebug, _publishedEngine, _preferences.Theme,
+            _program.DisplayId, _automation, _engine, layoutId: _program.Layout.Id) { Owner = this };
+        _automationWindow = dialog;
+        dialog.Closed += (_, _) => { _automationWindow = null; _preview?.Rebuild(); };
+        dialog.Show();
+    }
+
+    void IconMaker_Click(object sender, RoutedEventArgs e)
+    {
+        if (_iconMaker is { IsVisible: true }) { _iconMaker.Activate(); return; }
+        var dialog = new IconMakerWindow(_preferences.Theme) { Owner = this };
+        _iconMaker = dialog;
+        dialog.Closed += (_, _) => { _iconMaker = null; _preview?.Rebuild(); };
+        dialog.ShowDialog();
+    }
+
+    void Multiview_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new MultiviewWindow(_session, _preferences, _scorebug, _engine, _publishedEngine,
+            _program, _automation, _playback) { Owner = this };
+        window.Show();
+    }
+
+    void ReplayBooth_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new ReplayBoothWindow(_booth, _preferences) { Owner = this };
+        window.Show();
+    }
+
+    void Lock_Click(object sender, RoutedEventArgs e)
+    {
+        if (_operatorLocked) return;
+        if (string.IsNullOrWhiteSpace(_preferences.OperatorLockPasswordHash))
+        {
+            var created = OperatorLockWindow.Create(this, _preferences.Theme);
+            if (created is null) return;
+            _preferences.OperatorLockPasswordHash = OperatorLock.Hash(created);
+            PreferencesStore.Save(_preferences);
+            SetOperatorLocked(true);
+            return;
+        }
+        if (!OperatorLockWindow.Confirm(this, _preferences.Theme, _preferences.OperatorLockPasswordHash,
+                "LOCK SCOREPLUS", "Enter the operator lock password to lock the console, media, rosters and remote.")) return;
+        SetOperatorLocked(true);
+    }
+
+    void Unlock_Click(object? sender, RoutedEventArgs e)
+    {
+        var password = this.FindControl<TextBox>("UnlockPasswordInput");
+        var error = this.FindControl<TextBlock>("UnlockError");
+        if (password is null || error is null) return;
+        if (!OperatorLock.Matches(password.Text, _preferences.OperatorLockPasswordHash))
+        {
+            error.Text = "That password does not match the operator lock.";
+            password.SelectAll();
+            password.Focus();
+            return;
+        }
+        SetOperatorLocked(false);
+    }
+
+    void UnlockPassword_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        Unlock_Click(sender, e);
+    }
+
+    void SetOperatorLocked(bool locked)
+    {
+        _operatorLocked = locked;
+        Root.IsEnabled = _workspaceEnabled && !locked;
+        LockButton.IsEnabled = _workspaceEnabled && !locked;
+        Root.Opacity = locked ? 0.35 : _workspaceEnabled ? 1 : 0.55;
+        LockOverlay.IsVisible = locked;
+        LockButton.Content = locked ? "🔓" : "🔒";
+        foreach (var panel in _controlPanels) panel.IsEnabled = !locked;
+        var password = this.FindControl<TextBox>("UnlockPasswordInput");
+        var error = this.FindControl<TextBlock>("UnlockError");
+        if (password is not null) password.Text = string.Empty;
+        if (error is not null) error.Text = string.Empty;
+        if (locked)
+        {
+            Dispatcher.BeginInvoke(new Action(() => password?.Focus()));
+        }
+        else
+        {
+            _panel.Refresh();
+        }
+    }
+
+    void ApplyHardware(DeviceSnapshot snapshot)
+    {
+        if (!_engine.ApplyHardwareSnapshot(snapshot) || !_liveScoreClock) return;
+        if (!_publishedEngine.UpdateLiveController(_engine.State)) return;
+        _preview?.Refresh();
+        foreach (var output in _outputs.Where(output => output.IsVisible)) output.Publish();
+    }
+
+    void StartHardware()
+    {
+        if (!_preferences.Hardware.AutoConnect || _hardware.IsRunning) return;
+        _hardware.Start(_preferences.Hardware);
     }
 
     void EventLog_Click(object sender, RoutedEventArgs e)
@@ -523,6 +742,26 @@ public partial class MainWindow : Window, IControlPanelHost
 
     void AnimationMaker_Click(object sender, RoutedEventArgs e) => OpenMotionMaker(MotionKind.Animation);
 
+    async void Info_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AboutWindow(_preferences.Theme);
+        await dialog.ShowDialog(this);
+    }
+
+    async void Ticker_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new TickerWindow(_engine, _preferences.Theme);
+        await dialog.ShowDialog(this);
+    }
+
+    async void LeagueCloud_Click(object sender, RoutedEventArgs e)
+    {
+        if (_leagueCloud is null) return;
+        var dialog = new LeagueCloudWindow(_leagueCloud, _preferences, _scorebug, _program, _engine);
+        await dialog.ShowDialog(this);
+        _leagueCloud.ApplySettings();
+    }
+
     void Preferences_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SettingsWindow(_preferences) { Owner = this };
@@ -533,6 +772,7 @@ public partial class MainWindow : Window, IControlPanelHost
         ApplyTabVisuals();
         MediaControl.ApplyTheme(_preferences.Theme);
         RosterControl.ApplyTheme(_preferences.Theme);
+        _macroDock?.ApplyTheme(_preferences.Theme);
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.ApplyTheme(_preferences.Theme);
         foreach (var output in _outputs) output.SetBroadcastTheme(_preferences.Theme);
         ApplyHintVisibility();
@@ -547,6 +787,7 @@ public partial class MainWindow : Window, IControlPanelHost
         ApplyTabVisuals();
         // Turning the remote on or changing its password takes effect without a restart.
         StartRemote();
+        _leagueCloud?.ApplySettings();
     }
 
     /// <summary>
@@ -570,8 +811,8 @@ public partial class MainWindow : Window, IControlPanelHost
     /// </summary>
     async Task CheckForUpdatesAsync()
     {
-        if (!_preferences.CheckForUpdates || !AppInfo.IsInstalled) return;
-        var manifest = await UpdateChecker.CheckAsync(_preferences.UpdateFeedUrl);
+        if (!CheckForUpdatesOnLoad || !_preferences.CheckForUpdates || !AppInfo.CanUpdate) return;
+        var manifest = await UpdateChecker.CheckAsync(_preferences.UpdateFeedUrl, AppInfo.Kind);
         if (manifest is null) return;
         var detail = $"Version {manifest.Version} is ready (this build is {AppInfo.Version}). " +
                      (string.IsNullOrWhiteSpace(manifest.Notes) ? "Download and install it now?" : $"{manifest.Notes}\n\nDownload and install it now?");
@@ -584,10 +825,10 @@ public partial class MainWindow : Window, IControlPanelHost
             NoticeWindow.Tell(this, "UPDATE FAILED", error ?? "The update could not be downloaded.", warning: true);
             return;
         }
-        if (!UpdateChecker.Run(path))
+        if (UpdateChecker.Run(path) is string failure)
         {
             StatusText.Text = "UPDATE COULD NOT START";
-            NoticeWindow.Tell(this, "UPDATE COULD NOT START", $"The new version was downloaded to {path}, but Windows did not start the installer.", warning: true);
+            NoticeWindow.Tell(this, "UPDATE COULD NOT START", failure, warning: true);
             return;
         }
         _closingAfterPrompt = true;
@@ -633,6 +874,12 @@ public partial class MainWindow : Window, IControlPanelHost
         _panel.Refresh();
         foreach (var panel in _controlPanels.Where(p => p.IsVisible)) panel.Panel.Refresh();
         StatusText.Text = $"SPORT PROFILES SAVED · {_engine.Sport.Name} · start a new game to use the new rules";
+    }
+
+    void GameName_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_initializing || _gameNameSync) return;
+        _engine.SetGameName(GameNameBox.Text);
     }
 
     void Sport_Changed(object sender, SelectionChangedEventArgs e)
@@ -689,6 +936,7 @@ public partial class MainWindow : Window, IControlPanelHost
         foreach (var panel in _controlPanels.Where(panel => panel.IsVisible)) panel.Media.ResetView();
         ResetOutputToCurrentGame();
         RefreshLayoutIndicators();
+        _macroDock?.RefreshView(force: true);
         if (announce) StatusText.Text = $"NEW {_engine.Sport.Name.ToUpperInvariant()} GAME";
     }
 
@@ -735,6 +983,7 @@ public partial class MainWindow : Window, IControlPanelHost
             // element built while the teams had no crests) must take the loaded values.
             _preview?.Rebuild();
             foreach (var output in _outputs) output.Rebuild();
+            _macroDock?.RefreshView(force: true);
             _savedStateJson = _engine.ExportJson();
             _savedDesignJson = DesignJson();
             StatusText.Text = $"GAME LOADED · {System.IO.Path.GetFileName(path)}";
@@ -795,7 +1044,11 @@ public partial class MainWindow : Window, IControlPanelHost
         if (enabled) PublishLiveValues();
     }
 
-    void EngineChanged() { if (_liveScoreClock) PublishLiveValues(); }
+    void EngineChanged()
+    {
+        ReplayBoothHistory.Sample(_engine.State);
+        if (_liveScoreClock) PublishLiveValues();
+    }
 
     void PublishLiveValues()
     {
@@ -827,6 +1080,8 @@ public partial class MainWindow : Window, IControlPanelHost
     {
         try
         {
+            // A macro being typed is part of the game too; commit it before writing the file.
+            _macroDock?.CommitPendingEdits();
             // The game travels with its screens: every display, every layout and what each one has
             // on air, so opening the file puts the show back exactly where it was left.
             _engine.Save(path, _scorebug.ExportDocument());
@@ -887,9 +1142,17 @@ public partial class MainWindow : Window, IControlPanelHost
         _engine.Changed -= Refresh;
         _engine.Changed -= EngineChanged;
         _remote?.Dispose();
+        _leagueCloud?.Dispose();
+        _hardware.Dispose();
+        _booth.Dispose();
+        _automation.Dispose();
+        _automationWindow?.Close();
+        _iconMaker?.Close();
         _meterTimer.Stop();
+        _macroDock?.CommitPendingEdits();
         _program.Dispose();
         _preview?.Dispose();
+        _quickMedia = null;
         _session.Dispose();
         foreach (var panel in _controlPanels.ToArray()) panel.Close();
         foreach (var output in _outputs.ToArray()) output.Close();

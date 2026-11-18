@@ -21,9 +21,10 @@ public partial class GameControlWindow : Window
     bool _tabHook;
     bool _displaySync;
     ConsoleTab _tab = ConsoleTab.Control;
+    MacroDock? _macroDock;
 
-    /// <summary>The three desks a control window carries: console, media and rosters.</summary>
-    public enum ConsoleTab { Control, Media, Rosters }
+    /// <summary>The four desks a control window carries: console, media, rosters and macros.</summary>
+    public enum ConsoleTab { Control, Media, Rosters, Macros }
 
     public ControlPanelView Panel { get; }
 
@@ -60,6 +61,7 @@ public partial class GameControlWindow : Window
         Meter.Visibility = Visibility.Collapsed;
         // A panel with no catalog has no layouts to reach, so the quick buttons stay off too.
         QuickLayoutsHost.Visibility = Visibility.Collapsed;
+        MacrosTab.Visibility = Visibility.Collapsed;
         AttachMedia(media);
         ApplyTheme(PreferencesStore.Load().Theme);
     }
@@ -92,6 +94,9 @@ public partial class GameControlWindow : Window
         _quickLayouts = new QuickLayoutBar(catalog, engine, theme);
         _quickLayouts.Status += message => MediaStatus.Text = message;
         QuickLayoutsHost.Content = _quickLayouts;
+        _macroDock = new MacroDock(engine, media ?? new MediaSession(PreferencesStore.Load()), theme, Panel.Execute, catalog, publishGameState);
+        _macroDock.Status += message => MediaStatus.Text = message;
+        MacroHost.Content = _macroDock;
         RosterControl.Attach(engine);
         AttachMedia(media);
         ApplyTheme(theme);
@@ -125,6 +130,7 @@ public partial class GameControlWindow : Window
         }
         MediaControl.ApplyTheme(theme);
         RosterControl.ApplyTheme(theme);
+        _macroDock?.ApplyTheme(theme);
         _quickLayouts?.Refresh();
         // In a tab the dock has the full panel width, so its buttons are the size of the console's.
         MediaControl.SetLargeMode(true);
@@ -134,6 +140,7 @@ public partial class GameControlWindow : Window
     {
         Panel.SetHintVisibility(show);
         RosterControl.SetHintVisibility(show);
+        _macroDock?.SetHintVisibility(show);
     }
 
     public void SyncLiveState(bool live) => Panel.SyncLiveState(live);
@@ -228,16 +235,21 @@ public partial class GameControlWindow : Window
 
     void RosterTab_Click(object sender, RoutedEventArgs e) => ShowTab(ConsoleTab.Rosters);
 
-    /// <summary>Switches between the console, the media desk and the roster desk; all fill one pane.</summary>
+    void MacrosTab_Click(object sender, RoutedEventArgs e) => ShowTab(ConsoleTab.Macros);
+
+    /// <summary>Switches between the console, media, roster and macro desks; all fill one pane.</summary>
     void ShowTab(ConsoleTab tab)
     {
+        if (_tab == ConsoleTab.Macros && tab != ConsoleTab.Macros) _macroDock?.CommitPendingEdits();
         _tab = tab;
         PanelHost.Visibility = tab == ConsoleTab.Control ? Visibility.Visible : Visibility.Collapsed;
         MediaControl.Visibility = tab == ConsoleTab.Media ? Visibility.Visible : Visibility.Collapsed;
         RosterControl.Visibility = tab == ConsoleTab.Rosters ? Visibility.Visible : Visibility.Collapsed;
+        MacroHost.Visibility = tab == ConsoleTab.Macros ? Visibility.Visible : Visibility.Collapsed;
         ApplyTabVisuals();
         if (tab == ConsoleTab.Media) MediaControl.RefreshView();
         if (tab == ConsoleTab.Rosters) RosterControl.RefreshView();
+        if (tab == ConsoleTab.Macros) _macroDock?.RefreshView();
     }
 
     /// <summary>
@@ -253,7 +265,7 @@ public partial class GameControlWindow : Window
         var onBorder = UiPalette.Frozen(accent);
         var offBorder = new SolidColorBrush(Color.Parse("#28323F"));
         var muted = new SolidColorBrush(Color.Parse("#93A0B2"));
-        Button[] tabs = [ControlTab, MediaTab, RosterTab];
+        Button[] tabs = [ControlTab, MediaTab, RosterTab, MacrosTab];
         var active = (int)_tab;
         for (var i = 0; i < tabs.Length; i++)
         {
@@ -294,6 +306,7 @@ public partial class GameControlWindow : Window
         }
         if (_catalog is not null) _catalog.Changed -= CatalogChanged;
         _engine.Changed -= MeterChanged;
+        _macroDock?.CommitPendingEdits();
         _preview?.Dispose();
         base.OnClosed(e);
     }

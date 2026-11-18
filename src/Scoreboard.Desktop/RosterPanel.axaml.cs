@@ -373,7 +373,7 @@ public partial class RosterPanel : UserControl
     /// <summary>The tab header's Export… button, for this side's roster or highlighted player.</summary>
     public void ExportToDialog() => Export_Click(this, null);
 
-    void Import_Click(object sender, object e)
+    void Import_Click(object? sender, object? e)
     {
         if (_engine is null) return;
         var dialog = new Microsoft.Win32.OpenFileDialog
@@ -446,7 +446,7 @@ public partial class RosterPanel : UserControl
     /// question up front: the save dialog's "file type" list used to be the only way to reach a
     /// player, which read as though players could not be exported at all.
     /// </summary>
-    void Export_Click(object sender, object e)
+    void Export_Click(object? sender, object? e)
     {
         if (_engine is null || _roster is null)
         {
@@ -710,7 +710,7 @@ public partial class RosterPanel : UserControl
         StatPresetBox.Text = "";
     }
 
-    void RemoveStat_Click(object sender, RoutedEventArgs e)
+    void RemoveStat_Click(object? sender, RoutedEventArgs e)
     {
         if (_roster is null || sender is not Button { Tag: string name }) return;
         foreach (var player in _roster.Players)
@@ -718,7 +718,7 @@ public partial class RosterPanel : UserControl
         SaveAndReload();
     }
 
-    void StatValue_KeyDown(object sender, KeyEventArgs e)
+    void StatValue_KeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter) return;
         CommitStat(sender);
@@ -726,9 +726,9 @@ public partial class RosterPanel : UserControl
         e.Handled = true;
     }
 
-    void StatValue_LostFocus(object sender, Avalonia.Interactivity.RoutedEventArgs e) => CommitStat(sender);
+    void StatValue_LostFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => CommitStat(sender);
 
-    void CommitStat(object sender)
+    void CommitStat(object? sender)
     {
         if (_syncing || _engine is null || _player is null) return;
         if (sender is not TextBox { Tag: string name } box) return;

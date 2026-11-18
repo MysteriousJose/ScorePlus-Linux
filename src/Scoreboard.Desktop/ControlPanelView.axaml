@@ -195,9 +195,9 @@
             <ContentControl x:Name="BallOnHost" Grid.Column="2"/>
           </Grid>
 
-          <!-- Every sport's own values — balls, bases, power play, overs, sets — as compact
-               steppers and switches. Built in code from the game's sport controls. -->
-          <WrapPanel x:Name="OtherDetail" Grid.Row="2" Margin="0,4,0,0" VerticalAlignment="Top"/>
+          <!-- Every sport's own values — balls, bases, power play, overs, sets — as full-size
+               steppers and switches, two per row. Built in code from the game's sport controls. -->
+          <UniformGrid x:Name="OtherDetail" Grid.Row="2" Margin="0,4,0,0" Columns="2" VerticalAlignment="Top"/>
 
           <Grid Grid.Row="3" Margin="0,6,0,0">
             <Grid.ColumnDefinitions>

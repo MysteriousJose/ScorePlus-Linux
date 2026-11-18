@@ -25,6 +25,7 @@ public static class RemotePage
         .title{font-size:10px;letter-spacing:1.4px;color:#8fa0b5;font-weight:800;margin:0 0 8px;display:flex;align-items:center;gap:6px}
         .title:before{content:"";width:3px;height:11px;border-radius:2px;background:#38d7a3}
         .title .right{margin-left:auto;font-weight:700;letter-spacing:.4px;color:#5c6b7e}
+        #mediaNow{max-width:68%;text-align:right;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
         .score{display:grid;grid-template-columns:1fr 132px 1fr;gap:8px;align-items:stretch}
         .team{background:#101720;border:1px solid #1f2a37;border-radius:10px;padding:8px;min-width:0}
         .team .row{flex-wrap:wrap}
@@ -51,10 +52,14 @@ public static class RemotePage
         .row{display:flex;gap:6px;margin-top:6px}
         .row button{flex:1 1 46px}
         .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:7px}
-        .value{display:grid;grid-template-columns:1fr 40px minmax(46px,62px) 40px;align-items:center;gap:4px;background:#101720;border:1px solid #1f2a37;border-radius:8px;padding:5px 6px;min-height:46px}
+        .value{display:grid;grid-template-columns:minmax(56px,1fr) 40px minmax(46px,62px) 40px;align-items:center;gap:4px;background:#101720;border:1px solid #1f2a37;border-radius:8px;padding:5px 6px;min-height:46px}
         .value .l{font-size:10px;letter-spacing:.4px;color:#9fb0c4;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .value input{text-align:center;font-weight:800;padding:4px 2px;min-height:38px;font-size:15px}
-        .value.wide{grid-template-columns:1fr 40px minmax(46px,62px) 40px 34px}
+        /* A custom value carries a remove button as well, so it needs the full row width. On a
+           phone the fixed buttons used to squeeze the name column to zero and only the number
+           was visible. */
+        .value.wide{grid-column:1/-1;grid-template-columns:minmax(84px,1fr) 40px minmax(46px,62px) 40px 34px}
+        .value.wide .l{white-space:normal;overflow:visible;line-height:1.2}
         .value .x{font-size:14px;min-height:38px;padding:0;background:#2a1720;border-color:#5b2634;color:#ffd7df}
         .plus{background:#123c33;border-color:#1d6b56;color:#c9f7e8}
         .minus{background:#2a1720;border-color:#5b2634;color:#ffd7df}
@@ -63,6 +68,8 @@ public static class RemotePage
         .flag.on{border-color:#1d6b56;background:#0f2b24}
         .flag.on .state{color:#38d7a3}
         .muted{color:#5c6b7e;font-size:11px;padding:2px}
+        .warn{background:#2c2410;border:1px solid #6b5620;color:#ffd166;font-size:10px;line-height:1.45;border-radius:8px;padding:7px 9px;margin:0 0 8px}
+        .groupHead{grid-column:1/-1;color:#38d7a3;font-size:10px;font-weight:700;letter-spacing:.05em;padding:5px 2px 1px;border-bottom:1px solid #1d2632}
         .poss{display:grid;grid-template-columns:1fr 1fr;gap:6px}
         .poss button{min-height:44px}
         .poss button.on{background:#123c33;border-color:#14a67c;color:#c9f7e8}
@@ -73,6 +80,14 @@ public static class RemotePage
         .live-off{background:#2a1720;border-color:#5b2634;color:#ffd7df}
         .flash{position:fixed;left:0;right:0;bottom:0;background:#111a24;border-top:1px solid #2b394a;color:#9fb0c4;font-size:11px;padding:7px 12px;text-align:center;opacity:0;transition:opacity .2s}
         .flash.show{opacity:1}
+        .statEdit{display:flex;align-items:center;gap:6px;margin-top:6px}
+        .statEdit .l{flex:1 1 auto;font-size:11px;color:#9fb0c4;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .statEdit input{width:72px;text-align:center;font-weight:800}
+        .statEdit button{min-width:42px}
+        #lockScreen{position:fixed;inset:0;z-index:50;background:rgba(5,8,12,.94);display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}
+        #lockScreen .box{max-width:340px;background:#131a24;border:1px solid #5b2634;border-radius:14px;padding:22px}
+        #lockScreen h2{font-size:15px;letter-spacing:1.4px;margin:0 0 8px;color:#ffd7df}
+        #lockScreen p{color:#9fb0c4;font-size:12px;line-height:1.5;margin:0}
         .login{max-width:360px;margin:60px auto;padding:22px;background:#131a24;border:1px solid #1f2a37;border-radius:14px}
         .login .brand{height:54px;margin:0 auto 12px;display:block}
         .login h2{font-size:15px;letter-spacing:1.4px;margin:0 0 6px}
@@ -89,6 +104,9 @@ public static class RemotePage
           .score .team:first-child{order:1}
           .score .center{order:2}
           .score .team:last-child{order:3}
+          /* The value rows put their name first; two narrow columns squeezed that name to zero
+             and left only the number visible. */
+          #controls, #footballValues, #stats { grid-template-columns:1fr; }
         }
         """;
 
@@ -99,6 +117,7 @@ public static class RemotePage
         let live = true;
         let clock = "0:00";
         let timeoutClock = "0:00";
+        let penaltySide = "home";
 
         function flash(message) {
           const box = $('flash');
@@ -116,6 +135,7 @@ public static class RemotePage
             body: new URLSearchParams(body)
           }).then(r => {
             if (r.status === 401) { location = '/'; return null; }
+            if (r.status === 423) { poll(); return null; }
             return r.json();
           }).then(result => {
             if (!result) return;
@@ -190,7 +210,17 @@ public static class RemotePage
           if (action.startsWith('stat.plus.')) return act('stat.adjust', { id: action.slice(10), value: 1 });
           if (action.startsWith('stat.minus.')) return act('stat.adjust', { id: action.slice(11), value: -1 });
           if (action.startsWith('stat.remove.')) return act('stat.remove', { id: action.slice(12) });
+          if (action === 'layout.next' || action === 'layout.prev') {
+            const select = $('displaySelect');
+            return act(action, { display: select ? select.value : '' });
+          }
           return act(action);
+        });
+
+        document.addEventListener('change', event => {
+          if (event.target && event.target.id === 'displaySelect') {
+            act('display.select', { display: event.target.value });
+          }
         });
 
         function valueRow(control, prefix, setAction, extra) {
@@ -199,6 +229,7 @@ public static class RemotePage
           const label = document.createElement('span');
           label.className = 'l';
           label.textContent = control.label;
+          label.title = control.label;
           const minus = document.createElement('button');
           minus.className = 'minus';
           minus.textContent = '−';
@@ -233,12 +264,13 @@ public static class RemotePage
         }
 
         function renderControls(state) {
-          const key = state.sportId + '|' + state.controls.map(c => c.id + c.label + c.flag + c.min + c.max).join(',');
+          const controls = state.controls || [];
+          const key = state.sportId + '|' + controls.map(c => c.id + c.label + c.flag + c.min + c.max).join(',');
           if (key !== signature) {
             signature = key;
             const host = $('controls');
             host.innerHTML = '';
-            state.controls.forEach(control => {
+            controls.forEach(control => {
               host.append(control.flag ? flagRow(control, 'sport.' + control.id) : valueRow(control, 'sport.' + control.id));
             });
             // An empty card says nothing: the sport simply has no extra values to offer.
@@ -249,7 +281,7 @@ public static class RemotePage
             const ball = valueRow({ id: 'ball', label: 'Ball on', display: String(state.ballOn) }, 'football.ball', 'football.ball.set');
             football.append(down, toGo, ball);
           }
-          state.controls.forEach(control => {
+          controls.forEach(control => {
             if (control.flag) {
               const button = document.querySelector('[data-flag="' + control.id + '"]');
               if (!button) return;
@@ -260,6 +292,9 @@ public static class RemotePage
               if (box && document.activeElement !== box) box.value = control.display;
             }
           });
+          // A sport with no extra values gets no empty SPORT VALUES card on the phone.
+          const sportValues = $('sportValuesCard');
+          if (sportValues) sportValues.style.display = controls.length ? '' : 'none';
           ['down', 'togo', 'ball'].forEach((id, index) => {
             const box = $('footballValues').querySelectorAll('.value input')[index];
             if (!box || document.activeElement === box) return;
@@ -292,16 +327,46 @@ public static class RemotePage
           });
         }
 
+        function renderDisplays(state) {
+          const select = $('displaySelect');
+          if (!select) return;
+          const displays = state.displays || [];
+          const key = displays.map(d => d.id + '|' + d.name).join(',');
+          if (select.dataset.key !== key) {
+            select.innerHTML = '';
+            displays.forEach(display => {
+              const option = document.createElement('option');
+              option.value = display.id;
+              option.textContent = display.name || 'Display';
+              select.append(option);
+            });
+            select.dataset.key = key;
+          }
+          if (document.activeElement !== select) select.value = state.displayId || '';
+          const chosen = displays.find(d => d.id === state.displayId);
+          $('layout').textContent = chosen ? chosen.layout : state.layout;
+        }
+
         function renderStats(state) {
-          const key = state.stats.map(s => s.id + s.name).join(',');
+          const stats = state.stats || [];
+          const key = stats.map(s => s.id + s.name).join(',');
           if (key !== statsSignature) {
             statsSignature = key;
             const host = $('stats');
             host.innerHTML = '';
-            state.stats.forEach(stat => {
-              const row = valueRow({ id: stat.id, label: stat.name, display: stat.display }, 'stat', 'stat.set');
+            stats.forEach(stat => {
+              const label = stat.name || stat.label || 'Custom value';
+              const row = valueRow({ id: stat.id, label: label, display: stat.display }, 'stat', 'stat.set');
               row.classList.add('wide');
-              row.querySelector('input').dataset.id = stat.id;
+              const box = row.querySelector('input');
+              box.dataset.id = stat.id;
+              box.title = label;
+              row.title = label;
+              // The steppers must name the stat they belong to: a bare "stat.plus" reached the
+              // console as an unknown action, so the + and − beside a stat did nothing at all.
+              const steppers = row.querySelectorAll('button');
+              steppers[0].dataset.act = 'stat.minus.' + stat.id;
+              steppers[1].dataset.act = 'stat.plus.' + stat.id;
               const remove = document.createElement('button');
               remove.className = 'x';
               remove.textContent = '×';
@@ -312,7 +377,7 @@ public static class RemotePage
             });
             // Nothing to say when the list is empty: the field below is the way to add one.
           }
-          state.stats.forEach(stat => {
+          stats.forEach(stat => {
             const box = document.querySelector('[data-stat="' + stat.id + '"]');
             if (box && document.activeElement !== box) box.value = stat.display;
           });
@@ -323,6 +388,46 @@ public static class RemotePage
           if (!field || document.activeElement === field) return;
           field.value = value;
         }
+
+        // The flag card: raise or clear a penalty and say what it was for and who it was on.
+        // Choosing a type or a side leaves the flag itself alone, so a correction never blinks it off.
+        function penalty(body) {
+          return fetch('/api/penalty/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(body)
+          }).then(() => poll());
+        }
+
+        function renderPenalty(state) {
+          const card = $('penaltyCard');
+          if (card) card.style.display = (state.penaltyTypes || []).length ? '' : 'none';
+          if (!state.penalty) return;
+          penaltySide = state.penalty.home ? 'home' : 'away';
+          const flag = $('penaltyFlag');
+          flag.textContent = state.penalty.active ? 'Flag: ' + state.penalty.type : 'Flag down';
+          flag.classList.toggle('plus', !!state.penalty.active);
+          $('penaltyHome').classList.toggle('plus', penaltySide === 'home');
+          $('penaltyAway').classList.toggle('plus', penaltySide === 'away');
+          const select = $('penaltyType');
+          const key = (state.penaltyTypes || []).join('|');
+          if (select.dataset.keys !== key) {
+            select.innerHTML = '';
+            (state.penaltyTypes || []).forEach(type => {
+              const option = document.createElement('option');
+              option.value = type;
+              option.textContent = type;
+              select.append(option);
+            });
+            select.dataset.keys = key;
+          }
+          if (document.activeElement !== select) select.value = state.penalty.type;
+        }
+
+        $('penaltyFlag').onclick = () => penalty({ a: 'flag', type: $('penaltyType').value, side: penaltySide });
+        $('penaltyHome').onclick = () => { penaltySide = 'home'; penalty({ a: 'team', type: $('penaltyType').value, side: 'home' }); };
+        $('penaltyAway').onclick = () => { penaltySide = 'away'; penalty({ a: 'team', type: $('penaltyType').value, side: 'away' }); };
+        $('penaltyType').onchange = () => penalty({ a: 'type', type: $('penaltyType').value, side: penaltySide });
 
         function render(state) {
           $('sport').textContent = state.sportName;
@@ -357,7 +462,7 @@ public static class RemotePage
           $('possHome').classList.toggle('on', state.possession === 'home');
           $('ballSide').textContent = state.ballHome ? 'HOME ▶' : '◀ VISITORS';
           $('ballSide').dataset.act = 'football.ball.side';
-          $('layout').textContent = state.layout;
+          renderDisplays(state);
           const badge = $('liveBadge');
           badge.textContent = state.staged ? 'NOT ON AIR' : 'LIVE';
           badge.className = 'badge ' + (state.staged ? 'staged' : 'ok');
@@ -368,6 +473,9 @@ public static class RemotePage
           renderScoreButtons(state);
           renderControls(state);
           renderStats(state);
+          renderPenalty(state);
+          var lock = $('lockScreen');
+          if (lock) lock.hidden = !state.locked;
         }
 
         async function poll() {
@@ -387,8 +495,16 @@ public static class RemotePage
           <img class="mark" src="/logo.png" alt="ScorePlus"/>
           <h1>REMOTE</h1>
           <span class="sport" id="sport">—</span>
+          <a href="/replay" title="Open the camera replay booth">Replay Booth</a>
+          <a href="/multiview" title="Open the camera wall">Multiview</a>
           <a href="/logout">Sign out</a>
         </header>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="console">Console</button>
+          <button class="tab" data-tab="media">Media</button>
+          <button class="tab" data-tab="roster">Roster</button>
+        </div>
 
         <div class="card">
           <div class="title">SCORE <span class="right" id="liveBadge">LIVE</span></div>
@@ -484,6 +600,7 @@ public static class RemotePage
             <button class="small" data-act="football.down.plus">Next down</button>
             <button class="small" data-act="football.down.previous">Previous down</button>
             <button class="small" data-act="football.series.new">New series</button>
+            <button class="small" data-act="football.down.recall">Last down</button>
             <button class="small" id="ballSide" data-act="football.ball.side">◀ VISITORS</button>
           </div>
         </div>
@@ -496,13 +613,23 @@ public static class RemotePage
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" id="penaltyCard">
+          <div class="title">FLAG</div>
+          <div class="row">
+            <button class="small" id="penaltyFlag">Flag down</button>
+            <button class="small" id="penaltyHome">Home</button>
+            <button class="small" id="penaltyAway">Visitors</button>
+          </div>
+          <select id="penaltyType" title="What the flag was for" style="width:100%;margin-top:6px;padding:8px"></select>
+        </div>
+
+        <div class="card" id="sportValuesCard" style="display:none">
           <div class="title">SPORT VALUES</div>
           <div class="grid" id="controls"></div>
         </div>
 
         <div class="card">
-          <div class="title">CUSTOM STATS</div>
+          <div class="title">CUSTOM VALUES</div>
           <div class="grid" id="stats"></div>
           <div class="row">
             <input id="statName" placeholder="New stat name" style="flex:1 1 auto;padding:8px" />
@@ -512,6 +639,7 @@ public static class RemotePage
 
         <div class="card">
           <div class="title">OUTPUT</div>
+          <select id="displaySelect" title="Which display these layout buttons change" style="width:100%;margin-bottom:6px;padding:8px"></select>
           <div class="layoutbar">
             <button class="small" data-act="layout.prev" style="flex:0 0 44px">◀</button>
             <span class="label" id="layout">—</span>
@@ -523,10 +651,33 @@ public static class RemotePage
           </div>
           <div class="row">
             <button class="small" data-act="global.undo">Undo</button>
-            <button class="small" data-act="panel.new">New panel</button>
           </div>
         </div>
 
+        <div class="card" id="mediaCard" hidden>
+          <div class="title">MEDIA <span class="right" id="mediaNow">—</span></div>
+          <div class="warn">Experimental: remote media controls are still being refined. Paused clips and speaker buses are shown separately from playing media; check the desktop before going live.</div>
+          <div class="muted" id="speakerNow"></div>
+          <div class="row">
+            <button class="small" id="mediaToggle">Play / Pause</button>
+            <button class="small" id="mediaRefresh">Refresh</button>
+          </div>
+          <div class="grid" id="mediaList"></div>
+        </div>
+
+        <div class="card" id="rosterCard" hidden>
+          <div class="title">ROSTER</div>
+          <div class="row">
+            <button class="small" id="rosterAway" data-rside="away">◀ Visitors</button>
+            <button class="small" id="rosterHome" data-rside="home">Home ▶</button>
+          </div>
+          <div class="muted" id="rosterName">—</div>
+          <button class="small" id="rosterOffAir" style="margin:6px 0 8px">TAKE PLAYER OFF AIR</button>
+          <div class="grid" id="rosterList"></div>
+          <div id="playerStats"></div>
+        </div>
+
+        <div id="lockScreen" hidden><div class="box"><h2>SCOREPLUS LOCKED</h2><p>The operator has locked the console, media, rosters and remote. Ask them to unlock ScorePlus on the desktop.</p></div></div>
         <div class="flash" id="flash"></div>
         """;
 
@@ -571,5 +722,145 @@ public static class RemotePage
         return Shell("Sign in", body, script: false);
     }
 
-    public static string Panel() => Shell("Remote", Body, script: true);
+    public static string Panel()
+    {
+        var page = Shell("Remote", Body, script: true);
+        return page.Replace("</body>", Tabs + "</body>", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The console tab keeps the live scoreboard and clock cards; Media and Roster are their own tabs
+    /// with their own lists, so the phone offers the whole desk instead of only the score.
+    /// </summary>
+    const string Tabs = """
+        <style>
+        .tabs{position:sticky;top:0;z-index:5;display:flex;gap:6px;padding:8px 12px;background:#0b0f15;border-bottom:1px solid #223}
+        .tab{flex:1 1 0;padding:10px 6px;border-radius:8px;border:1px solid #2a3546;background:#131a24;color:#9fb0c6;font:inherit;font-size:14px}
+        .tab.active{background:#16382f;border-color:#38d7a3;color:#eaf7f2}
+        [hidden]{display:none!important}
+        .mediaRow{display:flex;align-items:center;gap:8px;padding:6px;border-bottom:1px solid #1d2632}
+        /* A long clip or player name gets the room and ends in an ellipsis; the Air button keeps its
+           own width instead of squeezing the name off the row. */
+        .mediaRow button{flex:1 1 auto;text-align:left;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .mediaRow button:last-child{flex:0 0 auto}
+        .mediaRow button.editing{color:#ffd766;border-color:#ffd766;font-weight:800}
+        </style>
+        <script>
+        (function(){
+          var tabs=[].slice.call(document.querySelectorAll('.tab'));
+          var cards=[].slice.call(document.querySelectorAll('.card'));
+          var consoleCards=cards.filter(function(c){return c.id!=='mediaCard'&&c.id!=='rosterCard';});
+          var side='home';
+          var editPlayer='';
+          function el(tag,cls,text){var n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
+          function post(url,body){
+            return fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},credentials:'same-origin',body:new URLSearchParams(body)});
+          }
+          function getJson(url){return fetch(url,{cache:'no-store',credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;});}
+          function show(name){
+            tabs.forEach(function(t){t.classList.toggle('active',t.dataset.tab===name);});
+            consoleCards.forEach(function(c){c.hidden=name!=='console';});
+            document.getElementById('mediaCard').hidden=name!=='media';
+            document.getElementById('rosterCard').hidden=name!=='roster';
+            if(name==='media')loadMedia();
+            if(name==='roster')loadRoster();
+          }
+          function loadMedia(){
+            getJson('/api/media').then(function(d){
+              if(!d)return;
+              var live=(d.live||[]).filter(function(x){return x;});
+              var paused=(d.paused||[]).filter(function(x){return x;});
+              var speakers=(d.speakers||[]).filter(function(x){return x;});
+              var status=live.length?live.join(' + '):(paused.length?'PAUSED · '+paused.join(' + '):'nothing playing');
+              document.getElementById('mediaNow').textContent=status;
+              document.getElementById('speakerNow').textContent=speakers.length?'Speaker bus on air: '+speakers.join(' + '):'';
+              document.getElementById('mediaToggle').textContent=paused.length?'Resume':'Pause';
+              var list=document.getElementById('mediaList');
+              list.innerHTML='';
+              (d.clips||[]).slice(0,80).forEach(function(c){
+                var row=el('div','mediaRow');
+                var play=el('button','small',(c.kind?c.kind+' · ':'')+c.label+(c.length?'  ·  '+c.length.toFixed(1)+'s':''));
+                play.onclick=function(){post('/api/media/action',{a:'play',id:c.id}).then(loadMedia);};
+                var onair=el('button','small'+(c.onAir?' plus':''),c.onAir?'ON AIR':'Air');
+                onair.onclick=function(){post('/api/media/action',{a:'onair',id:c.id}).then(loadMedia);};
+                row.appendChild(play);row.appendChild(onair);
+                list.appendChild(row);
+              });
+              if(!(d.clips||[]).length)list.appendChild(el('div','muted','No clips in the library yet.'));
+            });
+          }
+          function loadRoster(){
+            getJson('/api/rosters').then(function(d){
+              if(!d)return;
+              var sideData=(side==='home'?d.home:d.away)||{};
+              document.getElementById('rosterName').textContent=(sideData.name||'No roster')+(sideData.rosterName?'  ·  '+sideData.rosterName:'');
+              var list=document.getElementById('rosterList');
+              list.innerHTML='';
+              (d.rosters||[]).forEach(function(r){
+                var b=el('button','small'+(r.id===sideData.rosterId?' plus':''),r.name);
+                b.onclick=function(){post('/api/roster/action',{a:'roster',side:side,id:r.id}).then(loadRoster);};
+                list.appendChild(b);
+              });
+              var players=(sideData.players||[]).slice().sort(function(a,b){
+                return String(a.group||'').localeCompare(String(b.group||''));
+              });
+              // The player whose stats are on screen is lit up from the first paint, not only after
+              // a row is tapped; with nothing chosen the on-air player is the one being edited.
+              if(!editPlayer||!players.some(function(p){return p.id===editPlayer;})){
+                var initial=players.find(function(p){return p.selected;})||players[0];
+                editPlayer=initial?initial.id:'';
+              }
+              var lastGroup=null;
+              players.forEach(function(p){
+                var group=(p.group||'').trim();
+                if(group!==lastGroup){list.appendChild(el('div','groupHead',group?group.toUpperCase():'UNGROUPED'));lastGroup=group;}
+                var row=el('div','mediaRow');
+                var b=el('button','small'+(p.id===editPlayer?' editing':''),(p.number?p.number+'  ':'')+p.name);
+                b.onclick=function(){editPlayer=p.id;loadRoster();};
+                var air=el('button','small'+(p.selected?' plus':''),p.selected?'ON AIR':'Air');
+                air.title=p.selected?'Take this player off air':'Put this player on air';
+                air.onclick=function(){post('/api/roster/action',p.selected?{a:'clear',side:side,id:p.id}:{a:'player',side:side,id:p.id}).then(loadRoster);};
+                row.appendChild(b);row.appendChild(air);list.appendChild(row);
+              });
+              if(!(sideData.players||[]).length)list.appendChild(el('div','muted','Pick a roster to list its players.'));
+              var editing=(sideData.players||[]).find(function(p){return p.id===editPlayer;})
+                ||(sideData.players||[]).find(function(p){return p.selected;})
+                ||(sideData.players||[])[0];
+              if(editing)editPlayer=editing.id;
+              renderPlayerStats(side,editing);
+            });
+          }
+          function renderPlayerStats(side,player){
+            var host=document.getElementById('playerStats');
+            if(!host)return;
+            host.innerHTML='';
+            if(!player){host.appendChild(el('div','muted','Pick a player to edit their stats.'));return;}
+            host.appendChild(el('div','muted','EDIT STATS — '+((player.number?player.number+'  ':'')+player.name)));
+            (player.stats||[]).forEach(function(s){
+              var row=el('div','statEdit');
+              row.appendChild(el('span','l',s.name));
+              var minus=el('button','small minus','−');
+              var input=el('input');input.type='number';input.inputMode='numeric';input.value=s.value;
+              var plus=el('button','small plus','+');
+              function save(value){
+                post('/api/roster/action',{a:'stat',side:side,id:player.id,stat:s.name,value:value}).then(loadRoster);
+              }
+              minus.onclick=function(){save(Math.max(0,(parseInt(s.value,10)||0)-1));};
+              plus.onclick=function(){save((parseInt(s.value,10)||0)+1);};
+              input.onchange=function(){var value=parseInt(input.value,10);if(!isNaN(value))save(value);};
+              row.appendChild(minus);row.appendChild(input);row.appendChild(plus);
+              host.appendChild(row);
+            });
+            if(!(player.stats||[]).length)host.appendChild(el('div','muted','This player has no stat columns yet.'));
+          }
+          tabs.forEach(function(t){t.addEventListener('click',function(){show(t.dataset.tab);});});
+          document.getElementById('mediaToggle').onclick=function(){post('/api/media/action',{a:'toggle'}).then(loadMedia);};
+          document.getElementById('mediaRefresh').onclick=loadMedia;
+          document.getElementById('rosterHome').onclick=function(){side='home';loadRoster();};
+          document.getElementById('rosterAway').onclick=function(){side='away';loadRoster();};
+          document.getElementById('rosterOffAir').onclick=function(){post('/api/roster/action',{a:'clear',side:side,id:''}).then(loadRoster);};
+          show('console');
+        })();
+        </script>
+        """;
 }

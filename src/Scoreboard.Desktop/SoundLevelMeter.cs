@@ -1,70 +1,76 @@
+using System.Diagnostics;
+using System.Threading;
 
 namespace Scoreboard.Desktop;
 
 /// <summary>
 /// A peak meter for what this machine is actually sending to its speakers. It listens to the default
-/// output with WASAPI loopback rather than to any one clip, so it reads a live camera mix, a replay
-/// or a routed ad exactly as the room hears them, and it keeps reading while nothing plays — silence
-/// is information too. One capture is shared by every window, since the machine has one output.
+/// PulseAudio monitor rather than to one clip, so it reads a live camera mix, a replay or a routed ad
+/// exactly as the room hears them, and true silence settles at zero. One capture is shared by every
+/// window, because the machine has one output.
 /// </summary>
 public static class SoundLevelMeter
 {
     static readonly object Gate = new();
-    static WasapiLoopbackCapture? _capture;
-    static bool _floats = true;
+    static readonly Process? Capture;
+    static readonly Thread? Reader;
     static float _held;
     static double _level;
     static DateTime _last = DateTime.UtcNow;
 
     static SoundLevelMeter()
     {
+        if (MediaProbe.Parec is null) { Available = false; return; }
         try
         {
-            _capture = new WasapiLoopbackCapture();
-            _floats = _capture.WaveFormat.BitsPerSample == 32;
-            _capture.DataAvailable += OnData;
-            _capture.StartRecording();
+            var info = MediaProbe.Start(MediaProbe.Parec,
+                "--device=@DEFAULT_MONITOR@", "--format=float32le", "--rate=48000",
+                "--channels=2", "--raw");
+            info.RedirectStandardError = true;
+            Capture = Process.Start(info);
+            if (Capture is null) { Available = false; return; }
             Available = true;
+            Reader = new Thread(() => ReadLoop(Capture)) { IsBackground = true, Name = "PulseAudio meter" };
+            Reader.Start();
         }
         catch
         {
-            // No sound card, a busy device, an unusual service account: the meter simply reads zero.
-            try { _capture?.Dispose(); } catch { }
-            _capture = null;
+            try { Capture?.Dispose(); } catch { }
+            Capture = null;
             Available = false;
         }
     }
 
-    /// <summary>False when the machine has no output to listen to; the meter then stays dark.</summary>
+    /// <summary>False when there is no PulseAudio monitor to listen to; the meter then stays dark.</summary>
     public static bool Available { get; }
 
-    static void OnData(object? sender, WaveInEventArgs e)
+    static void ReadLoop(Process process)
     {
-        if (e.BytesRecorded <= 0) return;
-        var peak = 0f;
-        if (_floats)
+        try
         {
-            for (var offset = 0; offset + 4 <= e.BytesRecorded; offset += 4)
+            var stream = process.StandardOutput.BaseStream;
+            var buffer = new byte[4096];
+            while (!process.HasExited)
             {
-                var sample = Math.Abs(BitConverter.ToSingle(e.Buffer, offset));
-                if (sample > peak) peak = sample;
+                var read = stream.Read(buffer, 0, buffer.Length);
+                if (read <= 0) break;
+                var peak = 0f;
+                // parec is asked for float32 little-endian stereo; every four bytes is one sample.
+                for (var offset = 0; offset + 4 <= read; offset += 4)
+                {
+                    var sample = Math.Abs(BitConverter.ToSingle(buffer, offset));
+                    if (sample > peak) peak = sample;
+                }
+                if (!float.IsFinite(peak)) continue;
+                lock (Gate) { if (peak > _held) _held = peak; }
             }
         }
-        else
-        {
-            for (var offset = 0; offset + 2 <= e.BytesRecorded; offset += 2)
-            {
-                var sample = Math.Abs(BitConverter.ToInt16(e.Buffer, offset) / 32768f);
-                if (sample > peak) peak = sample;
-            }
-        }
-        lock (Gate) { if (peak > _held) _held = peak; }
+        catch { }
     }
 
     /// <summary>
     /// The level to draw, 0–1. It rises instantly to the loudest sample since the last read and falls
-    /// with a slow, time-based decay, so the bar is readable instead of strobing, and true silence
-    /// still settles at zero.
+    /// with a slow, time-based decay, so the bar is readable instead of strobing.
     /// </summary>
     public static double Read()
     {

@@ -70,7 +70,7 @@ MANIFEST="$OUT/linux.json"
 [[ -f "$OUT/scoreplus" ]] || { echo "build produced nothing in $OUT" >&2; exit 1; }
 
 # The updater wants one asset name that never changes, the same reason the Windows feed always asks
-# for ScorePlusSetup.exe. Every release therefore carries a second, stable-named copy of the tarball
+# for ScorePlusLinuxSetup.tar.gz. Every release therefore carries a second, stable-named copy of the tarball
 # beside the version-named one; install.sh inside it is what actually swaps the files.
 STABLE="$OUT/ScorePlusLinuxSetup.tar.gz"
 [[ -f "$TARBALL" ]] && cp -f "$TARBALL" "$STABLE"

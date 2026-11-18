@@ -44,7 +44,10 @@ internal static class Program
 
             var image = surface.GetVisualDescendants().OfType<Image>().Single();
             var placeholder = surface.GetVisualDescendants().OfType<Border>().Single();
-            var deadline = DateTime.UtcNow.AddSeconds(5);
+            // HtmlEngine allows a browser capture 15 seconds to finish. The test must wait past
+            // that timeout, otherwise a slow or failing browser is mistaken for a missing one
+            // before the explained placeholder has had a chance to appear.
+            var deadline = DateTime.UtcNow.AddSeconds(20);
             while (image.Source is null && !placeholder.IsVisible && DateTime.UtcNow < deadline)
                 Pump(TimeSpan.FromMilliseconds(200));
 
@@ -79,7 +82,17 @@ internal static class Program
             onAirHost.UpdateLayout();
             var onAirImage = onAir.GetVisualDescendants().OfType<Image>().Single();
             var onAirPlaceholder = onAir.GetVisualDescendants().OfType<Border>().Single();
-            Pump(TimeSpan.FromSeconds(1));
+            if (!noBrowser)
+            {
+                // A second surface starts its own browser, so give it the same room as the first.
+                var onAirDeadline = DateTime.UtcNow.AddSeconds(20);
+                while (onAirImage.Source is null && DateTime.UtcNow < onAirDeadline)
+                    Pump(TimeSpan.FromMilliseconds(200));
+            }
+            else
+            {
+                Pump(TimeSpan.FromSeconds(1));
+            }
             Check(!onAirPlaceholder.IsVisible, "the on-air HTML surface never shows the studio badge");
             Check(noBrowser ? onAirImage.Source is null : onAirImage.Source is not null,
                 "the on-air HTML surface matches the browser state without a badge");

@@ -39,6 +39,14 @@ public sealed class ProgramSelection
 
     public ScorebugLayout Layout => Display.Layouts[LayoutIndex];
 
+    /// <summary>The staged layout for any display, falling back to the published layout.</summary>
+    public ScorebugLayout? LayoutFor(string displayId)
+    {
+        var display = _catalog.FindDisplay(displayId);
+        if (display is null || display.Layouts.Count == 0) return null;
+        return display.Layouts[Math.Clamp(IndexFor(display.Id), 0, display.Layouts.Count - 1)];
+    }
+
     /// <summary>"2 · Lower third" — the layout this window would publish.</summary>
     public string Label => $"{LayoutIndex + 1} · {Layout.Name}";
 
@@ -107,6 +115,26 @@ public sealed class ProgramSelection
         if (display.Layouts.Count == 0) return;
         var next = (IndexFor(display.Id) + delta + display.Layouts.Count) % display.Layouts.Count;
         SelectLayout(next);
+    }
+
+    /// <summary>The staged layout label for any display, without changing this window's preview.</summary>
+    public string LabelFor(string displayId)
+    {
+        var display = _catalog.FindDisplay(displayId);
+        if (display is null || display.Layouts.Count == 0) return "";
+        var index = Math.Clamp(IndexFor(display.Id), 0, display.Layouts.Count - 1);
+        return $"{index + 1} · {display.Layouts[index].Name}";
+    }
+
+    /// <summary>Stages another display's layout, used by the phone remote's layout arrows.</summary>
+    public void ShiftFor(string displayId, int delta)
+    {
+        var display = _catalog.FindDisplay(displayId);
+        if (display is null || display.Layouts.Count == 0) return;
+        var next = (IndexFor(display.Id) + delta + display.Layouts.Count) % display.Layouts.Count;
+        Stage(display.Id, next);
+        FollowLinks(display.Id, next);
+        Changed?.Invoke();
     }
 
     /// <summary>True when this window holds a layout that is not the one on air for that display.</summary>

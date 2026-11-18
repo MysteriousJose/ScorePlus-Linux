@@ -6,7 +6,7 @@ using Avalonia.Media;
 namespace Scoreboard.Desktop;
 
 /// <summary>
-/// Asks which microphone a new library item should listen to, by the name Windows gives the device.
+/// Asks which microphone a new library item should listen to, by the name PulseAudio gives the device.
 /// With a single microphone there is nothing to choose, so the dock adds it without opening this.
 /// </summary>
 internal sealed class MicrophonePickerWindow : Window

@@ -15,6 +15,10 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>embedded</DebugType>
+    <!-- Every window and view is constructed in code with its dependencies and loaded through the
+         compiled InitializeComponent path. Avalonia's URI-based runtime XAML loader is not used, so
+         AVLN3001's parameterless-constructor requirement does not apply to this app. -->
+    <NoWarn>$(NoWarn);AVLN3001</NoWarn>
     <!-- Only the program itself lands in the release folder: no NuGet XML docs beside it. -->
     <AllowedReferenceRelatedFileExtensions>.pdb</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
@@ -23,16 +27,18 @@
     <!-- The .axaml surfaces need no listing: Avalonia's targets glob **/*.axaml as AvaloniaXaml
          and compile them. WPF-era <Resource> items did nothing here, so they are gone. -->
     <AvaloniaResource Include="Assets/*.png" />
+    <Content Include="Assets/*.mp3" CopyToOutputDirectory="PreserveNewest" />
     <!-- Window markup says Icon="app.ico". Avalonia only sees what is registered here, which is
          why the WPF-era ApplicationIcon alone left every window throwing on load. -->
     <AvaloniaResource Include="app.ico" />
   </ItemGroup>
   <ItemGroup>
-    <!-- No Windows-only packages: HtmlSurface's browser path has an inert, cross-platform
-         stand-in, and media/audio/camera go through ffmpeg and PulseAudio. Keeping WPF's WebView2
-         here would drag Windows assemblies into every macOS/Linux build for no code that uses them. -->
+    <!-- No Windows-only packages: HTML is captured with headless system Chromium/Chrome, and
+         media/audio/camera go through ffmpeg and PulseAudio. Keeping WPF's WebView2 here would
+         drag Windows assemblies into every macOS/Linux build. -->
     <PackageReference Include="Avalonia" Version="11.3.22" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.0" />
   </ItemGroup>
 </Project>

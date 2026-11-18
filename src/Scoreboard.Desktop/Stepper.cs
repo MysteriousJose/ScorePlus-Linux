@@ -19,6 +19,9 @@ public sealed class Stepper : Grid
     readonly TextBox _value = new();
     readonly UniformGrid _plusRow = new();
     readonly UniformGrid _minusRow = new();
+    readonly Grid _captionRow = new();
+    readonly bool _compact;
+    FrameworkElement? _captionAccessory;
     bool _typing;
 
     /// <summary>Raised when a +/− button is pressed, carrying that button's definition.</summary>
@@ -39,13 +42,35 @@ public sealed class Stepper : Grid
     // The last value written from the game, so Escape can put a typed-over text box back.
     string? _text;
 
-    public Stepper(string? caption = null, double fontSize = 40)
+    /// <summary>
+    /// A compact stepper puts −, the value and + on one line and can carry a small accessory
+    /// in its caption. The tall stack remains the default for scores and stats.
+    /// </summary>
+    public Stepper(string? caption = null, double fontSize = 40, bool compact = false)
     {
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _compact = compact;
+        if (compact)
+        {
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        }
+        else
+        {
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
 
+        _captionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _captionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        // A compact caption with an accessory reserves its height plus a little breathing room.
+        // Every compact stepper reserves the same line, so the Down, To Go and Ball On values stay
+        // level, and the Ball On side switch never touches the step arrows below it.
+        if (compact) _captionRow.MinHeight = 34;
         if (!string.IsNullOrWhiteSpace(caption))
         {
             var label = new TextBlock
@@ -54,22 +79,25 @@ public sealed class Stepper : Grid
                 Foreground = new SolidColorBrush(Color.FromRgb(147, 160, 178)),
                 FontSize = 10,
                 HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 4)
+                VerticalAlignment = compact
+                    ? global::Avalonia.Layout.VerticalAlignment.Center
+                    : global::Avalonia.Layout.VerticalAlignment.Stretch,
+                Margin = compact ? new Thickness(0) : new Thickness(0, 0, 0, 4)
             };
-            SetRow(label, 0);
-            Children.Add(label);
+            _captionRow.Children.Add(label);
+            // Compact captions span the value and accessory columns, so the word stays centred
+            // over the number even when the Ball On side switch is attached on the right.
+            if (compact) SetColumnSpan(label, 2);
+            SetRow(_captionRow, 0);
+            if (compact) SetColumnSpan(_captionRow, 3);
+            Children.Add(_captionRow);
         }
-
-        _plusRow.Margin = new Thickness(0, 0, 0, 3);
-        SetRow(_plusRow, 1);
-        Children.Add(_plusRow);
 
         _value.Text = "0";
         _value.FontSize = fontSize;
         _value.FontWeight = FontWeights.Bold;
         _value.TextAlignment = TextAlignment.Center;
         _value.Padding = new Thickness(2, 0, 2, 0);
-        _value.Margin = new Thickness(0, 1, 0, 1);
         _value.VerticalContentAlignment = global::Avalonia.Layout.VerticalAlignment.Center;
         _value.Cursor = Cursors.IBeam;
         _value.BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
@@ -82,12 +110,55 @@ public sealed class Stepper : Grid
         _value.AddHandler(InputElement.LostFocusEvent, new EventHandler<RoutedEventArgs>(
             (_, _) => { CommitTyped(); _typing = false; ShowValue(); }), RoutingStrategies.Bubble);
         _value.KeyDown += Value_KeyDown;
-        SetRow(_value, 2);
-        Children.Add(_value);
 
-        _minusRow.Margin = new Thickness(0, 3, 0, 0);
-        SetRow(_minusRow, 3);
-        Children.Add(_minusRow);
+        if (compact)
+        {
+            // The compact row reads left to right: subtract, value, add. This matches the
+            // direction operators expect on a numeric keypad and keeps every step arrow in place.
+            _minusRow.Width = 36;
+            _minusRow.Margin = new Thickness(0, 0, 3, 0);
+            SetRow(_minusRow, 1);
+            SetColumn(_minusRow, 0);
+            Children.Add(_minusRow);
+
+            _value.Margin = new Thickness(0);
+            _value.MinHeight = 34;
+            SetRow(_value, 1);
+            SetColumn(_value, 1);
+            Children.Add(_value);
+
+            _plusRow.Width = 36;
+            _plusRow.Margin = new Thickness(3, 0, 0, 0);
+            SetRow(_plusRow, 1);
+            SetColumn(_plusRow, 2);
+            Children.Add(_plusRow);
+        }
+        else
+        {
+            _plusRow.Margin = new Thickness(0, 0, 0, 3);
+            SetRow(_plusRow, 1);
+            Children.Add(_plusRow);
+
+            _value.Margin = new Thickness(0, 1, 0, 1);
+            SetRow(_value, 2);
+            Children.Add(_value);
+
+            _minusRow.Margin = new Thickness(0, 3, 0, 0);
+            SetRow(_minusRow, 3);
+            Children.Add(_minusRow);
+        }
+    }
+
+    /// <summary>Put a small control (such as the ball-side switch) beside a compact caption.</summary>
+    public void SetCaptionAccessory(FrameworkElement accessory)
+    {
+        if (_captionAccessory is not null) _captionRow.Children.Remove(_captionAccessory);
+        _captionAccessory = accessory;
+        SetColumn(accessory, 1);
+        accessory.HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Right;
+        accessory.VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Center;
+        accessory.ZIndex = 1;
+        _captionRow.Children.Add(accessory);
     }
 
     public int Value
@@ -98,7 +169,7 @@ public sealed class Stepper : Grid
 
     public string Text
     {
-        get => _value.Text;
+        get => _value.Text ?? "";
         set
         {
             _text = value;
@@ -118,7 +189,6 @@ public sealed class Stepper : Grid
         Fill(_minusRow, minus);
     }
 
-
     void Fill(UniformGrid row, IEnumerable<StepButton> buttons)
     {
         row.Children.Clear();
@@ -134,7 +204,9 @@ public sealed class Stepper : Grid
                 Padding = new Thickness(2, 6, 2, 6),
                 Margin = new Thickness(2, 0, 2, 0),
                 MinWidth = 0,
-                MinHeight = 30,
+                MinHeight = 36,
+                HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = global::Avalonia.Layout.HorizontalAlignment.Center,
                 Tag = item.ActionId,
                 ToolTip = item.Tip
             };
@@ -143,7 +215,7 @@ public sealed class Stepper : Grid
         }
     }
 
-    void Value_KeyDown(object sender, KeyEventArgs e)
+    void Value_KeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
         {

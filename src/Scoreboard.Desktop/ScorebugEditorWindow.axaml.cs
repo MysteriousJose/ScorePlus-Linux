@@ -8,13 +8,13 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using Avalonia.Media;
 using Microsoft.Win32;
 using Scoreboard.Core;
 
 namespace Scoreboard.Desktop;
 public partial class ScorebugEditorWindow : Window
 {
+    static readonly DataFormat<string> LayerFormat = DataFormat.CreateStringApplicationFormat("ScorePlus.LayerId");
     readonly ScorebugCatalog _catalog;
     readonly GameEngine _engine;
     readonly MediaPlayback? _playback;
@@ -264,9 +264,9 @@ public partial class ScorebugEditorWindow : Window
         _syncingLayers=true;
         try
         {
-            Layers.SelectedItems.Clear();
+            Layers.SelectedItems?.Clear();
             foreach(var item in Layers.Items.OfType<LayerItem>().Where(x=>_selectedIds.Contains(x.Element.Id)))
-                Layers.SelectedItems.Add(item);
+                Layers.SelectedItems?.Add(item);
         }
         finally { _syncingLayers=false; }
     }
@@ -283,7 +283,7 @@ public partial class ScorebugEditorWindow : Window
         // Top of the list is the front of the picture, the opposite of the canvas' back-to-front order.
         var ordered=_catalog.Layout.Elements.AsEnumerable().Reverse().Select(e=>new LayerItem(e)).ToArray();
         Layers.ItemsSource=ordered;
-        foreach(var item in ordered.Where(x=>_selectedIds.Contains(x.Element.Id)))Layers.SelectedItems.Add(item);
+        foreach(var item in ordered.Where(x=>_selectedIds.Contains(x.Element.Id)))Layers.SelectedItems?.Add(item);
         LayerCount.Text=ordered.Length==0?"no elements":$"{ordered.Length} element{(ordered.Length==1?"":"s")}";
         _syncingLayers=false;
         RefreshMotionLists();
@@ -773,12 +773,12 @@ public partial class ScorebugEditorWindow : Window
     void UpdatePlayerHint()
     {
         if(PlayerBindingHint is null)return;
-        if((ContentInput.Text?.Length ?? 0)==0||!PlayerToken.IsMatch(ContentInput.Text))
+        if(ContentInput.Text is not { Length: > 0 } content||!PlayerToken.IsMatch(content))
         {
             PlayerBindingHint.Text="This text is not tied to a player yet. Pick a team, player and value above, or type any binding in CONTENT.";
             return;
         }
-        var printed=ScoreboardTemplates.Bind(ContentInput.Text,_engine.State,Selected?.PeriodFormat);
+        var printed=ScoreboardTemplates.Bind(content,_engine.State,Selected?.PeriodFormat);
         PlayerBindingHint.Text=printed.Length==0
             ? "Prints nothing: that player or value is empty right now."
             : $"Prints now: \"{printed}\"";
@@ -789,7 +789,8 @@ public partial class ScorebugEditorWindow : Window
         if(_loading||_syncingLayers)return;
         // Extended mode hands over the whole range: Ctrl adds rows one at a time, Shift takes every
         // row between the anchor and the click.
-        var ids=Layers.SelectedItems.OfType<LayerItem>().Select(x=>x.Element.Id).ToArray();
+        if(Layers.SelectedItems is not { } selected)return;
+        var ids=selected.OfType<LayerItem>().Select(x=>x.Element.Id).ToArray();
         _selectedIds.Clear();
         _selectedIds.AddRange(ids);
         // Keep editing the element the panel already held while it is still selected, so adding a
@@ -1072,7 +1073,7 @@ public partial class ScorebugEditorWindow : Window
         if(_loading)return;
         var item=Selected; if(item is null)return;
         var ids=_selectedIds.Count>0?_selectedIds.ToArray():[item.Id];
-        var name=NameInput.Text; var content=ContentInput.Text;
+        var name=NameInput.Text ?? ""; var content=ContentInput.Text ?? "";
         var xOk=double.TryParse(XInput.Text,out var x); var yOk=double.TryParse(YInput.Text,out var y);
         var wOk=double.TryParse(WidthInput.Text,out var w); var hOk=double.TryParse(HeightInput.Text,out var h);
         var fOk=double.TryParse(FontInputSize.Text,out var f);
@@ -1166,8 +1167,8 @@ public partial class ScorebugEditorWindow : Window
                 }
                 target.Width=Math.Max(16,targetW); target.Height=Math.Max(16,targetH);
                 if(fOk)target.FontSize=f;
-                if(foregroundOk)target.Foreground=ColorInput.Text;
-                if(backgroundOk)target.Background=BackgroundInput.Text;
+                if(foregroundOk)target.Foreground=ColorInput.Text ?? "";
+                if(backgroundOk)target.Background=BackgroundInput.Text ?? "";
                 if(animationClip is not null)target.MotionAnimation=animationClip.Clip.Snapshot();
                 else if(animation is not null){target.Animation=animation.Value;target.MotionAnimation=null;}
                 if(transitionClip is not null)target.MotionTransition=transitionClip.Clip.Snapshot();
@@ -1190,7 +1191,7 @@ public partial class ScorebugEditorWindow : Window
                 if(backgroundSource is not null)target.BackgroundSource=backgroundSource.Value;
                 target.BackgroundGradient=gradient;
                 if(gradientSource is not null)target.BackgroundSource2=gradientSource.Value;
-                if(gradientColorOk)target.BackgroundColor2=GradientColorInput.Text;
+                if(gradientColorOk)target.BackgroundColor2=GradientColorInput.Text ?? "";
                 if(gradientAngleOk)target.GradientAngle=Math.Clamp(gradientAngle,-360,360);
                 if(opacityOk)target.Opacity=Math.Clamp(opacity,0,1);
                 target.TextOpacity=textOpacity;
@@ -1199,7 +1200,7 @@ public partial class ScorebugEditorWindow : Window
                 if(logoSide is not null)target.LogoSide=logoSide.Value;
                 if(rotationOk)target.Rotation=Math.Clamp(rotation,-360,360);
                 if(borderWidthOk)target.BorderThickness=Math.Clamp(borderWidth,0,40);
-                if(borderColorOk)target.BorderColor=BorderColorInput.Text;
+                if(borderColorOk)target.BorderColor=BorderColorInput.Text ?? "";
                 if(borderSource is not null)target.BorderSource=borderSource.Value;
                 if(transitionSpeedOk)target.TransitionSeconds=Math.Clamp(transitionSpeed,0,5);
                 if(target.Kind==ScorebugElementKind.Logo&&target.LogoSide==ScorebugLogoSide.None)target.LogoSide=ScorebugLogoSide.Home;
@@ -1212,7 +1213,7 @@ public partial class ScorebugEditorWindow : Window
         if(artworkChanged)Render();
     }
 
-    static bool TryColor(string value,out Color color){try{color=(Color)ColorConverter.ConvertFromString(value)!;return true;}catch{color=Colors.White;return false;}}
+    static bool TryColor(string? value,out Color color){try{color=(Color)ColorConverter.ConvertFromString(value ?? "")!;return true;}catch{color=Colors.White;return false;}}
 
     // ---------- fonts ----------
 
@@ -1833,8 +1834,8 @@ public partial class ScorebugEditorWindow : Window
         ThemeManager.SetSkipTheme(add,true);
         add.Click+=(_,_)=>
         {
-            if(list.SelectedItems.Count==0)return;
-            AddMany(list.SelectedItems.Cast<PartItem>().Select(part=>part.Element));
+            if(list.SelectedItems is not { Count: > 0 } selected)return;
+            AddMany(selected.Cast<PartItem>().Select(part=>part.Element));
             dialog.DialogResult=true;
             dialog.Close();
         };
@@ -1890,7 +1891,7 @@ public partial class ScorebugEditorWindow : Window
         LoadProperties();
     }
 
-    void Element_MouseDown(object sender,PointerEventArgs e)
+    void Element_MouseDown(object? sender,PointerEventArgs e)
     {
         if(_resizing||sender is not Border host||host.Tag is not ScorebugElement item)return;
         var id=item.Id;
@@ -1930,11 +1931,11 @@ public partial class ScorebugEditorWindow : Window
             var element=_catalog.Layout.Elements.FirstOrDefault(x=>x.Id==selectedId);
             if(element is not null)_dragOrigins[selectedId]=(element.X,element.Y);
         }
-        host.CaptureMouse();
+        e.Pointer.Capture(host);
         e.Handled=true;
     }
 
-    void Element_MouseMove(object sender,PointerEventArgs e)
+    void Element_MouseMove(object? sender,PointerEventArgs e)
     {
         if(_resizing||_dragElement is null||e.LeftButton!=MouseButtonState.Pressed)return;
         var p=e.GetPosition(DesignCanvas);
@@ -1957,10 +1958,10 @@ public partial class ScorebugEditorWindow : Window
         }
     }
 
-    void Element_MouseUp(object sender,PointerEventArgs e)
+    void Element_MouseUp(object? sender,PointerEventArgs e)
     {
         if(_resizing)return;
-        if(sender is Border host)host.ReleaseMouseCapture();
+        if(sender is Border host)e.Pointer.Capture(null);
         SaveDrag();
         e.Handled=true;
     }
@@ -1993,7 +1994,7 @@ public partial class ScorebugEditorWindow : Window
         SaveDrag();
     }
 
-    void Resize_MouseDown(object sender,PointerEventArgs e)
+    void Resize_MouseDown(object? sender,PointerEventArgs e)
     {
         if(sender is not Border handle||handle.Tag is not ScorebugElement item)return;
         _dragElement=item; _resizing=true;
@@ -2005,11 +2006,11 @@ public partial class ScorebugEditorWindow : Window
         _resizeStartX=origin.X; _resizeStartY=origin.Y;
         _resizeStartWidth=item.Width; _resizeStartHeight=item.Height;
         _resizeStartFontSize=item.FontSize;
-        handle.CaptureMouse();
+        e.Pointer.Capture(handle);
         e.Handled=true;
     }
 
-    void Resize_MouseMove(object sender,PointerEventArgs e)
+    void Resize_MouseMove(object? sender,PointerEventArgs e)
     {
         if(_dragElement is null||!_resizing||e.LeftButton!=MouseButtonState.Pressed)return;
         var p=e.GetPosition(DesignCanvas);
@@ -2053,9 +2054,9 @@ public partial class ScorebugEditorWindow : Window
         e.Handled=true;
     }
 
-    void Resize_MouseUp(object sender,PointerEventArgs e)
+    void Resize_MouseUp(object? sender,PointerEventArgs e)
     {
-        if(sender is Border handle)handle.ReleaseMouseCapture();
+        if(sender is Border handle)e.Pointer.Capture(null);
         if(_dragElement is { } item)
         {
             var id=item.Id; var w=item.Width; var h=item.Height;
@@ -2066,18 +2067,23 @@ public partial class ScorebugEditorWindow : Window
         e.Handled=true;
     }
 
-    void Layers_MouseDown(object sender,PointerEventArgs e)=>_listStart=e.GetPosition(null);
+    void Layers_MouseDown(object? sender,PointerEventArgs e)=>_listStart=e.GetPosition(null);
 
-    void Layers_MouseMove(object sender,PointerEventArgs e)
+    void Layers_MouseMove(object? sender,PointerEventArgs e)
     {
         if(e.LeftButton!=MouseButtonState.Pressed||Layers.SelectedItem is not LayerItem item)return;
         var p=e.GetPosition(null);
-        if(Math.Abs(p.X-_listStart.X)>8||Math.Abs(p.Y-_listStart.Y)>8)WpfDragDrop.DoDragDrop(Layers,item.Element.Id,DragDropEffects.Move);
+        if(Math.Abs(p.X-_listStart.X)>8||Math.Abs(p.Y-_listStart.Y)>8)
+        {
+            var data = new DataTransfer();
+            data.Add(DataTransferItem.Create(LayerFormat, item.Element.Id));
+            _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+        }
     }
 
-    void Layers_Drop(object sender,DragEventArgs e)
+    void Layers_Drop(object? sender,DragEventArgs e)
     {
-        if(e.Data.GetData(typeof(string)) is not string movedId)return;
+        if(e.DataTransfer.TryGetValue(LayerFormat) is not string movedId)return;
         var p=e.GetPosition(Layers);
         var target=Layers.InputHitTest(p) as Avalonia.AvaloniaObject;
         while(target is not null&&target is not ListBoxItem)target=VisualTreeHelper.GetParent(target);

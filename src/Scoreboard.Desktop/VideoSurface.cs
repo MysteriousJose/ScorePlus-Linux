@@ -3,6 +3,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Scoreboard.Core;
+using Avalonia.Layout;
+using Avalonia.Interactivity;
+using Avalonia.Controls.Primitives;
 
 namespace Scoreboard.Desktop;
 
@@ -20,7 +23,7 @@ public sealed class VideoSurface : Grid
     readonly TextBlock? _placeholder = null;
     readonly RectangleGeometry _clip = new();
     // Live camera frames are drawn on this image instead of the MediaElement.
-    readonly Image _live = new() { Stretch = Stretch.UniformToFill, Visibility = Visibility.Collapsed };
+    readonly Image _live = new() { Stretch = Stretch.UniformToFill, IsVisible = false };
     readonly bool _mute;
     // True for a surface that is showing what the audience gets, even when it is muted. The
     // audience-view monitor is one: silent, but it must never show a replay the audience cannot.
@@ -109,7 +112,7 @@ public sealed class VideoSurface : Grid
                 {
                     freeze.Stop();
                     if (token != _freezeToken) return;
-                    if (_live.Source is not null) _live.Visibility = Visibility.Collapsed;
+                    if (_live.Source is not null) _live.IsVisible = false;
                     // Start replay may have been pressed while the decoder was opening; in that
                     // case keep rolling instead of freezing on the first frame.
                     if (_playback is { IsPlaying: true }) { try { _element.Play(); } catch { } _playing = true; return; }
@@ -121,7 +124,7 @@ public sealed class VideoSurface : Grid
             }
             // The live frame only covered the decoder while it opened the file; the clip is
             // drawing now, so put it away so nothing stale shows through.
-            if (_live.Source is not null) _live.Visibility = Visibility.Collapsed;
+            if (_live.Source is not null) _live.IsVisible = false;
             Apply();
         };
         _element.MediaEnded += (_, _) => Loop();
@@ -159,6 +162,20 @@ public sealed class VideoSurface : Grid
     public void SetElement(ScorebugElement item)
     {
         _item = item;
+        // Chroma key runs in the decoder: ffmpeg removes the key colour before the frame reaches
+        // the screen, so the scorebug underneath shows through instead of a green rectangle.
+        var key = (item.ChromaKeyColor ?? "").Trim();
+        var wanted = string.IsNullOrWhiteSpace(key) ? null : new ChromaKeyEffect
+        {
+            KeyColor = Paint.ColorOf(key, Colors.White),
+            Tolerance = item.ChromaKeyTolerance
+        };
+        if (!string.Equals(wanted?.Filter, _element.ChromaKey?.Filter, StringComparison.Ordinal))
+        {
+            _element.ChromaKey = wanted;
+            // The filter is part of the decoder's command line, so an existing clip reopens once.
+            if (_loadedPath is not null) { try { _element.Close(); } catch { } _loadedPath = null; }
+        }
         // Preserving the aspect ratio letterboxes the picture inside its box instead of cropping it.
         var stretch = item.PreserveVideoAspect ? Stretch.Uniform : Stretch.UniformToFill;
         _element.Stretch = stretch;
@@ -213,7 +230,7 @@ public sealed class VideoSurface : Grid
             // A live feed has no file for the router to open.
             StopRouting();
             ShowLiveCamera(entry.CameraIndex);
-            if (_placeholder is not null) _placeholder.Visibility = Visibility.Collapsed;
+            if (_placeholder is not null) _placeholder.IsVisible = false;
             return;
         }
         HideLiveCamera();
@@ -223,7 +240,7 @@ public sealed class VideoSurface : Grid
         if (!matches)
         {
             StopRouting();
-            _live.Visibility = Visibility.Collapsed;
+            _live.IsVisible = false;
             if (_loadedPath is not null)
             {
                 // Stop, Close and then clear the source. A MediaElement that is only stopped can
@@ -235,20 +252,22 @@ public sealed class VideoSurface : Grid
             }
             _playing = false;
             // Nothing is cued, so the box shows the artwork behind it, not the last video frame.
-            _element.Visibility = Visibility.Collapsed;
-            if (_placeholder is not null) _placeholder.Visibility = Visibility.Visible;
+            _element.IsVisible = false;
+            if (_placeholder is not null) _placeholder.IsVisible = true;
             return;
         }
 
-        _element.Visibility = Visibility.Visible;
-        if (_placeholder is not null) _placeholder.Visibility = Visibility.Collapsed;
+        _element.IsVisible = true;
+        if (_placeholder is not null) _placeholder.IsVisible = false;
 
         // Each clip carries its own level, and a clip routed to a chosen speaker (on the clip or on
         // this element) is muted here so its sound never comes out of two places at once.
         try
         {
-            _element.IsMuted = _mute || !string.IsNullOrWhiteSpace(_item.AudioDevice) || (_playback?.RoutedToDevice ?? false);
-            _element.Volume = (float)Math.Clamp(_playback?.Volume ?? 1, 0, 1);
+            var busGain = Math.Clamp(_playback?.SpeakerGain ?? 1, 0, 1);
+            _element.IsMuted = _mute || !string.IsNullOrWhiteSpace(_item.AudioDevice)
+                || (_playback?.RoutedToDevice ?? false) || busGain <= 0.001;
+            _element.Volume = (float)Math.Clamp((_playback?.Volume ?? 1) * busGain, 0, 1);
         }
         catch { }
         SyncRouting(entry!);
@@ -259,7 +278,7 @@ public sealed class VideoSurface : Grid
             _freezeToken++;
             // Opening a file takes a few frames, during which the MediaElement is black. Hold the
             // last live picture over it so the scorebug never blinks out between live and replay.
-            if (_live.Source is not null) _live.Visibility = Visibility.Visible;
+            if (_live.Source is not null) _live.IsVisible = true;
             try
             {
                 _element.Source = new Uri(entry.Path);
@@ -272,7 +291,7 @@ public sealed class VideoSurface : Grid
             {
                 _loadedPath = null;
                 _playing = false;
-                if (_placeholder is not null) _placeholder.Visibility = Visibility.Visible;
+                if (_placeholder is not null) _placeholder.IsVisible = true;
             }
             return;
         }
@@ -315,7 +334,7 @@ public sealed class VideoSurface : Grid
                 _element.Play();
                 _playing = true;
                 // The clip is drawing again; the last live frame was only a cover while it opened.
-                if (_live.Source is not null) _live.Visibility = Visibility.Collapsed;
+                if (_live.Source is not null) _live.IsVisible = false;
             }
             else
             {
@@ -352,12 +371,14 @@ public sealed class VideoSurface : Grid
         {
             // Start at the transport's point so joining a running clip stays in sync.
             var start = _playback?.Position ?? 0;
-            _router.Play(entry.Path, device, Math.Clamp(_playback?.Volume ?? entry.Volume, 0, 1), start);
+            var gain = Math.Clamp(_playback?.SpeakerGain ?? 1, 0, 1);
+            _router.Play(entry.Path, device, Math.Clamp((_playback?.Volume ?? entry.Volume) * gain, 0, 1), start);
             _routedPath = entry.Path;
             _routedDevice = device;
         }
         if (_playback is { IsPlaying: false }) _router.Pause(); else _router.Resume();
-        if (_playback is not null) _router.SetVolume(Math.Clamp(_playback.Volume, 0, 1));
+        if (_playback is not null)
+            _router.SetVolume(Math.Clamp(_playback.Volume * Math.Clamp(_playback.SpeakerGain, 0, 1), 0, 1));
     }
 
     void StopRouting()
@@ -387,8 +408,8 @@ public sealed class VideoSurface : Grid
         }
         // The last frame stays in the image: cutting back from a replay shows the camera instantly
         // instead of a blank box until the next frame arrives a fraction of a second later.
-        _live.Visibility = Visibility.Visible;
-        _element.Visibility = Visibility.Collapsed;
+        _live.IsVisible = true;
+        _element.IsVisible = false;
     }
 
     /// <summary>Stops listening to the feed but keeps its last frame on screen.</summary>
@@ -397,8 +418,8 @@ public sealed class VideoSurface : Grid
         if (_feed is not null) _feed.FrameReady -= OnCameraFrame;
         _feed = null;
         _cameraIndex = -1;
-        _live.Visibility = Visibility.Collapsed;
-        _element.Visibility = Visibility.Visible;
+        _live.IsVisible = false;
+        _element.IsVisible = true;
     }
 
     void OnCameraFrame(ImageSource frame) => _live.Source = frame;
@@ -417,9 +438,9 @@ public sealed class VideoSurface : Grid
         _opened = false;
         _loadedPath = null;
         try { _element.Stop(); _element.Close(); _element.Source = null; } catch { }
-        _element.Visibility = Visibility.Collapsed;
-        _live.Visibility = Visibility.Collapsed;
-        if (_placeholder is not null) _placeholder.Visibility = Visibility.Visible;
+        _element.IsVisible = false;
+        _live.IsVisible = false;
+        if (_placeholder is not null) _placeholder.IsVisible = true;
     }
 
     public void Dispose()

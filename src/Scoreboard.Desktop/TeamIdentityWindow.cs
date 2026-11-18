@@ -211,8 +211,8 @@ public sealed class TeamIdentityWindow : Window
 
     void PaintSwatches()
     {
-        try { _primarySwatch.Background = new SolidColorBrush(Color.Parse(_primaryHex.Text)); } catch { }
-        try { _secondarySwatch.Background = new SolidColorBrush(Color.Parse(_secondaryHex.Text)); } catch { }
+        try { _primarySwatch.Background = new SolidColorBrush(Color.Parse(_primaryHex.Text ?? "")); } catch { }
+        try { _secondarySwatch.Background = new SolidColorBrush(Color.Parse(_secondaryHex.Text ?? "")); } catch { }
     }
 
     /// <summary>Publishes what is typed. Returns false when a pending logo could not be copied.</summary>
@@ -238,15 +238,13 @@ public sealed class TeamIdentityWindow : Window
                 return false;
             }
         }
-        _engine.SetTeamIdentity(_home, _name.Text, _abbreviation.Text, logo, _primaryHex.Text, _secondaryHex.Text);
+        _engine.SetTeamIdentity(_home, _name.Text ?? "", _abbreviation.Text ?? "", logo, _primaryHex.Text ?? "", _secondaryHex.Text ?? "");
         return true;
     }
 
     void Save()
     {
         if (!Apply()) return;
-        // DialogResult is only valid for a modal dialog; the window can also be shown modelessly.
-        if (false) DialogResult = true;
         Close();
     }
 }
