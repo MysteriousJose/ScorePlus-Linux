@@ -417,7 +417,7 @@ public partial class ControlPanelView : UserControl
         // No fixed width: the two-column sport grid gives each control half the card, and the
         // label takes whatever the full-size step buttons leave. A fixed narrow cell kept these
         // buttons tiny while the rest of the console grew with the window.
-        var grid = new Grid { Height = 38, Margin = new Thickness(0, 0, 6, 4) };
+        var grid = new Grid { Height = 40, Margin = new Thickness(0, 0, 6, 4) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (var i = 0; i < 3; i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -544,13 +544,15 @@ public partial class ControlPanelView : UserControl
         {
             Content = text,
             Tag = actionId,
-            Width = 36,
-            Height = 36,
+            Width = 40,
+            Height = 40,
             MinWidth = 0,
             MinHeight = 0,
             Padding = new Thickness(0),
             Margin = new Thickness(1, 0, 1, 0),
-            FontSize = 16,
+            FontSize = 18,
+            HorizontalContentAlignment = global::Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalContentAlignment = global::Avalonia.Layout.VerticalAlignment.Center,
             ToolTip = tip
         };
         button.Click += Action_Click;
