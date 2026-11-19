@@ -174,6 +174,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
           <DockPanel>
             <TextBlock x:Name="DetailCardHint" DockPanel.Dock="Right" Classes="control-caption" HorizontalAlignment="Right"/>
@@ -184,38 +185,87 @@
           </DockPanel>
 
           <!-- Football -->
-          <Grid x:Name="FootballDetail" Grid.Row="1" Margin="0,4,0,0" VerticalAlignment="Top">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <ContentControl x:Name="DownHost" Grid.Column="0"/>
-            <ContentControl x:Name="ToGoHost" Grid.Column="1"/>
-            <ContentControl x:Name="BallOnHost" Grid.Column="2"/>
-          </Grid>
+          <StackPanel x:Name="FootballDetail" Grid.Row="1" Margin="0,4,0,0" VerticalAlignment="Top">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <ContentControl x:Name="DownHost" Grid.Column="0"/>
+              <ContentControl x:Name="ToGoHost" Grid.Column="1"/>
+              <ContentControl x:Name="BallOnHost" Grid.Column="2"/>
+            </Grid>
+            <!-- The down-line type is stepped with arrows so Yards, Goal, PAT and 2 PT are one
+                 press apart without opening a list over the clock. -->
+            <Grid x:Name="FootballModePicker" Margin="0,4,0,0" Height="38" MinHeight="38">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <Button Grid.Column="0" Classes="control-tiny" Content="◀" MinWidth="42" Height="38" Padding="0"
+                      Click="FootballModePrev_Click" ToolTip.Tip="Previous down-line type"/>
+              <Border Grid.Column="1" Background="#0B1118" CornerRadius="5" Margin="4,0"
+                      BorderBrush="#2C3745" BorderThickness="1">
+                <TextBlock x:Name="FootballModeLabel" Text="Yards" FontSize="13" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           ToolTip.Tip="How the down line prints: yards to go, Inches, Goal, PAT, 2 PT ATT, or None"/>
+              </Border>
+              <Button Grid.Column="2" Classes="control-tiny" Content="▶" MinWidth="42" Height="38" Padding="0"
+                      Click="FootballModeNext_Click" ToolTip.Tip="Next down-line type"/>
+            </Grid>
+          </StackPanel>
 
           <!-- Every sport's own values — balls, bases, power play, overs, sets — as full-size
                steppers and switches, two per row. Built in code from the game's sport controls. -->
           <UniformGrid x:Name="OtherDetail" Grid.Row="2" Margin="0,4,0,0" Columns="2" VerticalAlignment="Top"/>
 
-          <Grid Grid.Row="3" Margin="0,6,0,0">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
+          <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
             <Button x:Name="NewSeriesButton" Classes="control-tiny" Content="New series" Tag="football.series.new" Click="Action_Click"/>
-            <StackPanel Grid.Column="1" />
-          </Grid>
+            <Button x:Name="RecallDownButton" Classes="control-tiny" Content="↺ Last down" Tag="football.down.recall" Click="Action_Click"
+                    ToolTip.Tip="Put the down, distance and ball spot back where they were before the last change"/>
+          </StackPanel>
+
+          <!-- The penalty strip shares the down card: it is the same drive as the down, it only
+               needs one line, and it belongs beside the numbers it changes. -->
+          <DockPanel x:Name="PenaltyStrip" Grid.Row="4" Margin="0,6,0,0">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+              <ToggleButton x:Name="PenaltyActiveToggle" Content="No flag" MinHeight="32" Width="104"
+                            HorizontalContentAlignment="Center" Padding="10,2"
+                            Checked="Penalty_Changed" Unchecked="Penalty_Changed"
+                            ToolTip.Tip="Whether a flag is down at all"/>
+              <ComboBox x:Name="PenaltyTypeBox" Width="120" MinHeight="30" Margin="6,0,0,0"
+                        SelectionChanged="Penalty_Changed"
+                        ToolTip.Tip="What the flag was given for — holding, offside, handball and the rest"/>
+              <ComboBox x:Name="PenaltyTeamBox" Width="120" MinHeight="30" Margin="6,0,0,0"
+                        SelectionChanged="Penalty_Changed"
+                        ToolTip.Tip="Which team the flag is against"/>
+            </StackPanel>
+            <TextBlock x:Name="PenaltyHint" Classes="control-caption" VerticalAlignment="Center"
+                       Margin="8,0,0,0" TextTrimming="CharacterEllipsis"
+                       Text="No flag down. Update Output puts one on air."/>
+          </DockPanel>
         </Grid>
       </Border>
 
       <Border Classes="control-card" Grid.Column="1" Margin="0">
         <StackPanel>
-          <StackPanel Orientation="Horizontal">
-            <Border Classes="control-accent"/>
-            <TextBlock Text="TIMING" Classes="control-card-title"/>
-          </StackPanel>
+          <DockPanel>
+            <StackPanel Orientation="Horizontal">
+              <Border Classes="control-accent"/>
+              <TextBlock Text="TIMING" Classes="control-card-title"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+              <TextBlock Text="CLOCK SHOWS" Classes="control-caption" Margin="0,0,6,0"/>
+              <ComboBox x:Name="ClockMessageBox" Width="120" Height="28" SelectionChanged="ClockMessage_Changed"
+                        ToolTip.Tip="What the game clock prints on the graphic">
+                <ComboBoxItem Content="Game clock" Tag="Clock"/>
+                <ComboBoxItem Content="Final" Tag="Final"/>
+                <ComboBoxItem Content="End of Reg." Tag="EndOfRegulation"/>
+              </ComboBox>
+            </StackPanel>
+          </DockPanel>
 
           <!-- Quarter is a compact inline stepper: - / value / +, same button size as the rest. -->
           <ContentControl x:Name="QuarterHost" Margin="0,6,0,0"/>
@@ -243,6 +293,34 @@
               <Button Classes="control-tiny control-card-button" Content="−0:01" Tag="clock.minus1" Click="Action_Click" ToolTip.Tip="Clock −1 second"/>
               <Button Classes="control-tiny control-card-button" Content="+0:01" Tag="clock.plus1" Click="Action_Click" ToolTip.Tip="Clock +1 second"/>
               <Button Classes="control-tiny control-card-button" Content="+1:00" Tag="clock.plus60" Click="Action_Click" ToolTip.Tip="Clock +1 minute"/>
+            </UniformGrid>
+          </Grid>
+
+          <!-- Soccer's added time: start it while the game is stopped, stop it when play resumes. -->
+          <Grid x:Name="StoppageRow" Margin="0,7,0,0" IsVisible="False">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="STOPPAGE" Classes="control-caption" Margin="0,0,8,0"/>
+              <TextBox x:Name="StoppageValue" Grid.Column="1" Classes="control-clock-box" IsReadOnly="True"
+                       ToolTip.Tip="Added time accrued: the game clock runs this long past 90:00"/>
+              <Button x:Name="StoppageToggle" Grid.Column="2" Classes="control-tiny" Content="Start"
+                      Tag="clock.stoppage.toggle" Click="Action_Click"/>
+              <Button Grid.Column="3" Classes="control-tiny" Content="Clear"
+                      Tag="clock.stoppage.reset" Click="Action_Click" ToolTip.Tip="Clear the accrued added time"/>
+            </Grid>
+            <UniformGrid Grid.Row="1" Columns="3" Margin="0,1,0,0">
+              <Button Classes="control-tiny control-card-button" Content="+0:30" Tag="clock.stoppage.plus30" Click="Action_Click"/>
+              <Button Classes="control-tiny control-card-button" Content="+1:00" Tag="clock.stoppage.plus60" Click="Action_Click"/>
+              <Button Classes="control-tiny control-card-button" Content="−0:30" Tag="clock.stoppage.minus30" Click="Action_Click"/>
             </UniformGrid>
           </Grid>
 
@@ -386,6 +464,18 @@
     <Border Grid.Row="3" Background="#111721" CornerRadius="9" Padding="9,6" Margin="0,8,0,0">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <ComboBox x:Name="HornType" Width="100" MinHeight="32" Margin="0,0,4,0"
+                    SelectionChanged="HornType_Changed" ToolTip.Tip="Choose the horn sound">
+            <ComboBoxItem Content="Buzzer" Tag="Buzzer"/>
+            <ComboBoxItem Content="Air horn" Tag="AirHorn"/>
+            <ComboBoxItem Content="Siren" Tag="Siren"/>
+            <ComboBoxItem Content="Custom…" Tag="Custom"/>
+          </ComboBox>
+          <Button x:Name="HornButton" Content="HORN" MinWidth="60" MinHeight="36" Padding="10,6"
+                  Background="#8D2B2B" BorderBrush="#D65B5B" Foreground="#FFF4F4" FontWeight="Bold"
+                  Click="Horn_Click" ToolTip.Tip="Play the selected horn"/>
+          <Button x:Name="HornPickButton" Content="…" MinWidth="30" MinHeight="36" Padding="4,6"
+                  Margin="3,0,8,0" Click="HornPick_Click" ToolTip.Tip="Choose a custom horn audio file"/>
           <Border Background="#171C25" CornerRadius="6" Padding="6,2" Margin="0,0,8,0">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <TextBlock Text="LAYOUT" FontSize="10" FontWeight="Bold" Foreground="#7C8A9C" VerticalAlignment="Center" Margin="2,0,5,0"/>

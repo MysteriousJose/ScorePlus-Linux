@@ -58,6 +58,10 @@ public partial class ControlPanelView : UserControl
     bool _syncingLive;
     bool _loadingNames;
     bool _showHints;
+    bool _penaltySync;
+    bool _clockMessageSync;
+    bool _hornSync;
+    string _penaltyTeamsSignature = "";
     KeybindSettings _keybinds = KeybindStore.Load();
 
     public ControlPanelView(GameEngine engine, IControlPanelHost host)
@@ -124,6 +128,9 @@ public partial class ControlPanelView : UserControl
         // Update Output keeps its designed fill instead of the generic panel surface, so the
         // operator's secondary interface colour is what the main action actually wears.
         ThemeManager.SetSkipTheme(UpdateButton, true);
+        // The horn is a red console action, not a themed panel: keep its alarm colour in both themes.
+        ThemeManager.SetSkipTheme(HornButton, true);
+        SyncHorn();
 
         _engine.Changed += Refresh;
         Loaded += (_, _) => { ApplyKeybindHints(); Refresh(); };
@@ -250,6 +257,17 @@ public partial class ControlPanelView : UserControl
         LayoutLabel.Text = _host.LayoutLabel;
 
         if (!ClockValue.IsKeyboardFocused) ClockValue.Text = GameEngine.FormatClock(s.ClockSeconds);
+        // The clock's caption is a staged game value, not a property of the element: the operator
+        // can print FINAL or END OF REG. without rebuilding the graphic.
+        _clockMessageSync = true;
+        ClockMessageBox.SelectedIndex = (int)s.ClockMessage;
+        _clockMessageSync = false;
+        UpdateFootballMode(s);
+        // Soccer's added time lives under the game clock, and only for soccer.
+        var soccer = s.SportId == "soccer";
+        StoppageRow.IsVisible = soccer;
+        StoppageValue.Text = GameEngine.FormatClock(s.StoppageSeconds);
+        StoppageToggle.Content = s.StoppageRunning ? "Stop" : "Start";
         if (!PlayClockValue.IsKeyboardFocused) PlayClockValue.Text = s.PlayClockSeconds.ToString();
         if (!ShotClockValue.IsKeyboardFocused) ShotClockValue.Text = s.ShotClockSeconds.ToString();
         if (!TimeoutClockValue.IsKeyboardFocused) TimeoutClockValue.Text = GameEngine.FormatClock(s.TimeoutClockSeconds);
@@ -258,6 +276,12 @@ public partial class ControlPanelView : UserControl
         ShotClockToggle.Content = s.ShotClockRunning ? "Stop" : "Start";
         TimeoutClockToggle.Content = s.TimeoutClockRunning ? "Stop" : "Start";
 
+        // The penalty box sits on the console itself, so the flag is read and set in place.
+        SyncPenalty(s);
+        // Last down only exists once a newer down has been published; until then it has nothing to
+        // put back, and a live button that does nothing reads as broken.
+        RecallDownButton.IsEnabled = _engine.CanRecallLastDown;
+
         PossessionValue.Text = s.HomePossession ? s.HomeTeam : s.AwayTeam;
         AwayPossessionTag.Text = s.HomePossession ? "" : "◀ POSSESSION";
         HomePossessionTag.Text = s.HomePossession ? "POSSESSION ▶" : "";
@@ -265,7 +289,10 @@ public partial class ControlPanelView : UserControl
         HomePossessionButton.FontWeight = s.HomePossession ? FontWeights.Bold : FontWeights.Normal;
 
         var football = s.SportId == "football";
-        FootballDetail.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
+        FootballDetail.IsVisible = football;
+        FootballModePicker.IsVisible = football;
+        // Every sport with its own flag list gets the strip; Custom has no flags, so it stays hidden.
+        PenaltyStrip.IsVisible = GameEngine.PenaltyTypesFor(s.SportId).Length > 0;
         OtherDetail.Visibility = football ? Visibility.Collapsed : Visibility.Visible;
         NewSeriesButton.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
         DetailCardTitle.Text = football ? "DOWN & DISTANCE" : "SPORT CONTROLS";
@@ -305,6 +332,149 @@ public partial class ControlPanelView : UserControl
         catch { target.Source = null; }
     }
 
+
+    // ---------- penalty box ----------
+
+    /// <summary>Paints the penalty box from the game without writing the game back while it does.</summary>
+    void SyncPenalty(GameState s)
+    {
+        _penaltySync = true;
+        try
+        {
+            PenaltyActiveToggle.IsChecked = s.PenaltyActive;
+            PenaltyActiveToggle.Content = s.PenaltyActive ? "Flag down" : "No flag";
+            var types = GameEngine.PenaltyTypesFor(s.SportId);
+            PenaltyTypeBox.ItemsSource = types;
+            if (types.Length > 0) PenaltyTypeBox.SelectedItem = types.Contains(s.PenaltyType) ? s.PenaltyType : types[0];
+            var teams = new[] { $"Home · {s.HomeTeam}", $"Visitors · {s.AwayTeam}" };
+            var signature = string.Join("|", teams);
+            if (signature != _penaltyTeamsSignature) { _penaltyTeamsSignature = signature; PenaltyTeamBox.ItemsSource = teams; }
+            PenaltyTeamBox.SelectedIndex = s.PenaltyHome ? 0 : 1;
+            PenaltyHint.Text = s.PenaltyActive
+                ? $"{(s.PenaltyHome ? s.HomeTeam : s.AwayTeam)} — {s.PenaltyType}"
+                : "No flag down";
+        }
+        finally { _penaltySync = false; }
+    }
+
+    void ClockMessage_Changed(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_clockMessageSync || _engine is null) return;
+        _engine.SetClockMessage((GameClockMessage)Math.Clamp(ClockMessageBox.SelectedIndex, 0, 2));
+    }
+
+    static readonly FootballDownMode[] FootballModes =
+    [
+        FootballDownMode.Normal, FootballDownMode.Inches, FootballDownMode.Goal, FootballDownMode.Pat,
+        FootballDownMode.TwoPoint, FootballDownMode.None
+    ];
+
+    static readonly string[] FootballModeLabels = ["Yards", "Inches", "Goal", "PAT", "2 PT ATT", "None"];
+
+    void UpdateFootballMode(GameState s)
+    {
+        var mode = s.SportId == "football" ? s.FootballDownMode : FootballDownMode.Normal;
+        var index = Array.IndexOf(FootballModes, mode);
+        if (index < 0) index = 0;
+        FootballModeLabel.Text = FootballModeLabels[index];
+        FootballModeLabel.ToolTip = $"Down line: {FootballModeLabels[index]}. Use ◀ / ▶ to change it.";
+        FootballModePicker.IsEnabled = s.SportId == "football";
+    }
+
+    void FootballModePrev_Click(object? sender, RoutedEventArgs e) => ShiftFootballMode(-1);
+    void FootballModeNext_Click(object? sender, RoutedEventArgs e) => ShiftFootballMode(1);
+
+    void ShiftFootballMode(int delta)
+    {
+        if (_engine.State.SportId != "football") return;
+        var index = Array.IndexOf(FootballModes, _engine.State.FootballDownMode);
+        if (index < 0) index = 0;
+        index = (index + delta + FootballModes.Length) % FootballModes.Length;
+        _engine.SetFootballDownMode(FootballModes[index]);
+    }
+
+    /// <summary>Any of the three controls writes the whole flag, so the box can never half-change.</summary>
+    void Penalty_Changed(object? sender, RoutedEventArgs e)
+    {
+        if (_penaltySync || _engine is null) return;
+        var type = PenaltyTypeBox.SelectedItem as string ?? _engine.State.PenaltyType;
+        _engine.SetPenalty(PenaltyActiveToggle.IsChecked == true, type, PenaltyTeamBox.SelectedIndex != 1);
+    }
+
+    // ---------- horn ----------
+
+    void SyncHorn()
+    {
+        if (HornType is null) return;
+        var preferences = PreferencesStore.Load();
+        _hornSync = true;
+        try
+        {
+            HornType.SelectedIndex = HornPlayer.Parse(preferences.HornSound) switch
+            {
+                HornSound.AirHorn => 1,
+                HornSound.Siren => 2,
+                HornSound.Custom => 3,
+                _ => 0
+            };
+            HornPickButton.ToolTip = string.IsNullOrWhiteSpace(preferences.HornCustomPath)
+                ? "Choose a custom horn audio file"
+                : $"Custom horn: {preferences.HornCustomPath}";
+        }
+        finally { _hornSync = false; }
+    }
+
+    void HornType_Changed(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_hornSync) return;
+        var sound = HornType.SelectedIndex switch
+        {
+            1 => nameof(HornSound.AirHorn),
+            2 => nameof(HornSound.Siren),
+            3 => nameof(HornSound.Custom),
+            _ => nameof(HornSound.Buzzer)
+        };
+        var preferences = PreferencesStore.Load();
+        preferences.HornSound = sound;
+        PreferencesStore.Save(preferences);
+        HornPickButton.ToolTip = string.IsNullOrWhiteSpace(preferences.HornCustomPath)
+            ? "Choose a custom horn audio file"
+            : $"Custom horn: {preferences.HornCustomPath}";
+        if (HornPlayer.Parse(sound) == HornSound.Custom && string.IsNullOrWhiteSpace(preferences.HornCustomPath))
+            PickHorn();
+    }
+
+    void Horn_Click(object? sender, RoutedEventArgs e) => PlayHorn();
+
+    void PlayHorn()
+    {
+        var preferences = PreferencesStore.Load();
+        if (HornPlayer.Parse(preferences.HornSound) == HornSound.Custom
+            && string.IsNullOrWhiteSpace(preferences.HornCustomPath))
+        {
+            PickHorn();
+            preferences = PreferencesStore.Load();
+        }
+        if (!HornPlayer.Play(preferences.HornSound, preferences.HornCustomPath))
+            HornButton.ToolTip = "Could not play that horn. Pick a WAV, MP3 or AIFF file.";
+    }
+
+    void HornPick_Click(object? sender, RoutedEventArgs e) => PickHorn();
+
+    void PickHorn()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose a horn audio file",
+            Filter = "Audio files (*.wav;*.mp3;*.aiff;*.aif)|*.wav;*.mp3;*.aiff;*.aif|All files (*.*)|*.*"
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
+        var preferences = PreferencesStore.Load();
+        preferences.HornSound = nameof(HornSound.Custom);
+        preferences.HornCustomPath = dialog.FileName;
+        PreferencesStore.Save(preferences);
+        SyncHorn();
+    }
 
     void AwayDetails_Click(object sender, RoutedEventArgs e) => EditTeam(false);
     void HomeDetails_Click(object sender, RoutedEventArgs e) => EditTeam(true);
@@ -726,6 +896,7 @@ public partial class ControlPanelView : UserControl
         {
             case "output.publish": _host.PublishOutput(); break;
             case "output.live.toggle": _host.LiveScoreClock = !_host.LiveScoreClock; break;
+            case "horn.play": PlayHorn(); break;
             case "possession.away": _engine.SetPossession(false); break;
             case "possession.home": _engine.SetPossession(true); break;
             case "possession.toggle": _engine.TogglePossession(); break;
@@ -754,14 +925,28 @@ public partial class ControlPanelView : UserControl
             case "timeoutclock.plus1": _engine.SetTimeoutClock(_engine.State.TimeoutClockSeconds + 1); break;
             case "timeoutclock.plus10": _engine.SetTimeoutClock(_engine.State.TimeoutClockSeconds + 10); break;
             case "timeoutclock.set": SetTimeoutClockDialog(); break;
+            case "clock.stoppage.toggle": _engine.ToggleStoppageClock(); break;
+            case "clock.stoppage.reset": _engine.ResetStoppageClock(); break;
+            case "clock.stoppage.plus30": _engine.AdjustStoppageClock(30); break;
+            case "clock.stoppage.plus60": _engine.AdjustStoppageClock(60); break;
+            case "clock.stoppage.minus30": _engine.AdjustStoppageClock(-30); break;
             case "football.down.next": NextDown(); break;
             case "football.down.previous": _engine.PreviousDown(); break;
+            case "football.distance.normal": _engine.SetFootballDownMode(FootballDownMode.Normal); break;
+            case "football.distance.inches": _engine.SetFootballDownMode(FootballDownMode.Inches); break;
+            case "football.distance.goal": _engine.SetFootballDownMode(FootballDownMode.Goal); break;
+            case "football.distance.pat": _engine.SetFootballDownMode(FootballDownMode.Pat); break;
+            case "football.distance.twopt": _engine.SetFootballDownMode(FootballDownMode.TwoPoint); break;
+            case "football.distance.none": _engine.SetFootballDownMode(FootballDownMode.None); break;
+            case "football.down.recall": _engine.RecallLastDown(); break;
             case "football.distance.minus": _engine.SetFootballDistance(_engine.State.YardsToGo - 1); break;
             case "football.distance.plus": _engine.SetFootballDistance(_engine.State.YardsToGo + 1); break;
             case "football.ball.minus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Max(0, _engine.State.YardsToGoal - 1)); break;
             case "football.ball.side": _engine.SetBallSide(!_engine.State.BallOnHomeSide); break;
             case "football.ball.plus": _engine.SetFootballDistance(_engine.State.YardsToGo, Math.Min(50, _engine.State.YardsToGoal + 1)); break;
             case "football.series.new": _engine.NewSeries(); break;
+            // The flag itself is a keybind too: a flag goes down on the field, not in a menu.
+            case "penalty.toggle": _engine.SetPenalty(!_engine.State.PenaltyActive, _engine.State.PenaltyType, _engine.State.PenaltyHome); break;
             case "basketball.foul.home": _engine.AddFoul(true); break;
             case "basketball.foul.away": _engine.AddFoul(false); break;
             case "basketball.shotclock.toggle": _engine.ToggleShotClock(); break;
