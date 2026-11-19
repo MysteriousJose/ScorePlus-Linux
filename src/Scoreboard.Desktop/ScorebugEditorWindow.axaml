@@ -60,8 +60,16 @@
           <Button Content="VIDEO +" Classes="tool-button" FontWeight="SemiBold" Click="AddVideo_Click"/>
           <Button Content="HTML +" Classes="tool-button" FontWeight="SemiBold" Click="AddHtml_Click"
                   ToolTip.Tip="A live HTML/CSS widget, drawn by a browser engine on every screen"/>
+          <Button Content="TICKER +" Classes="tool-button" FontWeight="SemiBold" Click="AddTicker_Click"
+                  ToolTip.Tip="A ready-to-scroll bottom ribbon"/>
+          <Button Content="PLAYER PHOTO +" Classes="tool-button" FontWeight="SemiBold" Click="AddPlayerPhoto_Click"
+                  ToolTip.Tip="A portrait that follows the player selected on the Rosters tab"/>
+          <Button Content="LAYOUT +" Classes="tool-button" FontWeight="SemiBold" Click="AddLayoutFeed_Click"
+                  ToolTip.Tip="Put another layout inside this one as a live, resizeable feed"/>
           <Button Content="PARTS +" Classes="tool-button" FontWeight="SemiBold" Click="ImportParts_Click"
                   ToolTip.Tip="Copy elements from another layout instead of rebuilding them"/>
+          <Button x:Name="UndoButton" Content="↶" Classes="tool-button" FontWeight="SemiBold" Click="Undo_Click" ToolTip.Tip="Undo the last artwork change (Ctrl+Z)"/>
+          <Button x:Name="RedoButton" Content="↷" Classes="tool-button" FontWeight="SemiBold" Click="Redo_Click" ToolTip.Tip="Redo the change that was undone (Ctrl+Y)"/>
           <Button Content="REMOVE" Classes="tool-button" FontWeight="SemiBold" Click="Remove_Click" ToolTip.Tip="Delete the selected element"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal">
@@ -78,6 +86,8 @@
               <Button Content="New display…" Classes="layout-button" Click="DisplayNew_Click" ToolTip.Tip="Add another screen, for example a lower-thirds display"/>
               <Button Content="Import .spd…" Classes="layout-button" Click="DisplayImport_Click" ToolTip.Tip="Add a whole ScorePlus Display file — every layout it holds — to this game"/>
               <Button Content="Export .spd…" Classes="layout-button" Click="DisplayExport_Click" ToolTip.Tip="Write this display and all its layouts to a ScorePlus Display file"/>
+              <Button Content="Conditionals…" Classes="layout-button" Click="Conditionals_Click" ToolTip.Tip="Rules that change this layout from live game data"/>
+              <Button Content="Icon creator…" Classes="layout-button" Click="IconMaker_Click" ToolTip.Tip="Draw a custom icon and use it on an element"/>
               <Button Content="Rename…" Classes="layout-button" Click="DisplayRename_Click"/>
               <Button Content="Delete" Classes="layout-button" Click="DisplayDelete_Click" ToolTip.Tip="Remove this display and its layouts (the last one cannot be deleted)"/>
             </StackPanel>
@@ -142,6 +152,9 @@
                     ToolTip.Tip="Copy this layout onto another display, leaving this one untouched"/>
             <Button Content="Import .spl…" Classes="layout-button" Click="LayoutImport_Click" ToolTip.Tip="Add a ScorePlus Layout file to this display"/>
             <Button Content="Export .spl…" Classes="layout-button" Click="LayoutExport_Click" ToolTip.Tip="Write this layout to a ScorePlus Layout file"/>
+            <Button Content="Transition video…" Classes="layout-button" Click="TransitionVideo_Click" ToolTip.Tip="Play a video as this layout's hand-over"/>
+            <Button Content="Hand-over key…" Classes="layout-button" Click="TransitionVideoKey_Click" ToolTip.Tip="Make a colour in the hand-over video transparent"/>
+            <Button Content="Score videos…" Classes="layout-button" Click="ScoreVideos_Click" ToolTip.Tip="Play a clip when the score changes by an exact amount"/>
             <Button Content="Rename…" Classes="layout-button" Click="LayoutRename_Click"/>
             <Button Content="Delete" Classes="layout-button" Click="LayoutDelete_Click" ToolTip.Tip="Remove this layout (the last one cannot be deleted)"/>
           </StackPanel>
@@ -214,6 +227,8 @@
               <TextBox x:Name="CanvasWidthInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip.Tip="Canvas width in pixels"/>
               <TextBox x:Name="CanvasHeightInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip.Tip="Canvas height in pixels"/>
               <Button Content="Resize" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasResize_Click" ToolTip.Tip="Scale the whole layout into this canvas size"/>
+              <CheckBox x:Name="CanvasGridInput" Content="Snap" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"
+                        Checked="CanvasGrid_Changed" Unchecked="CanvasGrid_Changed" ToolTip.Tip="Snap positions and sizes to a 10 px grid"/>
             </StackPanel>
             <TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2" VerticalAlignment="Center"/>
           </DockPanel>
@@ -279,6 +294,7 @@
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
           <StackPanel>
             <TextBlock Text="X" Classes="field-label"/>
@@ -296,6 +312,12 @@
             <TextBlock Text="Height" Classes="field-label"/>
             <TextBox x:Name="HeightInput" Classes="field-box" TextChanged="Property_Changed"/>
           </StackPanel>
+          <WrapPanel Grid.Row="2" Grid.ColumnSpan="2" Margin="8,4,8,2">
+            <Button Content="Copy size" FontSize="10" Padding="7,3" Margin="2" Click="CopySize_Click"/>
+            <Button Content="Paste size" FontSize="10" Padding="7,3" Margin="2" Click="PasteSize_Click"/>
+            <Button Content="Copy place" FontSize="10" Padding="7,3" Margin="2" Click="CopyPlacement_Click"/>
+            <Button Content="Paste place" FontSize="10" Padding="7,3" Margin="2" Click="PastePlacement_Click"/>
+          </WrapPanel>
         </Grid>
 
         <StackPanel x:Name="TextSection">
@@ -303,6 +325,18 @@
           <TextBox x:Name="ContentInput" Classes="field-box" TextChanged="Property_Changed"
                    AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52" MaxHeight="180"
                    ScrollViewer.VerticalScrollBarVisibility="Auto" ToolTip.Tip="Text, a {{TOKEN}}, or the markup of an HTML element"/>
+          <StackPanel x:Name="TickerSection">
+            <CheckBox x:Name="TickerInput" Content="Scroll as a bottom-screen ticker" Margin="10,4,10,2"
+                      Checked="Property_Changed" Unchecked="Property_Changed"
+                      ToolTip.Tip="Make this text travel continuously across its box, like a stadium ribbon board"/>
+            <TextBlock Text="Ticker speed (pixels / second)" Classes="field-label"/>
+            <TextBox x:Name="TickerSpeedInput" Classes="field-box" TextChanged="Property_Changed"
+                     ToolTip.Tip="Higher moves faster; 80 is a readable broadcast ribbon speed"/>
+            <CheckBox x:Name="TickerReverseInput" Content="Reverse direction (enter from the left)" Margin="10,4,10,2"
+                      Checked="Property_Changed" Unchecked="Property_Changed"/>
+            <TextBlock Text="Separate items with | in the text. The ticker joins them with a dot and loops without a seam."
+                       Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+          </StackPanel>
           <!-- Which player and stat this element prints, whatever is selected on the desk. -->
           <StackPanel x:Name="PlayerDataSection">
             <TextBlock Text="PLAYER DATA" Classes="section-title"/>
@@ -332,6 +366,36 @@
                    ToolTip.Tip="Rotate this element clockwise, for example −8 for rising text"/>
         </StackPanel>
 
+        <!-- A drop shadow is what keeps lettering readable over a photograph of a crowd. -->
+        <StackPanel x:Name="ShadowSection">
+          <TextBlock Text="TEXT SHADOW" Classes="section-title"/>
+          <CheckBox x:Name="TextShadowInput" Content="Shadow behind the letters" Margin="10,0,10,4"
+                    Checked="Property_Changed" Unchecked="Property_Changed" ToolTip.Tip="Lifts white lettering off a busy plate or a photo"/>
+          <TextBlock Text="Shadow color" Classes="field-label"/>
+          <DockPanel Margin="0,0,10,2">
+            <Button DockPanel.Dock="Right" Content="Pick" Padding="8,3" FontSize="10" Margin="4,0,0,0"
+                    Click="TextShadowColor_Click" ToolTip.Tip="Choose a shadow colour"/>
+            <TextBox x:Name="TextShadowColorInput" Classes="field-box" Margin="10,0,0,0" TextChanged="Property_Changed"/>
+          </DockPanel>
+          <Grid Margin="0,3,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="Offset (px)" Classes="field-label"/>
+              <TextBox x:Name="TextShadowOffsetInput" Classes="field-box" TextChanged="Property_Changed"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="Softness" Classes="field-label"/>
+              <TextBox x:Name="TextShadowSoftnessInput" Classes="field-box" TextChanged="Property_Changed"/>
+            </StackPanel>
+          </Grid>
+          <TextBlock Text="Shadow angle (degrees)" Classes="field-label"/>
+          <TextBox x:Name="TextShadowAngleInput" Classes="field-box" TextChanged="Property_Changed"
+                   ToolTip.Tip="Which way the shadow falls: 0 right, 90 straight down, 180 left, 270 up"/>
+        </StackPanel>
+
         <StackPanel x:Name="FontSection">
           <TextBlock Text="TYPE" Classes="section-title"/>
           <TextBlock Text="Font" Classes="field-label"/>
@@ -342,7 +406,13 @@
                       SelectionChanged="Property_Changed" ToolTip.Tip="Pick any installed font, or import your own"/>
           </DockPanel>
           <TextBlock Text="Font size" Classes="field-label"/>
-          <TextBox x:Name="FontInputSize" Classes="field-box" TextChanged="Property_Changed"/>
+          <DockPanel Margin="10,0,10,2">
+            <Button DockPanel.Dock="Right" Content="Paste" Margin="4,0,0,0" Padding="8,4" FontSize="11"
+                    Click="PasteTextSize_Click" ToolTip.Tip="Give this element the copied text size"/>
+            <Button DockPanel.Dock="Right" Content="Copy" Margin="4,0,0,0" Padding="8,4" FontSize="11"
+                    Click="CopyTextSize_Click" ToolTip.Tip="Remember this element's text size"/>
+            <TextBox x:Name="FontInputSize" Classes="field-box" Margin="0" TextChanged="Property_Changed"/>
+          </DockPanel>
           <TextBlock Text="Text style" Classes="field-label"/>
           <WrapPanel Margin="8,0,8,2">
             <CheckBox x:Name="BoldInput" Content="Bold" Margin="2,2,10,2" Checked="Property_Changed" Unchecked="Property_Changed"/>
@@ -366,8 +436,33 @@
           <TextBlock Text="TEAM LOGO" Classes="section-title"/>
           <ComboBox x:Name="LogoInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
                     ToolTip.Tip="Team logos are imported in the control panel, beside the team name"/>
-          <TextBlock x:Name="LogoHintText" Text="Logos are configured in the control panel: the … button beside each team name. This element just chooses which team it shows."
+          <DockPanel Margin="10,0,10,4">
+            <Button DockPanel.Dock="Right" Content="Choose image…" Margin="4,0,0,0" Padding="8,4" FontSize="10"
+                    Click="LogoImage_Click" ToolTip.Tip="Pick a picture file for this logo and show it as a custom image"/>
+            <Button DockPanel.Dock="Right" Content="Clear" Margin="4,0,0,0" Padding="8,4" FontSize="10"
+                    Click="LogoImageClear_Click"/>
+            <TextBlock x:Name="LogoImagePathText" Text="No custom image" Foreground="#93A0B2" FontSize="10"
+                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+          </DockPanel>
+          <TextBlock x:Name="LogoHintText" Text="Choose a team logo above, or pick a custom image. A team logo comes from the … button beside the team name in the control panel."
                      Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+        </StackPanel>
+
+        <StackPanel x:Name="PlayerPhotoSection">
+          <TextBlock Text="PLAYER PHOTO" Classes="section-title"/>
+          <TextBlock Text="Follow the selected player on one side. Upload the portrait on the Rosters tab; switching the selected player changes the picture without a rebuild."
+                     Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,4"/>
+          <ComboBox x:Name="PlayerPhotoSideInput" Margin="10,0,10,6" SelectionChanged="Property_Changed"/>
+        </StackPanel>
+
+        <StackPanel x:Name="LayoutSection">
+          <TextBlock Text="LIVE LAYOUT" Classes="section-title"/>
+          <TextBlock Text="Source layout" Classes="field-label"/>
+          <ComboBox x:Name="NestedLayoutInput" Margin="10,0,10,4" SelectionChanged="NestedLayout_Changed"/>
+          <TextBlock x:Name="NestedLayoutHint" Text="Choose a layout. The feed follows its artwork and values and can be resized like any other element."
+                     Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+          <CheckBox x:Name="NestedAspectInput" Content="Keep the source layout's shape" Margin="10,2,10,4"
+                    Checked="Property_Changed" Unchecked="Property_Changed"/>
         </StackPanel>
 
         <StackPanel x:Name="ShapePanel">
@@ -418,8 +513,26 @@
           <TextBlock Text="Audio output for this element" Classes="field-label"/>
           <ComboBox x:Name="AudioDeviceInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
                     ToolTip.Tip="Each video element can play through its own speaker, so two clips never share one output"/>
-          <TextBlock x:Name="AudioHintText" Text="This element's own clip plays its sound on this output. Default uses the Windows output."
+          <TextBlock x:Name="AudioHintText" Text="This element's own clip plays its sound on this output. Default uses the system output."
                      Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+          <TextBlock Text="Crop (0–0.49 from each edge)" Classes="field-label"/>
+          <Grid Margin="0,0,0,2">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <TextBox x:Name="VideoCropLeftInput" Classes="field-box" Margin="10,0,5,2" TextChanged="Property_Changed" ToolTip.Tip="Crop from the left"/>
+            <TextBox x:Name="VideoCropTopInput" Grid.Column="1" Classes="field-box" Margin="5,0,10,2" TextChanged="Property_Changed" ToolTip.Tip="Crop from the top"/>
+            <TextBox x:Name="VideoCropRightInput" Grid.Row="1" Classes="field-box" Margin="10,0,5,2" TextChanged="Property_Changed" ToolTip.Tip="Crop from the right"/>
+            <TextBox x:Name="VideoCropBottomInput" Grid.Row="1" Grid.Column="1" Classes="field-box" Margin="5,0,10,4" TextChanged="Property_Changed" ToolTip.Tip="Crop from the bottom"/>
+          </Grid>
+          <TextBlock Text="Chroma key colour" Classes="field-label"/>
+          <DockPanel Margin="0,0,10,2">
+            <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Padding="8,4" FontSize="10"
+                    Click="VideoChromaColor_Click" ToolTip.Tip="Pick the colour to make transparent"/>
+            <TextBox x:Name="VideoChromaKeyInput" Classes="field-box" Margin="10,0,0,0" TextChanged="Property_Changed"
+                     ToolTip.Tip="Leave empty to leave the clip untouched"/>
+          </DockPanel>
+          <TextBlock Text="Chroma tolerance (0–1)" Classes="field-label"/>
+          <TextBox x:Name="VideoChromaToleranceInput" Classes="field-box" TextChanged="Property_Changed"/>
         </StackPanel>
 
         <StackPanel x:Name="BackgroundSection">
@@ -452,6 +565,9 @@
                    ToolTip.Tip="0 runs left to right, 90 top to bottom"/>
           <CheckBox x:Name="TransparentBackgroundInput" Content="No background box (transparent)" Margin="10,4,10,6"
                     Checked="Property_Changed" Unchecked="Property_Changed"/>
+          <Button Content="Opaque backdrop" Margin="10,0,10,8" Padding="10,5" FontSize="11"
+                  Click="OpaqueBackdrop_Click"
+                  ToolTip.Tip="Make this element a full-canvas opaque plate behind everything else"/>
         </StackPanel>
 
         <!-- An outline is drawn by the element's host, so it works on text, logos, shapes and video. -->
