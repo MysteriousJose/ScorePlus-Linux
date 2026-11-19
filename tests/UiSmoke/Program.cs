@@ -64,6 +64,7 @@ internal static class Program
             LeagueCloudChecks();
             MacroChecks(temps);
             StudioChecks(temps);
+            StudioFeatureChecks(temps);
             WindowCatalogChecks(temps);
             MediaBackendChecks(temps);
             PortedFeatureChecks(temps);
@@ -646,6 +647,149 @@ internal static class Program
             "underline and strike reach the studio canvas text");
         styleStudio.Close();
         Console.WriteLine("PASS: studio layers, multi-select, layouts, canvas presets and typography all behave");
+    }
+
+    static void StudioFeatureChecks(List<string> temps)
+    {
+        var engine = new GameEngine();
+        engine.NewGame("football");
+
+        // Undo and redo are real history, not a visual only button.
+        var historyCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var historyStudio = new ScorebugEditorWindow(historyCatalog, engine) { Width = 1500, Height = 900 };
+        historyStudio.Show();
+        historyStudio.UpdateLayout();
+        var layers = (ListBox)historyStudio.FindName("Layers")!;
+        var nameInput = (TextBox)historyStudio.FindName("NameInput")!;
+        var undo = (Button)historyStudio.FindName("UndoButton")!;
+        var redo = (Button)historyStudio.FindName("RedoButton")!;
+        layers.SelectedIndex = 0;
+        historyStudio.UpdateLayout();
+        // The layer list is front-to-back, so row zero is the last element in the layout.
+        var historyTarget = historyCatalog.Layout.Elements[^1];
+        var historyId = historyTarget.Id;
+        var originalName = historyTarget.Name;
+        nameInput.Text = "Undo probe";
+        Press(nameInput, Key.Enter);
+        historyStudio.UpdateLayout();
+        Check(undo.IsEnabled && historyTarget.Name == "Undo probe",
+            "a studio edit becomes an enabled undo step");
+        Click(undo);
+        historyStudio.UpdateLayout();
+        // Undo replaces the element list with a fresh snapshot, so follow the id rather than the
+        // instance the test held before the restore.
+        var afterUndo = historyCatalog.Layout.Elements.First(item => item.Id == historyId);
+        Check(afterUndo.Name == originalName && redo.IsEnabled,
+            "Undo restores the previous layout and enables redo");
+        Click(redo);
+        historyStudio.UpdateLayout();
+        var afterRedo = historyCatalog.Layout.Elements.First(item => item.Id == historyId);
+        Check(afterRedo.Name == "Undo probe",
+            "Redo reapplies the undone studio edit");
+
+        // The grid is a guide and Ctrl+wheel zooms the artwork without changing its size.
+        var grid = (CheckBox)historyStudio.FindName("CanvasGridInput")!;
+        var gridCanvas = (Canvas)historyStudio.FindName("GridCanvas")!;
+        grid.IsChecked = true;
+        historyStudio.UpdateLayout();
+        Check(gridCanvas.IsVisible && gridCanvas.Children.Count > 0,
+            "the studio grid draws guide lines when enabled");
+        grid.IsChecked = false;
+        historyStudio.UpdateLayout();
+        Check(!gridCanvas.IsVisible, "the studio grid disappears when disabled");
+        var frame = (Border)historyStudio.FindName("CanvasFrame")!;
+        var viewbox = (Viewbox)historyStudio.FindName("ArtworkViewbox")!;
+        var zoomText = (TextBlock)historyStudio.FindName("CanvasZoomText")!;
+        var beforeZoom = viewbox.Width;
+        var canvasPoint = frame.TranslatePoint(new Point(frame.Bounds.Width / 2, frame.Bounds.Height / 2), historyStudio)
+            ?? new Point(600, 400);
+        historyStudio.MouseWheel(canvasPoint, new Vector(0, 1), RawInputModifiers.Control);
+        historyStudio.UpdateLayout();
+        Check(viewbox.Width > beforeZoom && zoomText.Text == "110%",
+            "Ctrl+wheel zooms the studio artwork and updates its readout");
+        historyStudio.Close();
+
+        // Ticker and player-photo buttons create the ready-made parts they advertise.
+        var partsCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var partsStudio = new ScorebugEditorWindow(partsCatalog, engine) { Width = 1500, Height = 900 };
+        partsStudio.Show();
+        partsStudio.UpdateLayout();
+        Click(ButtonByContent(partsStudio, "TICKER +"));
+        partsStudio.UpdateLayout();
+        Check(partsCatalog.Layout.Elements[^1] is { Ticker: true, Kind: ScorebugElementKind.Text },
+            "TICKER + adds an enabled scrolling ribbon");
+        Click(ButtonByContent(partsStudio, "PLAYER PHOTO +"));
+        partsStudio.UpdateLayout();
+        var photo = partsCatalog.Layout.Elements[^1];
+        Check(photo.Kind == ScorebugElementKind.Image && photo.PlayerPhotoSide == ScorebugPlayerPhotoSide.Home,
+            "PLAYER PHOTO + adds a portrait bound to the home player");
+        var photoSection = (Control)partsStudio.FindName("PlayerPhotoSection")!;
+        var photoSide = (ComboBox)partsStudio.FindName("PlayerPhotoSideInput")!;
+        Check(photoSection.IsVisible && (ScorebugPlayerPhotoSide?)photoSide.SelectedItem == ScorebugPlayerPhotoSide.Home,
+            "the player-photo properties show and carry the chosen side");
+        partsStudio.Close();
+
+        // A live-layout element exposes its source picker, rejects the current layout and persists a change.
+        var feedCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        feedCatalog.AddLayout("Source feed");
+        var sourceLayout = feedCatalog.Layouts[1];
+        feedCatalog.SelectLayout(0);
+        feedCatalog.Update(layout =>
+        {
+            layout.Elements.Clear();
+            layout.Elements.Add(new ScorebugElement
+            {
+                Name = "Live feed", Kind = ScorebugElementKind.Layout, NestedLayoutId = sourceLayout.Id,
+                X = 20, Y = 20, Width = 400, Height = 225, Content = ""
+            });
+        });
+        var feedStudio = new ScorebugEditorWindow(feedCatalog, engine) { Width = 1500, Height = 900 };
+        feedStudio.Show();
+        feedStudio.UpdateLayout();
+        ((ListBox)feedStudio.FindName("Layers")!).SelectedIndex = 0;
+        feedStudio.UpdateLayout();
+        var feedSection = (Control)feedStudio.FindName("LayoutSection")!;
+        var sourcePicker = (ComboBox)feedStudio.FindName("NestedLayoutInput")!;
+        Check(feedSection.IsVisible, "a live-layout element shows the live-layout properties");
+        Check(ButtonByContent(feedStudio, "LAYOUT +") is not null && sourcePicker.ItemCount == 2,
+            "the studio offers LAYOUT + and only legal live-layout sources");
+        sourcePicker.SelectedIndex = 0;
+        feedStudio.UpdateLayout();
+        Check(feedCatalog.Layout.Elements[0].NestedLayoutId is null,
+            "choosing no source removes the live-layout feed");
+        sourcePicker.SelectedIndex = 1;
+        feedStudio.UpdateLayout();
+        Check(feedCatalog.Layout.Elements[0].NestedLayoutId == sourceLayout.Id,
+            "choosing a source stores the live-layout feed");
+        feedStudio.Close();
+
+        // Score-video rows are rendered from the layout and their remove button edits it.
+        var videoCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        videoCatalog.Update(layout => layout.ScoreVideos.Add(new ScoreVideoRule
+        {
+            Amount = 6,
+            Video = new ScoreVideo { Path = "/tmp/touchdown.mp4", ChromaKeyColor = "#FF00B140", ChromaKeyTolerance = 0.2 }
+        }));
+        var videoStudio = new ScorebugEditorWindow(videoCatalog, engine) { Width = 1500, Height = 900 };
+        videoStudio.Show();
+        videoStudio.UpdateLayout();
+        var videoRows = (StackPanel)videoStudio.FindName("ScoreVideoRows")!;
+        var videoEmpty = (Control)videoStudio.FindName("ScoreVideoEmptyText")!;
+        Check(videoRows.Children.Count == 1 && videoCatalog.Layout.ScoreVideos.Count == 1,
+            "a saved score video produces one studio row");
+        Check(All<TextBlock>(videoRows).Any(text => (text.Text ?? "").Contains("+6", StringComparison.Ordinal)
+                && (text.Text ?? "").Contains("touchdown.mp4", StringComparison.Ordinal)),
+            "the score-video row names its score change and clip");
+        Check(All<Button>(videoRows).Any(button => (button.Content as string) == "Keyed")
+              && All<Button>(videoRows).Any(button => (button.Content as string) == "Video…"),
+            "a keyed score video offers key status and clip replacement");
+        Click(ButtonByContent(videoRows, "×"));
+        videoStudio.UpdateLayout();
+        Check(videoCatalog.Layout.ScoreVideos.Count == 0 && videoRows.Children.Count == 0 && videoEmpty.IsVisible,
+            "removing a score-video row deletes the rule and restores the empty hint");
+        videoStudio.Close();
+
+        Console.WriteLine("PASS: studio undo, zoom, grid, ticker, player photo, live layout and score videos behave");
     }
 
     static void WindowCatalogChecks(List<string> temps)
