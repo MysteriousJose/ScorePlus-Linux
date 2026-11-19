@@ -17,6 +17,9 @@ public partial class SettingsWindow : Window
     /// <summary>Set once a value was saved without closing, so closing later keeps it.</summary>
     bool _committed;
 
+    /// <summary>True when the page stored its draft, so the owner may apply the new preferences.</summary>
+    public bool Committed => _committed;
+
     public SettingsWindow(UserPreferences prefs)
     {
         InitializeComponent();
@@ -30,6 +33,17 @@ public partial class SettingsWindow : Window
         ThemeSelector.SelectedItem = ThemeSelector.Items.Contains(_draft.Theme) ? _draft.Theme : "System";
         ShowHints.IsChecked = _draft.ShowHeadingHints;
         QuickPublishInput.IsChecked = _draft.QuickLayoutsPublish;
+        DownPreviewInput.IsChecked = _draft.NextDownPreview;
+        NewSeriesInput.IsChecked = _draft.NewSeriesLive;
+        ReplaySecondsInput.Text = Math.Clamp(_draft.ReplaySeconds, 10, 900).ToString(CultureInfo.InvariantCulture);
+        GameClockHornInput.IsChecked = _draft.HornOnGameClockZero;
+        PlayClockHornInput.IsChecked = _draft.HornOnPlayClockZero;
+        AutosaveMinutesInput.Text = _draft.AutosaveMinutes.ToString(CultureInfo.InvariantCulture);
+        AutoRecordInput.IsChecked = _draft.AutoUpdateRecord;
+        TieRuleInput.SelectedIndex = string.Equals(_draft.TieRule, "AllowTie", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        TiePeriodInput.Text = _draft.TieAllowPeriod.ToString(CultureInfo.InvariantCulture);
+        TiePeriodInput.IsEnabled = TieRuleInput.SelectedIndex == 1;
+        OvertimeFinalInput.IsChecked = _draft.ShowOvertimeFinal;
         DelayInput.Text = _draft.ValueSwitchDelay.ToString("0.##", CultureInfo.CurrentCulture);
         AccentInput.Text = _draft.AccentColor;
         Accent2Input.Text = _draft.AccentColor2;
@@ -40,6 +54,8 @@ public partial class SettingsWindow : Window
         CheckUpdatesInput.IsChecked = _draft.CheckForUpdates;
         UpdateFeedInput.Text = _draft.UpdateFeedUrl;
         _loading = false;
+        UpdateAutosaveStatus();
+        UpdateLockStatus();
         UpdateRemoteStatus();
         UpdateStatus.Text = AppInfo.Kind switch
         {
@@ -173,6 +189,121 @@ public partial class SettingsWindow : Window
         if (!_loading && ThemeSelector.SelectedItem is string theme) _draft.Theme = theme;
     }
 
+    void DownPreview_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || DownPreviewInput is null) return;
+        _draft.NextDownPreview = DownPreviewInput.IsChecked == true;
+    }
+
+    void NewSeries_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || NewSeriesInput is null) return;
+        _draft.NewSeriesLive = NewSeriesInput.IsChecked == true;
+    }
+
+    void ClockHorn_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || GameClockHornInput is null || PlayClockHornInput is null) return;
+        _draft.HornOnGameClockZero = GameClockHornInput.IsChecked == true;
+        _draft.HornOnPlayClockZero = PlayClockHornInput.IsChecked == true;
+    }
+
+    void ReplaySeconds_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading || ReplaySecondsInput is null) return;
+        if (int.TryParse(ReplaySecondsInput.Text?.Trim() ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds))
+            _draft.ReplaySeconds = Math.Clamp(seconds, 10, 900);
+    }
+
+    void AutoRecord_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || AutoRecordInput is null) return;
+        _draft.AutoUpdateRecord = AutoRecordInput.IsChecked == true;
+    }
+
+    void TieRule_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || TieRuleInput is null || TiePeriodInput is null) return;
+        _draft.TieRule = TieRuleInput.SelectedIndex == 1 ? "AllowTie" : "PlayUntilWinner";
+        TiePeriodInput.IsEnabled = TieRuleInput.SelectedIndex == 1;
+    }
+
+    void TiePeriod_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading || TiePeriodInput is null) return;
+        if (int.TryParse(TiePeriodInput.Text?.Trim() ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out var period))
+            _draft.TieAllowPeriod = Math.Clamp(period, 1, 99);
+    }
+
+    void OvertimeFinal_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || OvertimeFinalInput is null) return;
+        _draft.ShowOvertimeFinal = OvertimeFinalInput.IsChecked == true;
+    }
+
+    void Autosave_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading || AutosaveMinutesInput is null) return;
+        if (!int.TryParse(AutosaveMinutesInput.Text?.Trim() ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes)) return;
+        _draft.AutosaveMinutes = Math.Max(0, minutes);
+        UpdateAutosaveStatus();
+    }
+
+    void UpdateAutosaveStatus()
+    {
+        if (AutosaveStatus is null) return;
+        var minutes = _draft.AutosaveMinutes;
+        AutosaveStatus.Text = minutes <= 0
+            ? "Autosave is off. Existing recovery points are kept."
+            : minutes == 1
+                ? "A recovery point is written every minute while you work."
+                : $"A recovery point is written every {minutes} minutes while you work.";
+    }
+
+    // ---------- operator lock ----------
+
+    void Lock_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || OperatorLockPasswordInput is null || OperatorLockConfirmInput is null) return;
+        var clearing = ClearOperatorLockInput.IsChecked == true;
+        OperatorLockPasswordInput.IsEnabled = !clearing;
+        OperatorLockConfirmInput.IsEnabled = !clearing;
+        UpdateLockStatus();
+    }
+
+    void UpdateLockStatus()
+    {
+        if (OperatorLockStatus is null) return;
+        if (ClearOperatorLockInput.IsChecked == true)
+        {
+            OperatorLockStatus.Text = "The lock password will be removed when you save.";
+            return;
+        }
+        OperatorLockStatus.Text = string.IsNullOrWhiteSpace(_draft.OperatorLockPasswordHash)
+            ? "No lock password is set. Type one in both boxes to enable the lock."
+            : "A lock password is set. Type a new one in both boxes to change it, or leave both empty to keep it.";
+    }
+
+    /// <summary>Validates the lock fields and advances the draft only when they make sense.</summary>
+    bool ApplyLockPassword()
+    {
+        if (ClearOperatorLockInput.IsChecked == true)
+        {
+            _draft.OperatorLockPasswordHash = "";
+            return true;
+        }
+        var password = OperatorLockPasswordInput.Password;
+        var confirm = OperatorLockConfirmInput.Password;
+        if (string.IsNullOrWhiteSpace(password)) return true; // keep the existing password
+        if (password != confirm)
+        {
+            OperatorLockStatus.Text = "The two passwords do not match.";
+            return false;
+        }
+        _draft.OperatorLockPasswordHash = OperatorLock.Hash(password);
+        return true;
+    }
+
     void Controls_Changed(object sender, RoutedEventArgs e)
     {
         if (_loading || ShowHints is null) return;
@@ -233,37 +364,56 @@ public partial class SettingsWindow : Window
         // Avalonia reports the keystroke source as Source (WPF's OriginalSource).
         if (e.Key != Key.Enter || e.Source is not (TextBox or PasswordBox)) return;
         e.Handled = true;
-        Commit();
+        if (!Commit()) return;
         _committed = true;
         // Show the value that was actually stored, so "0.50" or "7" read back as what stuck.
         if (DelayInput is not null)
             DelayInput.Text = _draft.ValueSwitchDelay.ToString("0.##", CultureInfo.CurrentCulture);
+        if (AutosaveMinutesInput is not null)
+            AutosaveMinutesInput.Text = _draft.AutosaveMinutes.ToString(CultureInfo.InvariantCulture);
         // The page was painted with the theme it opened with; follow a theme picked this way.
         ThemeManager.Apply(this, _draft.Theme);
     }
 
     /// <summary>Writes the draft over the live preferences and stores them.</summary>
-    void Commit()
+    bool Commit()
     {
+        if (!ApplyLockPassword()) return false;
         _original.Theme = _draft.Theme;
         _original.ShowHeadingHints = _draft.ShowHeadingHints;
         _original.QuickLayoutsPublish = _draft.QuickLayoutsPublish;
+        _original.NextDownPreview = _draft.NextDownPreview;
+        _original.NewSeriesLive = _draft.NewSeriesLive;
+        _original.HornOnGameClockZero = _draft.HornOnGameClockZero;
+        _original.HornOnPlayClockZero = _draft.HornOnPlayClockZero;
         _original.ValueSwitchDelay = Math.Clamp(_draft.ValueSwitchDelay, 0, MaxDelay);
+        _original.AutosaveMinutes = Math.Max(0, _draft.AutosaveMinutes);
+        _original.ReplaySeconds = Math.Clamp(_draft.ReplaySeconds, 10, 900);
+        CameraFeed.ReplayWindowSeconds = _original.ReplaySeconds;
+        _original.AutoUpdateRecord = _draft.AutoUpdateRecord;
+        _original.TieRule = _draft.TieRule;
+        _original.TieAllowPeriod = Math.Clamp(_draft.TieAllowPeriod, 1, 99);
+        _original.ShowOvertimeFinal = _draft.ShowOvertimeFinal;
         _original.AccentColor = _draft.AccentColor;
         _original.AccentColor2 = _draft.AccentColor2;
         _original.RemotePort = _draft.RemotePort;
         _original.RemotePassword = _draft.RemotePassword;
+        _original.OperatorLockPasswordHash = _draft.OperatorLockPasswordHash;
         // A remote with no password is refused rather than served openly on the network.
         _original.RemoteEnabled = _draft.RemoteEnabled && !string.IsNullOrWhiteSpace(_draft.RemotePassword);
         _original.CheckForUpdates = _draft.CheckForUpdates;
         _original.UpdateFeedUrl = _draft.UpdateFeedUrl;
         PreferencesStore.Save(_original);
+        GameEngine.DownPreviewEnabled = _original.NextDownPreview;
+        GameEngine.NewSeriesLiveEnabled = _original.NewSeriesLive;
         DisplayTiming.Apply(_original);
+        return true;
     }
 
     void Save_Click(object sender, RoutedEventArgs e)
     {
-        Commit();
+        if (!Commit()) return;
+        _committed = true;
         Close();
     }
 

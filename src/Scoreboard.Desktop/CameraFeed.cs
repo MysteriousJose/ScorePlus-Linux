@@ -40,8 +40,13 @@ public sealed class CameraFeed : IDisposable
     static readonly TimeSpan SegmentLength = TimeSpan.FromSeconds(120);
 
     /// <summary>How far back Replay can reach, in seconds.</summary>
-    public const double MaxReplaySeconds = 120;
-    public const double ReplayWindowSeconds = MaxReplaySeconds;
+    public const double MaxReplaySeconds = 900;
+
+    /// <summary>
+    /// The operator's chosen rewind depth. The booth and its browser page read this live, so a
+    /// Preferences change reaches both without restarting the capture.
+    /// </summary>
+    public static double ReplayWindowSeconds { get; set; } = 120;
 
     readonly int _index;
     readonly Avalonia.Threading.Dispatcher _dispatcher;

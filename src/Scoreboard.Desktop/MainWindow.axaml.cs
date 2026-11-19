@@ -62,6 +62,14 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     bool _sportSync;
     // Set while the game-name box is being filled from the engine, so that does not count as typing.
     bool _gameNameSync;
+    // The clock-expiry horn watches the transition from a running clock to a stopped zero, so a
+    // clock that is set to zero while stopped stays silent.
+    int _lastGameClock = -1;
+    int _lastPlayClock = -1;
+    bool _lastGameClockRunning;
+    bool _lastPlayClockRunning;
+    bool _autoHornReady;
+    DateTime _lastAutosaveAt;
     // The next autosave starts a fresh recoverable point instead of updating the newest one. Set
     // when a new game starts or a game is loaded, so the previous game keeps its own autosave.
     bool _startNewAutosavePoint = true;
@@ -98,6 +106,7 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         // Follow the window onto portrait monitors and laptops at 150% scaling instead of hanging
         // the console off the screen; the console itself is reflowable down to its minimum width.
         ScreenFit.Track(this);
+        ApplyRuntimePreferences();
         _session = new MediaSession(_preferences);
         _booth = new ReplayBoothController(_session, _engine, _preferences);
         _hardware = new HardwareService(_engine);
@@ -505,6 +514,8 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
             finally { _gameNameSync = false; }
         }
         _eventCount = s.Events.Count;
+        CheckAutoHorns();
+        RefreshEndGameButton();
     }
 
     void RefreshSports() => SportSelector.ItemsSource = _engine.Sports.All;
@@ -766,7 +777,9 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     {
         var dialog = new SettingsWindow(_preferences) { Owner = this };
         ThemeManager.Apply(dialog, _preferences.Theme);
-        if (dialog.ShowDialog() != true) return; // Cancel discards: nothing is applied or saved.
+        dialog.ShowDialog();
+        if (!dialog.Committed) return; // Cancel discards: nothing is applied or saved.
+        ApplyRuntimePreferences();
         ThemeManager.Apply(this, _preferences.Theme);
         // The new theme paints buttons as it runs; put the active tab's outline back on top.
         ApplyTabVisuals();
@@ -904,6 +917,73 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         StatusText.Text = $"NEW {_engine.Sport.Name.ToUpperInvariant()} GAME";
     }
 
+    /// <summary>
+    /// The header's game button follows the game: End Game until the final, then Restart Game,
+    /// which starts the same fixture over without losing the teams.
+    /// </summary>
+    void RefreshEndGameButton()
+    {
+        if (EndGameButton is null) return;
+        // A clock-expired game can be final without its records being settled when automatic
+        // records are off. Keep offering End Game in that state so the result can still be applied;
+        // only a fully settled final becomes Restart Game.
+        var final = _engine.State.GameEnded && _engine.State.RecordSettled;
+        var content = final ? "Restart Game" : "End Game";
+        if (!Equals(EndGameButton.Content, content)) EndGameButton.Content = content;
+        EndGameButton.ToolTip = final
+            ? "Start the same game over or undo the end: the score, clocks and game stats reset; the teams, their records and the design stay"
+            : _engine.State.GameEnded
+                ? "Add this final result to each team's record. A team with no record is left alone"
+                : "Stop every clock, mark the game final and add the result to each team's record; Restart Game can undo an accidental end";
+    }
+
+    /// <summary>
+    /// Ends the game on command, for a game called before the clock expires. It stops every clock
+    /// and adds the result to the records that are set; the confirmation says that plainly.
+    /// </summary>
+    void EndGame_Click(object sender, RoutedEventArgs e)
+    {
+        if (_engine.State.GameEnded && _engine.State.RecordSettled)
+        {
+            // A fully settled final restarts the same fixture instead of ending it a second time.
+            // The secondary action undoes the final, so an accidental End Game is recoverable.
+            var restart = ConfirmWindow.AskChoice(this, _preferences.Theme, "RESTART GAME",
+                "Start the same game over, or undo the end and keep this final result. Undoing restores the score, clocks and records from just before End Game; starting fresh clears this game's score, clocks, period and stats while keeping the teams and design.",
+                "Start fresh", "Undo end game");
+            if (restart.SecondaryConfirmed)
+            {
+                if (_engine.Undo())
+                {
+                    StatusText.Text = "END GAME UNDONE · the final result was restored";
+                    AutoSave();
+                }
+                else StatusText.Text = "NOTHING TO UNDO · End Game could not be undone";
+                return;
+            }
+            if (!restart.Confirmed) return;
+            StartNewGame(_engine.State.SportId, announce: false, keepDesign: true, restart: true);
+            StatusText.Text = "GAME RESTARTED · same teams, fresh score and clock";
+            AutoSave();
+            return;
+        }
+        // End Game is immediate: the Restart Game flow offers Undo for an accidental end.
+        var homeRecord = _engine.State.HomeRecord;
+        var awayRecord = _engine.State.AwayRecord;
+        var wasSettled = _engine.State.RecordSettled;
+        if (!_engine.EndGame())
+        {
+            StatusText.Text = "GAME ENDED · start a New Game to play again";
+            return;
+        }
+        StatusText.Text = _engine.State.ClockMessage == GameClockMessage.EndOfRegulation
+            ? "TIED · END OF REG. · advance to overtime, or choose a tie period in Preferences"
+            : homeRecord != _engine.State.HomeRecord || awayRecord != _engine.State.AwayRecord
+                ? "GAME ENDED · team records updated"
+                : wasSettled ? "GAME ENDED · records were already updated" : "GAME ENDED · no team records were set";
+        // Keep the final state in the recovery point immediately, not at the next autosave tick.
+        AutoSave();
+    }
+
     void NewGame_Click(object sender, RoutedEventArgs e)
     {
         // The sport is part of starting a game; the chooser also states what a new game resets.
@@ -917,17 +997,19 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     /// from the previous game survives on air. Operator settings that are not part of a game — sport
     /// profiles, keybinds, preferences, the media library and the scorebug design — are untouched.
     /// </summary>
-    public void StartNewGame(string sportId, bool announce = true)
+    public void StartNewGame(string sportId, bool announce = true, bool keepDesign = false, bool restart = false)
     {
         _engine.NewGame(sportId);
+        _autoHornReady = false;
         _projectPath = null;
         _startNewAutosavePoint = true;
         _savedStateJson = _engine.ExportJson();
         _preferences.LastSport = sportId;
         try { PreferencesStore.Save(_preferences); } catch { }
         // A new game really starts over: one factory layout and no folder/playlist organisation.
-        // Imported media files stay in the library; the game's design and shelves begin blank.
-        _scorebug.ResetToDefault();
+        // A restart keeps the design the operator built; only the game state and media organisation
+        // begin again.
+        if (!keepDesign) _scorebug.ResetToDefault();
         _savedDesignJson = DesignJson();
         _program.Sync();
         SyncDisplayPicker();
@@ -1003,7 +1085,7 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     /// Asks which display this audience window is for, then opens a brand-new window for it. With
     /// only one display there is nothing to ask, so the question is skipped.
     /// </summary>
-    public OutputWindow? OpenOutputWindow(string? displayId = null)
+    public OutputWindow? OpenOutputWindow(string? displayId = null, bool annotations = false)
     {
         if (displayId is null)
         {
@@ -1033,8 +1115,11 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         output.Activate();
         if (_liveScoreClock) output.UpdateLiveScoreClock(_engine.State);
         else output.RefreshDisplay();
+        if (annotations) output.OpenAnnotationTools();
         return output;
     }
+
+    void Annotate_Click(object sender, RoutedEventArgs e) => OpenOutputWindow(annotations: true);
 
     void SetLiveScoreClock(bool enabled)
     {
@@ -1048,6 +1133,51 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     {
         ReplayBoothHistory.Sample(_engine.State);
         if (_liveScoreClock) PublishLiveValues();
+    }
+
+    /// <summary>Pushes the preferences that steer live behavior, not just how the chrome looks.</summary>
+    void ApplyRuntimePreferences()
+    {
+        GameEngine.DownPreviewEnabled = _preferences.NextDownPreview;
+        GameEngine.NewSeriesLiveEnabled = _preferences.NewSeriesLive;
+        CameraFeed.ReplayWindowSeconds = Math.Clamp(_preferences.ReplaySeconds, 10, 900);
+    }
+
+    /// <summary>
+    /// Sounds the console horn once when a running game or play clock reaches zero. Clock ticks
+    /// refresh the window, so this reads the transition rather than the current value alone.
+    /// </summary>
+    void CheckAutoHorns()
+    {
+        var state = _engine.State;
+        if (!_autoHornReady)
+        {
+            _autoHornReady = true;
+            _lastGameClock = state.ClockSeconds;
+            _lastPlayClock = state.PlayClockSeconds;
+            _lastGameClockRunning = state.ClockRunning;
+            _lastPlayClockRunning = state.PlayClockRunning;
+            return;
+        }
+
+        var gameExpired = _preferences.HornOnGameClockZero
+            && !state.ClockCountsUp
+            && state.ClockSeconds == 0
+            && _lastGameClock > 0
+            && _lastGameClockRunning
+            && !state.ClockRunning;
+        var playExpired = _preferences.HornOnPlayClockZero
+            && state.PlayClockSeconds == 0
+            && _lastPlayClock > 0
+            && _lastPlayClockRunning
+            && !state.PlayClockRunning;
+        if (gameExpired || playExpired)
+            HornPlayer.Play(_preferences.HornSound, _preferences.HornCustomPath);
+
+        _lastGameClock = state.ClockSeconds;
+        _lastPlayClock = state.PlayClockSeconds;
+        _lastGameClockRunning = state.ClockRunning;
+        _lastPlayClockRunning = state.PlayClockRunning;
     }
 
     void PublishLiveValues()
@@ -1128,11 +1258,25 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     // ---------- lifecycle ----------
     void AutoSave()
     {
+        var minutes = _preferences.AutosaveMinutes;
+        if (minutes <= 0)
+        {
+            AutosaveText.Text = "AUTOSAVE OFF";
+            return;
+        }
+
+        var now = DateTime.Now;
+        // A new game gets its own recovery point straight away. After that the operator's chosen
+        // interval decides when the next point is written.
+        if (!_startNewAutosavePoint && _lastAutosaveAt != default
+            && now - _lastAutosaveAt < TimeSpan.FromMinutes(minutes)) return;
+
         try
         {
             AutosaveStore.Save(_engine, _startNewAutosavePoint, _scorebug.ExportDocument());
             _startNewAutosavePoint = false;
-            AutosaveText.Text = $"AUTOSAVED {DateTime.Now:HH:mm:ss}";
+            _lastAutosaveAt = now;
+            AutosaveText.Text = $"AUTOSAVED {now:HH:mm:ss}";
         }
         catch (Exception ex) { StatusText.Text = $"AUTOSAVE WARNING · {ex.Message}"; }
     }
