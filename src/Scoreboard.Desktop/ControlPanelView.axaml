@@ -190,9 +190,34 @@
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <ContentControl x:Name="DownHost" Grid.Column="0"/>
             <ContentControl x:Name="ToGoHost" Grid.Column="1"/>
             <ContentControl x:Name="BallOnHost" Grid.Column="2"/>
+            <!-- The down-line type: yards, goal to go, PAT, two-point try, inches or nothing. -->
+            <Grid Grid.Row="1" Grid.ColumnSpan="3" Height="34" Margin="0,4,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <Button x:Name="FootballModePrevButton" Classes="control-tiny" Content="◀" Click="FootballModePrev_Click" ToolTip.Tip="Previous down-line type"/>
+              <Border Grid.Column="1" Background="#0E1218" CornerRadius="5" Margin="2,0">
+                <TextBlock x:Name="FootballModeLabel" Text="Yards" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <Button x:Name="FootballModeNextButton" Grid.Column="2" Classes="control-tiny" Content="▶" Click="FootballModeNext_Click" ToolTip.Tip="Next down-line type"/>
+            </Grid>
+            <!-- The flag card: type, team and whether a flag is down. -->
+            <DockPanel x:Name="PenaltyStrip" Grid.Row="2" Grid.ColumnSpan="3" Margin="0,4,0,0">
+              <ToggleButton x:Name="PenaltyActiveToggle" Content="NO FLAG" FontSize="11" FontWeight="Bold" MinHeight="32" Width="96"
+                            Checked="Penalty_Changed" Unchecked="Penalty_Changed" ToolTip.Tip="Put a flag down or clear it"/>
+              <ComboBox x:Name="PenaltyTypeBox" Width="126" MinHeight="30" Margin="5,0,0,0" SelectionChanged="Penalty_Changed" ToolTip.Tip="What the flag was for"/>
+              <ComboBox x:Name="PenaltyTeamBox" Width="110" MinHeight="30" Margin="5,0,0,0" SelectionChanged="Penalty_Changed" ToolTip.Tip="Which team the flag is against"/>
+            </DockPanel>
           </Grid>
 
           <!-- Every sport's own values — balls, bases, power play, overs, sets — as full-size
@@ -219,6 +244,11 @@
 
           <!-- Quarter is a compact inline stepper: - / value / +, same button size as the rest. -->
           <ContentControl x:Name="QuarterHost" Margin="0,6,0,0"/>
+          <DockPanel Margin="0,5,0,0">
+            <TextBlock Text="CLOCK READS" Classes="control-caption" VerticalAlignment="Center"/>
+            <ComboBox x:Name="ClockMessageBox" DockPanel.Dock="Right" Width="132" Height="28" FontSize="11"
+                      SelectionChanged="ClockMessage_Changed" ToolTip.Tip="Show the running time, FINAL or END OF REG. on the game clock"/>
+          </DockPanel>
 
           <!-- Game clock: type over the value, or step it a second or a minute at a time. -->
           <Grid Grid.Row="2" Margin="0,7,0,0">
@@ -385,6 +415,14 @@
     <!-- ============ PUBLISH BAR ============ -->
     <Border Grid.Row="3" Background="#111721" CornerRadius="9" Padding="9,6" Margin="0,8,0,0">
       <DockPanel>
+        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+          <ComboBox x:Name="HornType" Width="104" MinHeight="32" Margin="0,0,4,0" SelectionChanged="HornType_Changed"
+                    ToolTip.Tip="Choose the horn sound"/>
+          <Button x:Name="HornButton" Content="HORN" MinWidth="62" MinHeight="36" Padding="10,6" FontWeight="Bold"
+                  Click="Horn_Click" ToolTip.Tip="Play the selected horn"/>
+          <Button x:Name="HornPickButton" Content="…" MinWidth="30" MinHeight="36" Padding="4,6" Margin="3,0,0,0"
+                  Click="HornPick_Click" ToolTip.Tip="Choose a custom horn audio file"/>
+        </StackPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
           <Border Background="#171C25" CornerRadius="6" Padding="6,2" Margin="0,0,8,0">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
