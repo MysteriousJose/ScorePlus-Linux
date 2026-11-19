@@ -203,6 +203,9 @@
                        Foreground="{DynamicResource RosterMutedBrush}" VerticalAlignment="Center"
                        ToolTip.Tip="The player the scorebug's selected-player bindings read"/>
             <!-- Puts nobody on the graphic for this side, so a player element prints nothing. -->
+            <Button x:Name="GroupPlayerButton" DockPanel.Dock="Right" Classes="roster-small-button"
+                    Content="Group…" Margin="0,0,10,0" Click="GroupPlayer_Click"
+                    ToolTip.Tip="Put this player in a squad group; groups become sections in the list"/>
             <Button x:Name="ClearPlayerButton" DockPanel.Dock="Right" Classes="roster-small-button"
                     Content="No player" Margin="0,0,10,0" Click="ClearPlayer_Click"
                     ToolTip.Tip="Take the player off the graphic for this side — the choice sticks until you select somebody"/>
@@ -214,7 +217,36 @@
         </StackPanel>
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
           <StackPanel>
+            <!-- The player's picture: uploaded into the roster folder and read by player-photo
+                 elements on the graphic. -->
+            <DockPanel Margin="0,0,0,12">
+              <StackPanel DockPanel.Dock="Right" Width="132" Margin="12,0,0,0">
+                <Button x:Name="ChoosePhotoButton" Classes="roster-small-button" Content="Upload photo…"
+                        Margin="0" Click="ChoosePhoto_Click"
+                        ToolTip.Tip="Choose an image; it is copied into ScorePlus's player photos folder"/>
+                <Button x:Name="RemovePhotoButton" Classes="roster-small-button" Content="Remove photo"
+                        Margin="0,4,0,0" Click="RemovePhoto_Click"/>
+                <TextBlock x:Name="PlayerPhotoNameText" FontSize="10" TextTrimming="CharacterEllipsis"
+                           Margin="2,6,0,0" Foreground="{DynamicResource RosterMutedBrush}" Text="No portrait uploaded"/>
+              </StackPanel>
+              <Border Width="104" Height="120" CornerRadius="6" ClipToBounds="True"
+                      Background="{DynamicResource RosterSurfaceAltBrush}"
+                      BorderBrush="{DynamicResource RosterBorderBrush}" BorderThickness="1">
+                <Grid>
+                  <Image x:Name="PlayerPhotoImage" Stretch="Uniform" Margin="4"/>
+                  <TextBlock x:Name="PlayerPhotoEmpty" Text="NO PHOTO" FontSize="10" FontWeight="Bold"
+                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                             Foreground="{DynamicResource RosterMutedBrush}"/>
+                </Grid>
+              </Border>
+            </DockPanel>
             <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="92"/>
                 <ColumnDefinition Width="*"/>
@@ -231,8 +263,12 @@
               <TextBox x:Name="NameInput" Grid.Row="1" Grid.Column="1" Classes="roster-field-box" Margin="0,2,0,6"
                        LostFocus="Player_LostFocus" KeyDown="Player_KeyDown"/>
               <TextBlock Grid.Row="2" Text="Position:" Classes="roster-field-label"/>
-              <TextBox x:Name="PositionInput" Grid.Row="2" Grid.Column="1" Classes="roster-field-box" Margin="0,2,0,0"
+              <TextBox x:Name="PositionInput" Grid.Row="2" Grid.Column="1" Classes="roster-field-box" Margin="0,2,0,6"
                        LostFocus="Player_LostFocus" KeyDown="Player_KeyDown"/>
+              <TextBlock Grid.Row="3" Text="Group:" Classes="roster-field-label"/>
+              <TextBox x:Name="GroupInput" Grid.Row="3" Grid.Column="1" Classes="roster-field-box" Margin="0,2,0,0"
+                       LostFocus="Player_LostFocus" KeyDown="Player_KeyDown"
+                       ToolTip.Tip="Squad group, for example Forwards or Defense. Groups become foldable sections in the list."/>
             </Grid>
 
             <Border Height="1" Background="{DynamicResource RosterBorderBrush}" Margin="0,14,0,12"/>

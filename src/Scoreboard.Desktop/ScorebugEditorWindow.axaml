@@ -47,8 +47,12 @@
 
     <!-- ============ TOOLBAR ============ -->
     <StackPanel Grid.ColumnSpan="3" Margin="2,0,2,10">
-      <DockPanel Margin="0,0,0,8">
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+      <Grid Margin="0,0,0,8" RowDefinitions="Auto,Auto">
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="SCOREPLUS · SCOREBUG STUDIO" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
+          <TextBlock x:Name="HeaderHint" Text="   Arrange audience graphics · edits save automatically" Foreground="#93A0B2" VerticalAlignment="Center"/>
+        </StackPanel>
+        <WrapPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
           <Button Content="TEXT +" Classes="tool-button" FontWeight="SemiBold" Click="AddText_Click"/>
           <Button Content="LOGO +" Classes="tool-button" FontWeight="SemiBold" Click="AddLogo_Click"/>
           <Button Content="IMAGE +" Classes="tool-button" FontWeight="SemiBold" Click="AddImage_Click"
@@ -73,12 +77,8 @@
           <Button x:Name="RedoButton" Content="REDO" Classes="tool-button" FontWeight="SemiBold" Click="Redo_Click"
                   IsEnabled="False" ToolTip.Tip="Redo the last undone edit (Ctrl+Y or Ctrl+Shift+Z)"/>
           <Button Content="REMOVE" Classes="tool-button" FontWeight="SemiBold" Click="Remove_Click" ToolTip.Tip="Delete the selected element"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal">
-          <TextBlock Text="SCOREPLUS · SCOREBUG STUDIO" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
-          <TextBlock x:Name="HeaderHint" Text="   Arrange audience graphics · edits save automatically" Foreground="#93A0B2" VerticalAlignment="Center"/>
-        </StackPanel>
-      </DockPanel>
+        </WrapPanel>
+      </Grid>
 
       <!-- Displays: one screen each, with its own layouts and its own audience window. -->
       <Border Background="#171C25" CornerRadius="9" Padding="10,7" Margin="0,0,0,6">
@@ -237,20 +237,19 @@
           <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
         <StackPanel Margin="4,0,0,10">
-          <DockPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2"
+                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,12,0"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+              <CheckBox x:Name="CanvasGridInput" Content="Show grid + snap" FontSize="11" Margin="0,0,12,0" VerticalAlignment="Center"
+                        Checked="CanvasGrid_Changed" Unchecked="CanvasGrid_Changed" ToolTip.Tip="A guide only; the grid is never part of the artwork"/>
+              <TextBlock x:Name="CanvasZoomText" Text="100%" FontSize="10" Foreground="#5C6B7E" VerticalAlignment="Center" Margin="0,0,12,0"/>
               <ComboBox x:Name="CanvasPreset" Width="170" FontSize="11" SelectedIndex="0" ToolTip.Tip="Canvas size presets" SelectionChanged="CanvasPreset_Changed"/>
               <TextBox x:Name="CanvasWidthInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip.Tip="Canvas width in pixels"/>
               <TextBox x:Name="CanvasHeightInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip.Tip="Canvas height in pixels"/>
               <Button Content="Resize" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasResize_Click" ToolTip.Tip="Scale the whole layout into this canvas size"/>
             </StackPanel>
-            <StackPanel Orientation="Horizontal">
-              <TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2" VerticalAlignment="Center"/>
-              <CheckBox x:Name="CanvasGridInput" Content="Show grid + snap" FontSize="11" Margin="12,0,0,0" VerticalAlignment="Center"
-                        Checked="CanvasGrid_Changed" Unchecked="CanvasGrid_Changed" ToolTip.Tip="A guide only; the grid is never part of the artwork"/>
-              <TextBlock x:Name="CanvasZoomText" Text="100%" FontSize="10" Foreground="#5C6B7E" VerticalAlignment="Center" Margin="8,0,0,0"/>
-            </StackPanel>
-          </DockPanel>
+          </Grid>
           <!-- The artwork backdrop: it shows in the studio, the previews and the audience output. -->
           <DockPanel Margin="0,8,0,0">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">

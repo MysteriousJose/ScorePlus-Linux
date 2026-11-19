@@ -71,6 +71,10 @@ public sealed class MediaSession
     public MediaSession(UserPreferences preferences)
     {
         _preferences = preferences;
+        // The rail meter listens to the machine monitor, which keeps running even when every
+        // speaker bus is muted. Tell the meter when the room cannot hear the output so it reads
+        // silence instead of a mix that is going nowhere.
+        SoundLevelMeter.AudibleGate = () => !HasSpeakerBuses || Library.Any(entry => entry.IsSpeaker && !entry.SpeakerMuted);
         Playback = new MediaPlayback();
         foreach (var entry in preferences.Media)
             if (!string.IsNullOrWhiteSpace(entry.Path) && !Library.Any(m => string.Equals(m.Path, entry.Path, StringComparison.OrdinalIgnoreCase)))

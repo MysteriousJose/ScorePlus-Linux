@@ -8,6 +8,10 @@ namespace Scoreboard.Desktop;
 
 public partial class App : Application
 {
+    // Load App.axaml: without this the application-level FluentTheme and every operator style
+    // below it never enter the resource lookup, so windows fall back to Fluent's own palette.
+    public override void Initialize() => Avalonia.Markup.Xaml.AvaloniaXamlLoader.Load(this);
+
     // The console is a classic desktop app: AppBuilder picks the windowing system, hooks this
     // Application up to it, and the desktop lifetime owns the main window and every popup that
     // shows against it — that call blocks until the lifetime shuts down.
