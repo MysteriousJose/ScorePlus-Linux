@@ -9,10 +9,10 @@ here and is not named in this file with an `excluded` or `deferred` status.
 | Score engine (b1.1) | `src/Scoreboard.Core/GameEngine.cs` | ported | b1.1 Core tree and suite restored. |
 | Layout/rules model | `src/Scoreboard.Core/ScorebugLayout.cs`, `RuleFiles.cs` | ported | Automation, custom icons, score videos and quick layouts travel with layouts. |
 | Automation | `src/Scoreboard.Desktop/AutomationRuntime.cs`, `AutomationWindow.cs` | ported | Runtime is owned by the main window and evaluated on every game change. |
-| Hardware | `src/Scoreboard.Desktop/HardwareService.cs`, `HardwareSettings.cs`, `HardwareWindow.cs` | ported | Serial, simulator, MQTT and WebSocket transports are native. |
+| Hardware | `src/Scoreboard.Desktop/HardwareService.cs`, `HardwareSettings.cs`, `HardwareWindow.cs` | ported | Serial, simulator, MQTT and WebSocket transports are native. The window is built in code rather than XAML. |
 | Ad log | `src/Scoreboard.Core/AdLog.cs`, `src/Scoreboard.Desktop/AdLogWindow.cs` | ported | Window is in the header; playback counts impressions. |
 | Custom icons / icon maker | `src/Scoreboard.Core/CustomIcons.cs`, `IconFiles.cs`, `src/Scoreboard.Desktop/IconMakerWindow.cs` | ported | Create, save, import and export `.spi` icons from the header. |
-| Macros | `src/Scoreboard.Core/Macros.cs`, `src/Scoreboard.Desktop/MacroRunner.cs`, `MacroDock.axaml(.cs)` | ported | Macro dock is hosted in the MACROS tab. |
+| Macros | `src/Scoreboard.Core/Macros.cs`, `src/Scoreboard.Desktop/MacroRunner.cs`, `MacroDock.cs` | ported | Macro dock is hosted in the MACROS tab and built in code rather than XAML. |
 | League cloud | `src/Scoreboard.Core/LeagueCloud.cs`, `src/Scoreboard.Desktop/LeagueCloudService.cs`, `LeagueCloudWindow.cs` | ported | HTTP upload/feed, import and league ticker creation. |
 | Ticker rotation | `src/Scoreboard.Core/TickerRotation.cs`, `src/Scoreboard.Desktop/TickerWindow.cs` | ported | Header action opens the rotation editor. |
 | About | `src/Scoreboard.Desktop/AboutWindow.cs` | ported | Header `i` action. |
@@ -32,6 +32,8 @@ here and is not named in this file with an `excluded` or `deferred` status.
 | WPF fullscreen helper | `src/Scoreboard.Desktop/WindowFullscreen.cs` | excluded | Replaced by native F11/Escape and monitor fitting. |
 | WPF icon name converter | `src/Scoreboard.Desktop/IconNameConverter.cs` | excluded | Avalonia binds the model labels directly. |
 | WPF motion name converter | `src/Scoreboard.Desktop/MotionNameConverter.cs` | excluded | Avalonia binds the model labels directly. |
+| WPF hardware layout | `src/Scoreboard.Desktop/HardwareWindow.axaml` | excluded | Replaced by the native Avalonia layout in `HardwareWindow.cs`. |
+| WPF macro dock layout | `src/Scoreboard.Desktop/MacroDock.axaml` | excluded | Replaced by the native Avalonia layout in `MacroDock.cs`. |
 | Video playback | `src/Scoreboard.Desktop/LinuxMedia.cs` | ported | ffmpeg decodes frames into an Avalonia `WriteableBitmap`; ffprobe supplies duration. |
 | Camera/replay recording | `src/Scoreboard.Desktop/WpfCompat.cs` (ffmpeg-backed capture/writer) | ported | `VideoCapture`/`VideoWriter` shell out to ffmpeg; OpenCV is no longer required. |
 | Chroma key | `src/Scoreboard.Desktop/ChromaKeyEffect.cs`, `Assets/ChromaKey.ps` | ported | The shader is replaced by an ffmpeg `colorkey` filter in the decoder; the studio colour and tolerance reach score videos and video surfaces. |
