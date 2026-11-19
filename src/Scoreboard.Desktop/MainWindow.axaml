@@ -66,6 +66,7 @@
           <Button Classes="header-button icon-button" Content="⚙" Click="Preferences_Click" ToolTip.Tip="Preferences"/>
           <Button Classes="header-button icon-button" Content="i" Click="Info_Click" ToolTip.Tip="About ScorePlus — name, version and credits"/>
           <Button Classes="header-button icon-button" Content="▶" Click="Output_Click" ToolTip.Tip="Audience output — choose a display and open its window (F11 fills the screen)"/>
+          <Button Classes="header-button icon-button" Content="✍" Click="Annotate_Click" ToolTip.Tip="Draw on the audience picture — pen, highlighter and eraser over the live graphic (T on the output window)"/>
           <Button Classes="header-button icon-button" Content="☰" Click="EventLog_Click" ToolTip.Tip="Event log — open it in its own window"/>
           <Button Classes="header-button icon-button" Content="▦" Click="GameReport_Click" ToolTip.Tip="Game report — export a printable HTML summary"/>
           <Button Classes="header-button icon-button" Content="▤" Click="AdLog_Click" ToolTip.Tip="Ad log — how many times each clip has played, and how long it runs"/>
@@ -97,6 +98,7 @@
           <Button Classes="header-button" Content="Display Studio" Click="ScorebugStudio_Click"/>
           <Button Classes="header-button" Content="Sport Profiles" Click="SportProfiles_Click"/>
           <Button Classes="header-button" Content="New Game" Click="NewGame_Click"/>
+          <Button x:Name="EndGameButton" Classes="header-button" Content="End Game" Click="EndGame_Click" ToolTip.Tip="Stop every clock, mark the game final and add the result to each team's record"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock Text="SPORT" Foreground="#93A0B2" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
