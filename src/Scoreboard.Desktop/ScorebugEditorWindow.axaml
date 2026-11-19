@@ -58,10 +58,20 @@
           <Button Content="PLAYER DATA +" Classes="tool-button" FontWeight="SemiBold" Click="AddPlayerData_Click"
                   ToolTip.Tip="A value from the player currently on the graphic, set in the Rosters tab"/>
           <Button Content="VIDEO +" Classes="tool-button" FontWeight="SemiBold" Click="AddVideo_Click"/>
+          <Button Content="TICKER +" Classes="tool-button" FontWeight="SemiBold" Click="AddTicker_Click"
+                  ToolTip.Tip="A ready-to-use scrolling bottom ribbon"/>
+          <Button Content="PLAYER PHOTO +" Classes="tool-button" FontWeight="SemiBold" Click="AddPlayerPhoto_Click"
+                  ToolTip.Tip="A portrait that follows the selected player's uploaded photo"/>
+          <Button Content="LAYOUT +" Classes="tool-button" FontWeight="SemiBold" Click="AddLayoutFeed_Click"
+                  ToolTip.Tip="Embed another layout as a live feed inside this one"/>
           <Button Content="HTML +" Classes="tool-button" FontWeight="SemiBold" Click="AddHtml_Click"
                   ToolTip.Tip="A live HTML/CSS widget, drawn by a browser engine on every screen"/>
           <Button Content="PARTS +" Classes="tool-button" FontWeight="SemiBold" Click="ImportParts_Click"
                   ToolTip.Tip="Copy elements from another layout instead of rebuilding them"/>
+          <Button x:Name="UndoButton" Content="UNDO" Classes="tool-button" FontWeight="SemiBold" Click="Undo_Click"
+                  IsEnabled="False" ToolTip.Tip="Undo the last studio edit (Ctrl+Z)"/>
+          <Button x:Name="RedoButton" Content="REDO" Classes="tool-button" FontWeight="SemiBold" Click="Redo_Click"
+                  IsEnabled="False" ToolTip.Tip="Redo the last undone edit (Ctrl+Y or Ctrl+Shift+Z)"/>
           <Button Content="REMOVE" Classes="tool-button" FontWeight="SemiBold" Click="Remove_Click" ToolTip.Tip="Delete the selected element"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal">
@@ -75,6 +85,7 @@
         <StackPanel>
           <DockPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button Content="Conditionals…" Classes="layout-button" Click="Conditionals_Click" ToolTip.Tip="Display rules that change this layout from live game data"/>
               <Button Content="New display…" Classes="layout-button" Click="DisplayNew_Click" ToolTip.Tip="Add another screen, for example a lower-thirds display"/>
               <Button Content="Import .spd…" Classes="layout-button" Click="DisplayImport_Click" ToolTip.Tip="Add a whole ScorePlus Display file — every layout it holds — to this game"/>
               <Button Content="Export .spd…" Classes="layout-button" Click="DisplayExport_Click" ToolTip.Tip="Write this display and all its layouts to a ScorePlus Display file"/>
@@ -153,6 +164,24 @@
           </ScrollViewer>
         </Grid>
       </Border>
+      <!-- Score celebrations: one clip per exact signed score change. -->
+      <Border Background="#171C25" CornerRadius="9" Padding="10,7" Margin="0,6,0,0">
+        <StackPanel>
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Content="Add score video…" FontSize="10" Padding="8,3" Click="AddScoreVideo_Click"
+                    ToolTip.Tip="Choose a clip for one score change, for example +6 or -3"/>
+            <StackPanel Orientation="Horizontal">
+              <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,7,0"/>
+              <TextBlock Text="SCORE CELEBRATIONS" FontSize="11" FontWeight="Bold" Foreground="#93A0B2" VerticalAlignment="Center"/>
+            </StackPanel>
+          </DockPanel>
+          <TextBlock x:Name="ScoreVideoHintText" Text="One clip for each score change; key the background so the scorebug shows through."
+                     Foreground="#5C6B7E" FontSize="10" TextWrapping="Wrap" Margin="2,3,2,2"/>
+          <TextBlock x:Name="ScoreVideoEmptyText" Text="No score videos yet. Add +6, +3, or a correction such as -6."
+                     Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="2,2,2,2"/>
+          <StackPanel x:Name="ScoreVideoRows" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Border>
     </StackPanel>
 
     <!-- ============ LAYERS (top of the list = in front) ============ -->
@@ -215,7 +244,12 @@
               <TextBox x:Name="CanvasHeightInput" Width="58" FontSize="11" Margin="4,0,0,0" ToolTip.Tip="Canvas height in pixels"/>
               <Button Content="Resize" FontSize="11" Padding="8,4" Margin="4,0,0,0" Click="CanvasResize_Click" ToolTip.Tip="Scale the whole layout into this canvas size"/>
             </StackPanel>
-            <TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock x:Name="CanvasInfo" Text="drag elements to reposition · bindings update live" Foreground="#93A0B2" VerticalAlignment="Center"/>
+              <CheckBox x:Name="CanvasGridInput" Content="Show grid + snap" FontSize="11" Margin="12,0,0,0" VerticalAlignment="Center"
+                        Checked="CanvasGrid_Changed" Unchecked="CanvasGrid_Changed" ToolTip.Tip="A guide only; the grid is never part of the artwork"/>
+              <TextBlock x:Name="CanvasZoomText" Text="100%" FontSize="10" Foreground="#5C6B7E" VerticalAlignment="Center" Margin="8,0,0,0"/>
+            </StackPanel>
           </DockPanel>
           <!-- The artwork backdrop: it shows in the studio, the previews and the audience output. -->
           <DockPanel Margin="0,8,0,0">
@@ -239,14 +273,18 @@
                        VerticalAlignment="Center" Margin="10,0,0,0"/>
           </DockPanel>
         </StackPanel>
-        <Border Grid.Row="1" x:Name="CanvasFrame" Background="#171C25" ClipToBounds="True" PointerMoved="Canvas_MouseMove" PointerReleased="Canvas_MouseUp">
+        <Border Grid.Row="1" x:Name="CanvasFrame" Background="#171C25" ClipToBounds="True" PointerMoved="Canvas_MouseMove" PointerReleased="Canvas_MouseUp"
+                PointerWheelChanged="CanvasFrame_MouseWheel" SizeChanged="CanvasFrame_SizeChanged">
           <!-- The artwork keeps its real pixel size and the Viewbox scales it to the panel. A
                layout transform used to fight the frame, so the canvas grew on the first drag. The
                edge border shows exactly where the artwork ends, so the letterbox never reads as
                more canvas that refuses to accept a drag. -->
-          <Viewbox Stretch="Uniform" StretchDirection="Both" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Viewbox x:Name="ArtworkViewbox" Stretch="Uniform" StretchDirection="Both" HorizontalAlignment="Center" VerticalAlignment="Center">
             <Border x:Name="ArtworkEdge" BorderBrush="#4A586A" BorderThickness="1" ClipToBounds="True">
-              <Canvas x:Name="DesignCanvas" Width="1280" Height="720" Background="#091018" RenderTransformOrigin="0,0"/>
+              <Grid>
+                <Canvas x:Name="DesignCanvas" Width="1280" Height="720" Background="#091018" RenderTransformOrigin="0,0"/>
+                <Canvas x:Name="GridCanvas" Width="1280" Height="720" IsHitTestVisible="False" IsVisible="False"/>
+              </Grid>
             </Border>
           </Viewbox>
         </Border>
@@ -297,6 +335,32 @@
             <TextBox x:Name="HeightInput" Classes="field-box" TextChanged="Property_Changed"/>
           </StackPanel>
         </Grid>
+
+        <Grid Margin="10,3,10,8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <Button x:Name="CopySizeButton" Content="Copy size" Padding="6,3" FontSize="10" Margin="0,0,3,0"
+                  Click="CopySize_Click" ToolTip.Tip="Remember this item's width and height (Ctrl+Shift+C)"/>
+          <Button x:Name="PasteSizeButton" Grid.Column="1" Content="Paste size" Padding="6,3" FontSize="10" Margin="3,0,0,0"
+                  Click="PasteSize_Click" ToolTip.Tip="Give the selected items this size (Ctrl+Shift+V)"/>
+        </Grid>
+        <Grid Margin="10,0,10,3">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Button x:Name="CopyPlacementButton" Content="Copy X Y rot" Padding="6,3" FontSize="10" Margin="0,0,3,0"
+                  Click="CopyPlacement_Click" ToolTip.Tip="Remember this item's X, Y and rotation (Ctrl+Alt+C)"/>
+          <Button x:Name="PastePlacementButton" Grid.Column="1" Content="Paste X Y rot" Padding="6,3" FontSize="10" Margin="3,0,3,0"
+                  Click="PastePlacement_Click" ToolTip.Tip="Move the selected items to the remembered placement (Ctrl+Alt+V)"/>
+          <Button x:Name="CopyTextSizeButton" Grid.Column="2" Content="Copy text" Padding="6,3" FontSize="10"
+                  Click="CopyTextSize_Click" ToolTip.Tip="Remember this item's font size"/>
+        </Grid>
+        <Button x:Name="PasteTextSizeButton" Content="Paste text size" Padding="6,3" FontSize="10" Margin="10,0,10,4"
+                Click="PasteTextSize_Click" ToolTip.Tip="Apply the remembered font size"/>
 
         <StackPanel x:Name="TextSection">
           <TextBlock Text="TEXT" Classes="section-title"/>
@@ -362,6 +426,18 @@
           </DockPanel>
         </StackPanel>
 
+        <StackPanel x:Name="PlayerPhotoSection">
+          <TextBlock Text="PLAYER PHOTO" Classes="section-title"/>
+          <TextBlock Text="Follows the uploaded portrait of the player selected for this side." Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,4"/>
+          <ComboBox x:Name="PlayerPhotoSideInput" Margin="10,0,10,8" SelectionChanged="Property_Changed"/>
+        </StackPanel>
+
+        <StackPanel x:Name="LayoutSection">
+          <TextBlock Text="LIVE LAYOUT" Classes="section-title"/>
+          <TextBlock Text="The source layout is not copied: this box follows its artwork and values." Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,4"/>
+          <ComboBox x:Name="NestedLayoutInput" Margin="10,0,10,8" SelectionChanged="NestedLayout_Changed"/>
+        </StackPanel>
+
         <StackPanel x:Name="LogoSection">
           <TextBlock Text="TEAM LOGO" Classes="section-title"/>
           <ComboBox x:Name="LogoInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
@@ -415,6 +491,24 @@
           <TextBlock Text="Aspect (width ÷ height)" Classes="field-label"/>
           <TextBox x:Name="AspectInput" Classes="field-box" TextChanged="Property_Changed"
                    ToolTip.Tip="16:9 is 1.7778 · 4:3 is 1.3333 · vertical 9:16 is 0.5625"/>
+          <TextBlock Text="Crop from each edge (0–0.49)" Classes="field-label"/>
+          <UniformGrid Columns="4" Margin="10,0,10,3">
+            <TextBox x:Name="VideoCropLeftInput" Classes="field-box" Margin="0,0,3,0" TextChanged="Property_Changed" ToolTip.Tip="Trim from the left, 0.1 = ten percent"/>
+            <TextBox x:Name="VideoCropTopInput" Classes="field-box" Margin="3,0,3,0" TextChanged="Property_Changed" ToolTip.Tip="Trim from the top"/>
+            <TextBox x:Name="VideoCropRightInput" Classes="field-box" Margin="3,0,3,0" TextChanged="Property_Changed" ToolTip.Tip="Trim from the right"/>
+            <TextBox x:Name="VideoCropBottomInput" Classes="field-box" Margin="3,0,0,0" TextChanged="Property_Changed" ToolTip.Tip="Trim from the bottom"/>
+          </UniformGrid>
+          <TextBlock x:Name="VideoCropHintText" Text="Crop is applied before the picture fills the box, so the remaining source is scaled without distortion."
+                     Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+          <TextBlock Text="Chroma key colour" Classes="field-label"/>
+          <DockPanel Margin="10,0,10,3">
+            <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Click="ChromaKeyColor_Click" ToolTip.Tip="Pick the green or blue backdrop to remove"/>
+            <TextBox x:Name="ChromaKeyInput" Margin="0" TextChanged="Property_Changed" ToolTip.Tip="#FF00B140, or empty to leave the clip untouched"/>
+          </DockPanel>
+          <TextBlock Text="Chroma tolerance (0–1)" Classes="field-label"/>
+          <TextBox x:Name="ChromaKeyToleranceInput" Classes="field-box" TextChanged="Property_Changed" ToolTip.Tip="How far a pixel may be from the key colour and still disappear"/>
+          <TextBlock x:Name="ChromaKeyHintText" Text="The decoder removes the key colour before the frame reaches the screen, so the scorebug shows through."
+                     Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
           <TextBlock Text="Audio output for this element" Classes="field-label"/>
           <ComboBox x:Name="AudioDeviceInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
                     ToolTip.Tip="Each video element can play through its own speaker, so two clips never share one output"/>
