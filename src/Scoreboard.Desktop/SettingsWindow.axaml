@@ -94,12 +94,74 @@
         </DockPanel>
         <TextBlock x:Name="UpdateStatus" Text="Updates are checked only when the app was installed." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,8"/>
         <Border Height="1" Background="#F4F7FB" Margin="0,9"/>
+        <TextBlock Text="OPERATOR LOCK" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
+        <CheckBox x:Name="ClearOperatorLockInput" Content="Remove the lock password when saving" Checked="Lock_Changed" Unchecked="Lock_Changed"/>
+        <TextBlock Text="The lock covers the console, media, rosters, detached panels and the phone remote. Type a new password twice to add or replace it; leave both boxes empty to keep the current one."
+                   TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,2,6,6"/>
+        <Grid Margin="4,0,4,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock Text="New password" Foreground="#93A0B2" FontSize="11" Margin="2,0,0,2"/>
+            <local:PasswordBox x:Name="OperatorLockPasswordInput" MinHeight="32" Padding="8,4" Background="#050505"
+                         Foreground="#F4F7FB" BorderBrush="#383838" PasswordChanged="Lock_Changed"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Margin="10,0,0,0">
+            <TextBlock Text="Repeat" Foreground="#93A0B2" FontSize="11" Margin="2,0,0,2"/>
+            <local:PasswordBox x:Name="OperatorLockConfirmInput" MinHeight="32" Padding="8,4" Background="#050505"
+                         Foreground="#F4F7FB" BorderBrush="#383838" PasswordChanged="Lock_Changed"/>
+          </StackPanel>
+        </Grid>
+        <TextBlock x:Name="OperatorLockStatus" Text="No lock password is set." TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,4"/>
+        <Border Height="1" Background="#F4F7FB" Margin="0,9"/>
+        <TextBlock Text="AUTOSAVE AND GAME RULES" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
+        <TextBlock Text="Autosave every (minutes)" Foreground="#93A0B2" FontSize="11" Margin="4,4,0,2"/>
+        <DockPanel Margin="4,0,4,0">
+          <TextBlock DockPanel.Dock="Right" Text="0 turns autosave off" VerticalAlignment="Center" Foreground="#93A0B2" FontSize="11" Margin="8,0,0,0"/>
+          <TextBox x:Name="AutosaveMinutesInput" Width="90" MinHeight="30" Padding="8,4" TextChanged="Autosave_Changed"
+                   ToolTip.Tip="Whole minutes between recovery points; 0 turns autosave off"/>
+        </DockPanel>
+        <TextBlock x:Name="AutosaveStatus" Text="Autosave keeps a recovery point while you work."
+                   TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,4,6,6"/>
+        <CheckBox x:Name="AutoRecordInput" Content="Add the result to team records when the game ends" Checked="AutoRecord_Changed" Unchecked="AutoRecord_Changed"/>
+        <CheckBox x:Name="DownPreviewInput" Content="Next down prints the down alone until the distance is set" Checked="DownPreview_Changed" Unchecked="DownPreview_Changed"/>
+        <CheckBox x:Name="NewSeriesInput" Content="New series goes straight to air" Checked="NewSeries_Changed" Unchecked="NewSeries_Changed"/>
+        <CheckBox x:Name="OvertimeFinalInput" Content="FINAL reads FINAL/OT after the scheduled periods" Checked="OvertimeFinal_Changed" Unchecked="OvertimeFinal_Changed"/>
+        <TextBlock Text="Tie rule" Foreground="#93A0B2" FontSize="11" Margin="4,8,0,2"/>
+        <Grid Margin="4,0,4,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <ComboBox x:Name="TieRuleInput" MinHeight="30" SelectionChanged="TieRule_Changed">
+            <ComboBox.Items>
+              <ComboBoxItem Content="Play until a winner"/>
+              <ComboBoxItem Content="Allow a tie"/>
+            </ComboBox.Items>
+          </ComboBox>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
+            <TextBlock Text="Tie after period" VerticalAlignment="Center" Foreground="#93A0B2" FontSize="11" Margin="0,0,6,0"/>
+            <TextBox x:Name="TiePeriodInput" Width="58" MinHeight="30" Padding="6,4" TextChanged="TiePeriod_Changed"/>
+          </StackPanel>
+        </Grid>
+        <Grid Margin="4,8,4,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <CheckBox x:Name="GameClockHornInput" Content="Horn when the game clock reaches zero" Checked="ClockHorn_Changed" Unchecked="ClockHorn_Changed"/>
+          <TextBlock Grid.Column="1" Text="Replay window" VerticalAlignment="Center" Foreground="#93A0B2" FontSize="11" Margin="10,0,6,0"/>
+          <TextBox x:Name="ReplaySecondsInput" Grid.Column="2" Width="66" MinHeight="30" Padding="6,4" TextChanged="ReplaySeconds_Changed" ToolTip.Tip="Seconds of camera history kept for the replay booth (10–900)"/>
+        </Grid>
+        <CheckBox x:Name="PlayClockHornInput" Content="Horn when the play clock reaches zero" Checked="ClockHorn_Changed" Unchecked="ClockHorn_Changed"/>
+        <Border Height="1" Background="#F4F7FB" Margin="0,9"/>
         <TextBlock Text="GAME SAFETY" Foreground="#93A0B2" FontSize="11" Margin="4,14,0,2"/>
         <Button x:Name="DeleteAutosavesButton" Content="Delete all autosaves" HorizontalAlignment="Left" MinHeight="32"
                 Padding="14,6" Click="DeleteAutosaves_Click" Margin="4,4,4,2"
                 ToolTip.Tip="Remove every recoverable point from this computer. Saved .spg games are not touched."/>
-        <TextBlock x:Name="AutosaveStatus" Text="Autosave keeps a recovery point every few seconds while you work."
-                   TextWrapping="Wrap" Foreground="#93A0B2" FontSize="11" Margin="6,2,6,4"/>
+
       </StackPanel>
     </ScrollViewer>
   </DockPanel>

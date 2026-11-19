@@ -30,6 +30,17 @@ public partial class SettingsWindow : Window
         ThemeSelector.SelectedItem = ThemeSelector.Items.Contains(_draft.Theme) ? _draft.Theme : "System";
         ShowHints.IsChecked = _draft.ShowHeadingHints;
         QuickPublishInput.IsChecked = _draft.QuickLayoutsPublish;
+        DownPreviewInput.IsChecked = _draft.NextDownPreview;
+        NewSeriesInput.IsChecked = _draft.NewSeriesLive;
+        ReplaySecondsInput.Text = Math.Clamp(_draft.ReplaySeconds, 10, 900).ToString(CultureInfo.InvariantCulture);
+        GameClockHornInput.IsChecked = _draft.HornOnGameClockZero;
+        PlayClockHornInput.IsChecked = _draft.HornOnPlayClockZero;
+        AutosaveMinutesInput.Text = _draft.AutosaveMinutes.ToString(CultureInfo.InvariantCulture);
+        AutoRecordInput.IsChecked = _draft.AutoUpdateRecord;
+        TieRuleInput.SelectedIndex = string.Equals(_draft.TieRule, "AllowTie", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        TiePeriodInput.Text = _draft.TieAllowPeriod.ToString(CultureInfo.InvariantCulture);
+        TiePeriodInput.IsEnabled = TieRuleInput.SelectedIndex == 1;
+        OvertimeFinalInput.IsChecked = _draft.ShowOvertimeFinal;
         DelayInput.Text = _draft.ValueSwitchDelay.ToString("0.##", CultureInfo.CurrentCulture);
         AccentInput.Text = _draft.AccentColor;
         Accent2Input.Text = _draft.AccentColor2;
@@ -40,6 +51,8 @@ public partial class SettingsWindow : Window
         CheckUpdatesInput.IsChecked = _draft.CheckForUpdates;
         UpdateFeedInput.Text = _draft.UpdateFeedUrl;
         _loading = false;
+        UpdateAutosaveStatus();
+        UpdateLockStatus();
         UpdateRemoteStatus();
         UpdateStatus.Text = AppInfo.Kind switch
         {
@@ -101,6 +114,131 @@ public partial class SettingsWindow : Window
         Accent2Input.Text = _draft.AccentColor2;
         PaintSwatches();
         ThemeManager.Apply(this, _draft.Theme);
+    }
+
+    // ---------- operator lock ----------
+
+    void Lock_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || OperatorLockStatus is null) return;
+        OperatorLockPasswordInput.IsEnabled = ClearOperatorLockInput.IsChecked != true;
+        OperatorLockConfirmInput.IsEnabled = ClearOperatorLockInput.IsChecked != true;
+        UpdateLockStatus();
+    }
+
+    void UpdateLockStatus()
+    {
+        if (OperatorLockStatus is null) return;
+        if (ClearOperatorLockInput.IsChecked == true)
+        {
+            OperatorLockStatus.Text = "The lock password will be removed when you save.";
+            return;
+        }
+        var first = OperatorLockPasswordInput.Password;
+        var second = OperatorLockConfirmInput.Password;
+        if (first.Length == 0 && second.Length == 0)
+        {
+            OperatorLockStatus.Text = string.IsNullOrWhiteSpace(_draft.OperatorLockPasswordHash)
+                ? "No lock password is set. Type it twice to add one."
+                : "A lock password is set. Leave both boxes empty to keep it, or type a new one twice to replace it.";
+            return;
+        }
+        OperatorLockStatus.Text = first != second
+            ? "The two passwords do not match yet."
+            : "The new lock password is ready to save.";
+    }
+
+    /// <summary>Applies the typed lock password, refusing to save a mismatch. Blank keeps the old one.</summary>
+    bool ApplyLockPassword()
+    {
+        if (ClearOperatorLockInput.IsChecked == true)
+        {
+            _draft.OperatorLockPasswordHash = "";
+            return true;
+        }
+        var first = OperatorLockPasswordInput.Password;
+        var second = OperatorLockConfirmInput.Password;
+        if (first.Length == 0 && second.Length == 0) return true;
+        if (first != second)
+        {
+            OperatorLockStatus.Text = "The two lock passwords do not match. They were not saved.";
+            return false;
+        }
+        _draft.OperatorLockPasswordHash = OperatorLock.Hash(first);
+        return true;
+    }
+
+    // ---------- autosave and game rules ----------
+
+    void DownPreview_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || DownPreviewInput is null) return;
+        _draft.NextDownPreview = DownPreviewInput.IsChecked == true;
+    }
+
+    void NewSeries_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || NewSeriesInput is null) return;
+        _draft.NewSeriesLive = NewSeriesInput.IsChecked == true;
+    }
+
+    void ClockHorn_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || GameClockHornInput is null || PlayClockHornInput is null) return;
+        _draft.HornOnGameClockZero = GameClockHornInput.IsChecked == true;
+        _draft.HornOnPlayClockZero = PlayClockHornInput.IsChecked == true;
+    }
+
+    void AutoRecord_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || AutoRecordInput is null) return;
+        _draft.AutoUpdateRecord = AutoRecordInput.IsChecked == true;
+    }
+
+    void TieRule_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || TieRuleInput is null || TiePeriodInput is null) return;
+        _draft.TieRule = TieRuleInput.SelectedIndex == 1 ? "AllowTie" : "PlayUntilWinner";
+        TiePeriodInput.IsEnabled = TieRuleInput.SelectedIndex == 1;
+    }
+
+    void TiePeriod_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading || TiePeriodInput is null) return;
+        if (int.TryParse(TiePeriodInput.Text?.Trim() ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out var period))
+            _draft.TieAllowPeriod = Math.Clamp(period, 1, 99);
+    }
+
+    void OvertimeFinal_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || OvertimeFinalInput is null) return;
+        _draft.ShowOvertimeFinal = OvertimeFinalInput.IsChecked == true;
+    }
+
+    void ReplaySeconds_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading || ReplaySecondsInput is null) return;
+        if (int.TryParse(ReplaySecondsInput.Text?.Trim() ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds))
+            _draft.ReplaySeconds = Math.Clamp(seconds, 10, 900);
+    }
+
+    void Autosave_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading || AutosaveMinutesInput is null) return;
+        if (!int.TryParse(AutosaveMinutesInput.Text?.Trim() ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes)) return;
+        _draft.AutosaveMinutes = Math.Max(0, minutes);
+        UpdateAutosaveStatus();
+    }
+
+    void UpdateAutosaveStatus()
+    {
+        if (AutosaveStatus is null) return;
+        var minutes = _draft.AutosaveMinutes;
+        AutosaveStatus.Text = minutes <= 0
+            ? "Autosave is off. Existing recovery points are kept."
+            : minutes == 1
+                ? "A recovery point is written every minute while you work."
+                : $"A recovery point is written every {minutes} minutes while you work.";
     }
 
     // ---------- remote control ----------
@@ -233,7 +371,7 @@ public partial class SettingsWindow : Window
         // Avalonia reports the keystroke source as Source (WPF's OriginalSource).
         if (e.Key != Key.Enter || e.Source is not (TextBox or PasswordBox)) return;
         e.Handled = true;
-        Commit();
+        if (!Commit()) return;
         _committed = true;
         // Show the value that was actually stored, so "0.50" or "7" read back as what stuck.
         if (DelayInput is not null)
@@ -243,11 +381,23 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>Writes the draft over the live preferences and stores them.</summary>
-    void Commit()
+    bool Commit()
     {
+        if (!ApplyLockPassword()) return false;
         _original.Theme = _draft.Theme;
         _original.ShowHeadingHints = _draft.ShowHeadingHints;
         _original.QuickLayoutsPublish = _draft.QuickLayoutsPublish;
+        _original.NextDownPreview = _draft.NextDownPreview;
+        _original.NewSeriesLive = _draft.NewSeriesLive;
+        _original.AutosaveMinutes = Math.Max(0, _draft.AutosaveMinutes);
+        _original.AutoUpdateRecord = _draft.AutoUpdateRecord;
+        _original.TieRule = _draft.TieRule;
+        _original.TieAllowPeriod = Math.Clamp(_draft.TieAllowPeriod, 1, 99);
+        _original.ShowOvertimeFinal = _draft.ShowOvertimeFinal;
+        _original.HornOnGameClockZero = _draft.HornOnGameClockZero;
+        _original.HornOnPlayClockZero = _draft.HornOnPlayClockZero;
+        _original.ReplaySeconds = Math.Clamp(_draft.ReplaySeconds, 10, 900);
+        _original.OperatorLockPasswordHash = _draft.OperatorLockPasswordHash;
         _original.ValueSwitchDelay = Math.Clamp(_draft.ValueSwitchDelay, 0, MaxDelay);
         _original.AccentColor = _draft.AccentColor;
         _original.AccentColor2 = _draft.AccentColor2;
@@ -259,12 +409,14 @@ public partial class SettingsWindow : Window
         _original.UpdateFeedUrl = _draft.UpdateFeedUrl;
         PreferencesStore.Save(_original);
         DisplayTiming.Apply(_original);
+        GameEngine.DownPreviewEnabled = _original.NextDownPreview;
+        GameEngine.NewSeriesLiveEnabled = _original.NewSeriesLive;
+        return true;
     }
 
     void Save_Click(object sender, RoutedEventArgs e)
     {
-        Commit();
-        Close();
+        if (Commit()) Close();
     }
 
     /// <summary>
