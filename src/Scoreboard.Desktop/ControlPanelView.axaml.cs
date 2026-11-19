@@ -293,8 +293,12 @@ public partial class ControlPanelView : UserControl
         FootballModePicker.IsVisible = football;
         // Every sport with its own flag list gets the strip; Custom has no flags, so it stays hidden.
         PenaltyStrip.IsVisible = GameEngine.PenaltyTypesFor(s.SportId).Length > 0;
-        OtherDetail.Visibility = football ? Visibility.Collapsed : Visibility.Visible;
+        OtherDetailScroller.Visibility = football ? Visibility.Collapsed : Visibility.Visible;
+        DetailCardGrid.RowDefinitions[2].Height = football ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
         NewSeriesButton.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
+        // Last down belongs to the football drive, like New series; it must not sit at the bottom
+        // of a soccer card with a flag strip under it.
+        RecallDownButton.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
         DetailCardTitle.Text = football ? "DOWN & DISTANCE" : "SPORT CONTROLS";
         DetailCardHint.Text = football ? $"{Ordinal(s.Down)} & {s.YardsToGo} · ball on {(s.BallOnHomeSide ? "home" : "visitors")}' {s.YardsToGoal}" : string.Empty;
         DetailCardHint.Visibility = _showHints && football ? Visibility.Visible : Visibility.Collapsed;
@@ -780,7 +784,7 @@ public partial class ControlPanelView : UserControl
     FrameworkElement BuildStatRow(GameStat stat)
     {
         // A custom stat accepts any text, not just a number: "N/A", "3rd" and "TBD" are all values.
-        var stepper = new Stepper(stat.Name, 18) { Width = 104, Margin = new Thickness(0, 0, 4, 4), AcceptText = true };
+        var stepper = new Stepper(stat.Name, 18) { Width = 142, Margin = new Thickness(0, 0, 4, 4), AcceptText = true };
         stepper.SetButtons
         (
             [new("＋ 1", 1, null, $"{stat.Name} +1")],
@@ -791,7 +795,7 @@ public partial class ControlPanelView : UserControl
         stepper.TextCommitted += text => _engine.SetStatText(stat.Id, text);
         stepper.Text = stat.Display;
 
-        var host = new Grid { Width = 110, Margin = new Thickness(0, 0, 4, 2), ToolTip = $"Remove {stat.Name}" };
+        var host = new Grid { Width = 148, Margin = new Thickness(0, 0, 4, 2), ToolTip = $"Remove {stat.Name}" };
         host.Children.Add(stepper);
         var remove = new Button
         {

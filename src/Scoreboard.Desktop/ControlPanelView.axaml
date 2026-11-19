@@ -168,7 +168,7 @@
       </Grid.ColumnDefinitions>
 
       <Border Classes="control-card" Grid.Column="0">
-        <Grid>
+        <Grid x:Name="DetailCardGrid">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -219,7 +219,12 @@
 
           <!-- Every sport's own values — balls, bases, power play, overs, sets — as full-size
                steppers and switches, two per row. Built in code from the game's sport controls. -->
-          <UniformGrid x:Name="OtherDetail" Grid.Row="2" Margin="0,4,0,0" Columns="2" VerticalAlignment="Top"/>
+          <!-- A sport with more controls than the card is tall scrolls this row instead of
+               painting over the row beneath it. Football leaves the row at Auto and hidden. -->
+          <ScrollViewer x:Name="OtherDetailScroller" Grid.Row="2" Margin="0,4,0,0"
+                        VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <UniformGrid x:Name="OtherDetail" Columns="2" VerticalAlignment="Top"/>
+          </ScrollViewer>
 
           <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
             <Button x:Name="NewSeriesButton" Classes="control-tiny" Content="New series" Tag="football.series.new" Click="Action_Click"/>

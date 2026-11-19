@@ -383,6 +383,10 @@ public static class ThemeManager
     public static void Apply(Avalonia.Controls.Window window, string theme)
     {
         var light = Resolve(theme) == "Light";
+        // Fluent's own controls (check boxes, scroll bars, focus rings) read their colours from
+        // the theme variant, not from Window.Foreground. Pin the variant to the operator's choice
+        // so a dark desk does not get light-palette labels or a light desk dark ones.
+        window.RequestedThemeVariant = light ? Avalonia.Styling.ThemeVariant.Light : Avalonia.Styling.ThemeVariant.Dark;
         var background = light ? "#FFF3F5F8" : "#FF000000";
         var panel = light ? "#FFFFFFFF" : "#FF080808";
         var surface = light ? "#FFE5EAF0" : "#FF141414";
@@ -412,6 +416,14 @@ public static class ThemeManager
         window.Resources["AccentHoverBrush"] = UiPalette.Frozen(UiPalette.Lift(accent));
         window.Resources["AccentFillBrush"] = UiPalette.Frozen(UiPalette.Soft(accent));
         window.Resources["AccentActionBrush"] = UiPalette.Frozen(secondary);
+        // Fluent's ToggleButton template paints its checked fill from these theme keys rather
+        // than the control's Background, so the operator's secondary colour must be supplied
+        // here too or Live / Flag down fall back to the system blue.
+        window.Resources["ToggleButtonBackgroundChecked"] = UiPalette.Frozen(secondary);
+        window.Resources["ToggleButtonBackgroundCheckedPointerOver"] = UiPalette.Frozen(UiPalette.Lift(secondary));
+        window.Resources["ToggleButtonBackgroundCheckedPressed"] = UiPalette.Frozen(secondary);
+        window.Resources["ToggleButtonBorderBrushChecked"] = UiPalette.Frozen(accent);
+        window.Resources["ToggleButtonForegroundChecked"] = Brush(foreground);
 
         void ApplyTheme()
         {
@@ -447,6 +459,10 @@ public static class ThemeManager
             switch (control)
             {
                 case TextBox: control.Background = Brush(input); control.BorderBrush = Brush(border); break;
+                // Toggle buttons keep the app styles' checked fill: writing a local Background
+                // here would beat the :checked style and flatten live/flag switches to the
+                // unchecked surface.
+                case ToggleButton: break;
                 case Button: control.Background = Brush(surface); control.BorderBrush = Brush(border); break;
                 case ListBox: control.Background = Brush(input); control.BorderBrush = Brush(border); break;
                 case ComboBox: control.Background = Brush(input); control.BorderBrush = Brush(border); break;
