@@ -372,6 +372,9 @@
           <TextBox x:Name="ContentInput" Classes="field-box" TextChanged="Property_Changed"
                    AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52" MaxHeight="180"
                    ScrollViewer.VerticalScrollBarVisibility="Auto" ToolTip.Tip="Text, a {{TOKEN}}, or the markup of an HTML element"/>
+          <TextBlock Text="Text alignment" Classes="field-label"/>
+          <ComboBox x:Name="TextAlignInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
+                    ToolTip.Tip="Where the value sits inside its box: hard left, centred, or hard right"/>
           <!-- Which player and stat this element prints, whatever is selected on the desk. -->
           <StackPanel x:Name="PlayerDataSection">
             <TextBlock Text="PLAYER DATA" Classes="section-title"/>
@@ -389,6 +392,41 @@
             <TextBlock Text="Quarter style for this element" Classes="field-label"/>
             <ComboBox x:Name="PeriodFormatInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"
                       ToolTip.Tip="How {{PERIOD}} prints on this element — Quarter 1, Q1 or 1"/>
+          </StackPanel>
+          <StackPanel x:Name="DownFormatSection">
+            <TextBlock Text="Down and distance for this element" Classes="field-label"/>
+            <CheckBox x:Name="DownCapsInput" Content="Print the down words in full caps" FontSize="11" Margin="10,2,10,2"
+                      Checked="Property_Changed" Unchecked="Property_Changed"
+                      ToolTip.Tip="This element only: 1st &amp; GOAL, 2nd DOWN, 3rd &amp; INCHES. The ordinal keeps its normal case."/>
+            <TextBlock Text="Use on any element that prints {{DOWNS}}, {{DOWN}}, {{TO_GO}} or {{YARDS_TO_GO}}."
+                       Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,4"/>
+          </StackPanel>
+          <StackPanel x:Name="PlayClockFormatSection">
+            <CheckBox x:Name="PlayClockColonInput" Content="Print the play clock with a colon (:22)" FontSize="11" Margin="10,2,10,2"
+                      Checked="Property_Changed" Unchecked="Property_Changed"
+                      ToolTip.Tip="This element only. {{PLAY_CLOCK}} prints :22 instead of 22."/>
+          </StackPanel>
+          <StackPanel x:Name="GameClockFormatSection">
+            <CheckBox x:Name="GameClockLeadingZeroInput" Content="Print the game clock with a leading zero (09:59)" FontSize="11" Margin="10,2,10,2"
+                      Checked="Property_Changed" Unchecked="Property_Changed"
+                      ToolTip.Tip="This element only. Off prints 9:59 and :59 under a minute. The setting travels with the element."/>
+            <TextBlock Text="Use on any element that prints {{GAME_CLOCK}}." Foreground="#93A0B2" FontSize="10"
+                       TextWrapping="Wrap" Margin="10,0,10,4"/>
+          </StackPanel>
+          <StackPanel x:Name="TickerSection">
+            <CheckBox x:Name="TickerInput" Content="Scroll as a bottom-screen ticker" FontSize="11" Margin="10,4,10,2"
+                      Checked="Property_Changed" Unchecked="Property_Changed"
+                      ToolTip.Tip="Make this text travel continuously across its box, like a stadium ribbon board."/>
+            <StackPanel x:Name="TickerOptionsPanel">
+              <TextBlock Text="Ticker speed (pixels / second)" Classes="field-label"/>
+              <TextBox x:Name="TickerSpeedInput" Classes="field-box" TextChanged="Property_Changed"
+                       ToolTip.Tip="Higher moves faster; 80 is a readable broadcast ribbon speed."/>
+              <CheckBox x:Name="TickerReverseInput" Content="Reverse direction (enter from the left)" FontSize="11" Margin="10,4,10,2"
+                        Checked="Property_Changed" Unchecked="Property_Changed"
+                        ToolTip.Tip="Reverse the ticker: cards enter from the left and travel right instead of entering from the right."/>
+              <TextBlock Text="Separate items with | in the text. The ticker joins them with a dot and loops without a seam."
+                         Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,6"/>
+            </StackPanel>
           </StackPanel>
         </StackPanel>
 
@@ -431,6 +469,39 @@
           </DockPanel>
         </StackPanel>
 
+        <!-- A drop shadow is what keeps lettering readable over a photograph of a crowd. -->
+        <StackPanel x:Name="ShadowSection">
+          <TextBlock Text="TEXT SHADOW" Classes="section-title"/>
+          <CheckBox x:Name="TextShadowInput" Content="Shadow behind the letters" FontSize="11" Margin="10,0,10,4"
+                    Checked="Property_Changed" Unchecked="Property_Changed"
+                    ToolTip.Tip="Lifts white lettering off a busy plate or a photo"/>
+          <TextBlock Text="Shadow color" Classes="field-label"/>
+          <DockPanel Margin="0,0,10,2">
+            <Button DockPanel.Dock="Right" Content="Pick" Padding="8,3" FontSize="10" Margin="4,0,0,0"
+                    Click="TextShadowColor_Click" ToolTip.Tip="Choose a shadow colour"/>
+            <TextBox x:Name="TextShadowColorInput" Margin="10,0,0,0" TextChanged="Property_Changed"/>
+          </DockPanel>
+          <Grid Margin="0,3,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="Offset (px)" Classes="field-label"/>
+              <TextBox x:Name="TextShadowOffsetInput" Classes="field-box" TextChanged="Property_Changed"
+                       ToolTip.Tip="How far the shadow sits down and to the right"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="Softness" Classes="field-label"/>
+              <TextBox x:Name="TextShadowSoftnessInput" Classes="field-box" TextChanged="Property_Changed"
+                       ToolTip.Tip="0 is a hard drop, 30 a soft glow"/>
+            </StackPanel>
+          </Grid>
+          <TextBlock Text="Shadow angle (degrees)" Classes="field-label"/>
+          <TextBox x:Name="TextShadowAngleInput" Classes="field-box" TextChanged="Property_Changed"
+                   ToolTip.Tip="Which way the shadow falls: 0 right, 90 straight down, 180 left, 270 up. 45 is down-right."/>
+        </StackPanel>
+
         <StackPanel x:Name="PlayerPhotoSection">
           <TextBlock Text="PLAYER PHOTO" Classes="section-title"/>
           <TextBlock Text="Follows the uploaded portrait of the player selected for this side." Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,4"/>
@@ -455,6 +526,9 @@
           <TextBlock Text="SHAPE" Classes="section-title"/>
           <TextBlock Text="Shape type" Classes="field-label"/>
           <ComboBox x:Name="ShapeInput" Margin="10,0,10,4" SelectionChanged="Property_Changed"/>
+          <TextBlock x:Name="CornerRadiusLabel" Text="Corner radius (px, rectangles)" Classes="field-label"/>
+          <TextBox x:Name="CornerRadiusInput" Classes="field-box" TextChanged="Property_Changed"
+                   ToolTip.Tip="Round a rectangle's corners. 0 gives square corners; 8 is the original soft corner."/>
         </StackPanel>
 
         <StackPanel x:Name="IconSection">

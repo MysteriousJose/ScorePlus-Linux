@@ -90,6 +90,31 @@ for label in OLD_LABELS:
     forbid(xaml, label, "studio markup")
     forbid(code, label, "studio code")
 
+# 4. Controls ported from the Windows editor stay in the panel and keep writing the model.
+WINDOW_FEATURES = {
+    "TextAlignInput": "text alignment",
+    "DownCapsInput": "down capitalisation",
+    "PlayClockColonInput": "play-clock colon",
+    "GameClockLeadingZeroInput": "game-clock leading zero",
+    "TickerInput": "ticker switch",
+    "TickerSpeedInput": "ticker speed",
+    "TickerReverseInput": "ticker direction",
+    "TextShadowInput": "text shadow",
+    "TextShadowColorInput": "shadow colour",
+    "TextShadowOffsetInput": "shadow offset",
+    "TextShadowSoftnessInput": "shadow softness",
+    "TextShadowAngleInput": "shadow angle",
+    "CornerRadiusInput": "shape corner radius",
+}
+for name, label in WINDOW_FEATURES.items():
+    need(xaml, f'x:Name="{name}"', f"{label} control")
+    if name not in code:
+        problems.append(f"{label}: {name} is not wired in the studio code-behind")
+for writer in ("target.TextAlign=", "target.DownCaps=", "target.PlayClockColon=",
+               "target.GameClockLeadingZero=", "target.Ticker=", "target.TickerSpeed=",
+               "target.TickerReverse=", "target.TextShadow=", "target.CornerRadius="):
+    need(code, writer, "property writer")
+
 if problems:
     print("Display Studio surface drifted:")
     for problem in problems:

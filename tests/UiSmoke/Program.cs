@@ -967,6 +967,48 @@ internal static class Program
         Check(ButtonByContent(studio, "Move to…") is not null && ButtonByContent(studio, "Copy to…") is not null,
             "the studio can move or copy a layout to another display");
 
+        // Typography and format switches write straight through to the selected element.
+        var alignBox = (ComboBox)studio.FindName("TextAlignInput")!;
+        alignBox.SelectedItem = ScorebugTextAlign.Right;
+        studio.UpdateLayout();
+        Check(catalog.Layout.Elements[textIndex].TextAlign == ScorebugTextAlign.Right,
+            "text alignment is stored on the element");
+        var downCaps = (CheckBox)studio.FindName("DownCapsInput")!;
+        downCaps.IsChecked = true;
+        var playClockColon = (CheckBox)studio.FindName("PlayClockColonInput")!;
+        playClockColon.IsChecked = true;
+        var clockLeadingZero = (CheckBox)studio.FindName("GameClockLeadingZeroInput")!;
+        clockLeadingZero.IsChecked = false;
+        studio.UpdateLayout();
+        Check(catalog.Layout.Elements[textIndex].DownCaps
+              && catalog.Layout.Elements[textIndex].PlayClockColon
+              && !catalog.Layout.Elements[textIndex].GameClockLeadingZero,
+            "the down, play-clock and game-clock formats are stored per element");
+        var tickerSwitch = (CheckBox)studio.FindName("TickerInput")!;
+        var tickerOptions = (Control)studio.FindName("TickerOptionsPanel")!;
+        tickerSwitch.IsChecked = true;
+        studio.UpdateLayout();
+        Check(tickerOptions.IsVisible && catalog.Layout.Elements[textIndex].Ticker,
+            "turning on the ticker reveals its speed and direction");
+        var tickerSpeed = (TextBox)studio.FindName("TickerSpeedInput")!;
+        tickerSpeed.Text = "140";
+        Press(tickerSpeed, Key.Enter);
+        studio.UpdateLayout();
+        Check(Math.Abs(catalog.Layout.Elements[textIndex].TickerSpeed - 140) < 0.01,
+            "the ticker speed is stored on the element");
+        var shadowSwitch = (CheckBox)studio.FindName("TextShadowInput")!;
+        shadowSwitch.IsChecked = true;
+        var shadowColor = (TextBox)studio.FindName("TextShadowColorInput")!;
+        shadowColor.Text = "#FF102030";
+        var shadowOffset = (TextBox)studio.FindName("TextShadowOffsetInput")!;
+        shadowOffset.Text = "7";
+        Press(shadowOffset, Key.Enter);
+        studio.UpdateLayout();
+        var shadowed = catalog.Layout.Elements[textIndex];
+        Check(shadowed.TextShadow && shadowed.TextShadowColor == "#FF102030"
+              && Math.Abs(shadowed.TextShadowOffset - 7) < 0.01,
+            "a text shadow stores its switch, colour and offset");
+
         // Canvas presets scale the artwork and persist.
         var firstX = catalog.Layout.Elements[0].X;
         ((ComboBox)studio.FindName("CanvasPreset")!).SelectedIndex = 1; // Full HD
