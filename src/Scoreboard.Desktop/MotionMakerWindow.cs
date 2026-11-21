@@ -144,18 +144,16 @@ public sealed class MotionMakerWindow : Window
         }
 
         Title = kind == MotionKind.Transition ? "ScorePlus — Transition Builder" : "ScorePlus — Animation Maker";
-        // Fit the working area: the window is a working surface, not something to drag around a
-        // desktop it does not fit on.
-        var work = WpfSystemParameters.WorkArea;
-        Width = Math.Min(1240, Math.Max(900, work.Width - 40));
-        Height = Math.Min(800, Math.Max(600, work.Height - 40));
-        MinWidth = Math.Min(980, Width);
-        MinHeight = Math.Min(640, Height);
-        MaxWidth = work.Width;
-        MaxHeight = work.Height;
+        // Sized for a full desktop: the window is a working surface, not something to drag around
+        // a screen it does not fit on. ScreenFit caps it to the work area and clamps the minimums
+        // down, so the maker still opens on a short, narrow or portrait display.
+        Width = 1240;
+        Height = 800;
+        MinWidth = 980;
+        MinHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         FontFamily = new FontFamily("Segoe UI");
-        ScreenFit.Track(this);
+        ScreenFit.FitDialog(this);
 
         _plateText = new TextBlock
         {

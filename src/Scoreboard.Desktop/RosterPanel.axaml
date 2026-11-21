@@ -87,7 +87,10 @@
     </Style>
 </UserControl.Styles>
 
-  <Grid>
+  <!-- A narrow desk stacks the two columns under one scroller; a wide one keeps them side by side
+       and lets each column manage its own height. -->
+  <ScrollViewer x:Name="RosterScroller" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled">
+  <Grid x:Name="RosterColumns">
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="1*" MinWidth="240"/>
       <ColumnDefinition Width="12"/>
@@ -95,7 +98,7 @@
     </Grid.ColumnDefinitions>
 
     <!-- ============ the roster: pick, search, browse ============ -->
-    <Border Background="{DynamicResource RosterSurfaceBrush}" CornerRadius="8" ClipToBounds="True">
+    <Border x:Name="RosterListPanel" Background="{DynamicResource RosterSurfaceBrush}" CornerRadius="8" ClipToBounds="True">
       <DockPanel>
         <StackPanel DockPanel.Dock="Top" Margin="12,12,12,10">
           <!-- The roster picker: captioned, summarised and stepped in, so nobody has to guess
@@ -195,7 +198,7 @@
       </DockPanel>
     </Border>
     <!-- ============ the player: details on the right, stats underneath ============ -->
-    <Border Grid.Column="2" Background="{DynamicResource RosterSurfaceBrush}" CornerRadius="8" Padding="16,14">
+    <Border x:Name="PlayerEditorPanel" Grid.Column="2" Background="{DynamicResource RosterSurfaceBrush}" CornerRadius="8" Padding="16,14">
       <DockPanel>
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
           <DockPanel>
@@ -298,5 +301,6 @@
     </Border>
 
   </Grid>
+  </ScrollViewer>
 </UserControl>
 

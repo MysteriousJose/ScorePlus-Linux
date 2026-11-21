@@ -2,7 +2,7 @@
         xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Scoreboard.Desktop"
-        Title="ScorePlus — Control Panel" Width="1360" Height="985" MinWidth="1040" MinHeight="915"
+        Title="ScorePlus — Control Panel" Width="1360" Height="985" MinWidth="900" MinHeight="600"
         Background="#0B0F14" Foreground="#F4F7FB" FontFamily="Segoe UI">
   <Window.Styles>
     <Style Selector="Button.tab-button">
@@ -25,17 +25,24 @@
 </Window.Styles>
   <DockPanel>
     <Border DockPanel.Dock="Top" Background="#111721" Padding="14,9">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Content="Undo" Tag="global.undo" Click="Undo_Click" ToolTip.Tip="Undo the last action"/>
-          <Button Content="Keybinds…" Click="Keybinds_Click" ToolTip.Tip="Assign a key combination to any button on this panel"/>
-          <Button Content="New panel" Click="NewPanel_Click" ToolTip.Tip="Open another control panel that stays in sync"/>
-        </StackPanel>
-        <StackPanel VerticalAlignment="Center">
-          <TextBlock Text="SCOREPLUS · CONTROL PANEL" FontSize="14" FontWeight="Bold"/>
-          <TextBlock Text="This window has its own display and layout choice. The game, the media library and the audience follow whatever you publish." Foreground="#93A0B2" FontSize="11" Margin="0,3,0,0"/>
-        </StackPanel>
-      </DockPanel>
+      <StackPanel>
+        <!-- The actions wrap inside a star column, so a narrow panel grows the header downward
+             instead of drawing the buttons over the title. -->
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Text="SCOREPLUS · CONTROL PANEL" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+          <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+            <Button Content="Undo" Tag="global.undo" Click="Undo_Click" ToolTip.Tip="Undo the last action"/>
+            <Button Content="Keybinds…" Click="Keybinds_Click" ToolTip.Tip="Assign a key combination to any button on this panel"/>
+            <Button Content="New panel" Click="NewPanel_Click" ToolTip.Tip="Open another control panel that stays in sync"/>
+          </WrapPanel>
+        </Grid>
+        <TextBlock Text="This window has its own display and layout choice. The game, the media library and the audience follow whatever you publish."
+                   Foreground="#93A0B2" FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap"/>
+      </StackPanel>
     </Border>
     <Border DockPanel.Dock="Bottom" Background="#0E141C" Padding="14,6">
       <TextBlock x:Name="MediaStatus" Text="MEDIA READY" Foreground="#93A0B2" FontSize="11" TextTrimming="CharacterEllipsis"/>
@@ -44,20 +51,29 @@
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
 
+      <!-- Preview section: the program strip, quick layouts and meter. On a short window it folds
+           behind one toggle so the console and its tabs keep the room; when it is open its own
+           scroller keeps every card reachable. -->
+      <StackPanel Grid.Row="0">
+        <Button x:Name="PreviewToggle" Content="▸ PREVIEW" IsVisible="False" HorizontalAlignment="Left"
+                Margin="0,0,0,9" Padding="10,5" FontSize="11"
+                Click="PreviewToggle_Click"
+                ToolTip.Tip="Show or hide the program preview, quick layouts and meter"/>
+        <ScrollViewer x:Name="PreviewScroller" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="PreviewStack">
+
       <!-- Program preview: which display this window is driving, and its layout. -->
-      <Border x:Name="ProgramStrip" Grid.Row="0" Background="#10161F" CornerRadius="9" Padding="10,8" Margin="0,0,0,9">
-        <Grid>
+      <Border x:Name="ProgramStrip" Background="#10161F" CornerRadius="9" Padding="10,8" Margin="0,0,0,9">
+        <Grid x:Name="ProgramGrid">
           <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="248"/>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="248"/>
+            <ColumnDefinition Width="*" MinWidth="160"/>
+            <ColumnDefinition Width="*" MinWidth="220"/>
+            <ColumnDefinition Width="*" MinWidth="160"/>
           </Grid.ColumnDefinitions>
-          <Border Background="#091018" CornerRadius="7" ClipToBounds="True" Height="140">
+          <Border Background="#091018" CornerRadius="7" ClipToBounds="True" MinHeight="90" MaxHeight="140">
             <ContentControl x:Name="PreviewHost"/>
           </Border>
           <StackPanel Grid.Column="1" Margin="12,2,0,0">
@@ -78,7 +94,7 @@
                        FontSize="10" Foreground="#5C6B7E" TextWrapping="Wrap" Margin="0,6,0,0"/>
           </StackPanel>
           <!-- What the audience is watching right now, independent of this panel's choices. -->
-          <Border Grid.Column="2" Background="#091018" CornerRadius="7" ClipToBounds="True" Padding="8,6" Margin="12,0,0,0">
+          <Border x:Name="AudiencePanel" Grid.Column="2" Background="#091018" CornerRadius="7" ClipToBounds="True" Padding="8,6" Margin="12,0,0,0">
             <ContentControl x:Name="AudienceHost"/>
           </Border>
         </Grid>
@@ -86,13 +102,17 @@
 
       <!-- The same four quick-layout buttons as the main rail, so a detached panel can reach a
            layout on any display without a trip back to the main window. -->
-      <ContentControl x:Name="QuickLayoutsHost" Grid.Row="1"/>
+      <ContentControl x:Name="QuickLayoutsHost"/>
 
       <!-- The same peak meter and show line as the main rail, so a panel on a second monitor can
            see the output level without turning back to the main window. -->
-      <local:SoundMeterView x:Name="Meter" Grid.Row="2"/>
+      <local:SoundMeterView x:Name="Meter"/>
 
-      <StackPanel Grid.Row="3" Orientation="Horizontal">
+          </StackPanel>
+        </ScrollViewer>
+      </StackPanel>
+
+      <StackPanel Grid.Row="1" Orientation="Horizontal">
         <Button x:Name="ControlTab" Classes="tab-button" Content="CONTROL PANEL" Click="ControlTab_Click"/>
         <Button x:Name="MediaTab" Classes="tab-button" Content="MEDIA" Click="MediaTab_Click" ToolTip.Tip="Clips, camera, replay and playlists"/>
         <Button x:Name="RosterTab" Classes="tab-button" Content="ROSTERS" Click="RosterTab_Click"
@@ -101,7 +121,7 @@
                 ToolTip.Tip="One button that changes several things in order"/>
       </StackPanel>
 
-      <Grid Grid.Row="4" Margin="0,9,0,0">
+      <Grid Grid.Row="2" Margin="0,9,0,0">
         <ContentControl x:Name="PanelHost"/>
         <local:MediaDock x:Name="MediaControl" IsVisible="False"/>
         <local:RosterDock x:Name="RosterControl" IsVisible="False"/>

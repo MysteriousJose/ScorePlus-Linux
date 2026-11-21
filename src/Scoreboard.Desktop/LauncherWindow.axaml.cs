@@ -34,6 +34,7 @@ public partial class LauncherWindow : Window
     public LauncherWindow()
     {
         InitializeComponent();
+        ScreenFit.FitDialog(this);
         VersionText.Text = Version;
         ThemeManager.SetSkipTheme(this, true);
         _deleteReset.Tick += (_, _) => ResetDeleteButton();

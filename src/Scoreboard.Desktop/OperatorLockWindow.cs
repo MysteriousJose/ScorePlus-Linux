@@ -23,6 +23,7 @@ public sealed class OperatorLockWindow : Window
     {
         _expectedHash = expectedHash;
         Title = "ScorePlus — Operator Lock";
+        ScreenFit.FitDialog(this);
         Width = 430;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

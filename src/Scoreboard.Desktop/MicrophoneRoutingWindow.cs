@@ -18,6 +18,7 @@ internal sealed class MicrophoneRoutingWindow : Window
     MicrophoneRoutingWindow(MediaSession session, MediaEntry entry, string theme)
     {
         Title = "Route microphone";
+        ScreenFit.FitDialog(this);
         Width = 440;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

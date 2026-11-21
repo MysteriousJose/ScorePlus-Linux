@@ -78,7 +78,7 @@ public sealed class ReplayBoothWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Brushes.Black;
         Foreground = Brushes.White;
-        ScreenFit.Track(this);
+        ScreenFit.FitDialog(this);
 
         _booth.Activate();
         try

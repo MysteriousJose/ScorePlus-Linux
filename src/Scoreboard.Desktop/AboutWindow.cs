@@ -18,6 +18,7 @@ public sealed class AboutWindow : Avalonia.Controls.Window
         Title = "About ScorePlus";
         Width = 360;
         SizeToContent = SizeToContent.Height;
+        ScreenFit.FitDialog(this);
         CanResize = false;
         CanMinimize = false;
         CanMaximize = false;

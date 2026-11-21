@@ -22,6 +22,7 @@ public sealed class KeybindsWindow : Window
         _settings = settings.Clone();
         Title = "ScorePlus — Keybinds";
         Width = 620; Height = 620; MinWidth = 520; MinHeight = 460;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.FromRgb(14, 18, 24));
         Foreground = Brushes.White;

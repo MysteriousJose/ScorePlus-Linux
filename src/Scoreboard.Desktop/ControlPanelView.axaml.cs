@@ -98,6 +98,17 @@ public partial class ControlPanelView : UserControl
         _engine = engine;
         _host = host;
 
+        // A ScrollViewer measures its child with unlimited height, which would turn the card grid's
+        // star rows into auto rows and leave a band of dead space under them on a tall window.
+        // Pinning the grid's minimum to the viewport keeps the rows filling the panel exactly as
+        // they did before the scroller was added, and the scroller still takes over on short ones.
+        CardsScroller.SizeChanged += (_, e) =>
+        {
+            var viewport = e.NewSize.Height;
+            if (double.IsFinite(viewport) && viewport > 0 && Math.Abs(CardsGrid.MinHeight - viewport) > 0.5)
+                CardsGrid.MinHeight = viewport;
+        };
+
         _awayScore = BuildScoreStepper(false);
         _homeScore = BuildScoreStepper(true);
         AwayScoreHost.Content = _awayScore;
@@ -482,7 +493,7 @@ public partial class ControlPanelView : UserControl
         var value = new TextBox
         {
             Text = "0",
-            Width = 40,
+            MinWidth = 40,
             Height = 32,
             FontSize = 15,
             FontWeight = FontWeights.Bold,

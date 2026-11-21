@@ -25,6 +25,7 @@ internal sealed class DisplayPickerWindow : Window
     {
         _catalog = catalog;
         Title = title;
+        ScreenFit.FitDialog(this);
         Width = 470;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

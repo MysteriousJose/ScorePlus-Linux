@@ -46,6 +46,7 @@ public sealed class TickerWindow : Avalonia.Controls.Window
         Height = 690;
         MinWidth = 520;
         MinHeight = 520;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
         FontFamily = new FontFamily("Segoe UI");

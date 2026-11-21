@@ -36,9 +36,23 @@ public sealed class MacroDock : UserControl
     int _page;
     int _pageCount = 1;
 
+    // Below this width the board and the editor stack, so the fixed editor column never squeezes
+    // the macro buttons off the panel.
+    const double StackedBelowWidth = 900;
     readonly Grid _root = new();
     readonly ColumnDefinition _editorColumn = new() { Width = new GridLength(EditorWidth) };
     readonly ColumnDefinition _splitterColumn = new() { Width = new GridLength(8) };
+    readonly DockPanel _board = new() { Margin = new Thickness(0, 0, 4, 0) };
+    readonly Border _editorHost = new()
+    {
+        Background = Brush("#080808"),
+        CornerRadius = new CornerRadius(9),
+        Padding = new Thickness(12, 10),
+        BorderBrush = Brush("#383838"),
+        BorderThickness = new Thickness(1)
+    };
+    readonly Border _splitter = new() { Width = 8, Background = Brush("#383838"), Margin = new Thickness(4, 0) };
+    bool _stacked;
     readonly Grid _macroButtons = new() { Margin = new Thickness(0, 0, 0, 8) };
     readonly TextBlock _emptyText = new() { FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 4, 8, 0) };
     readonly TextBlock _pageLabel = new() { FontSize = 10, FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 6, 0) };
@@ -124,6 +138,7 @@ public sealed class MacroDock : UserControl
         ThemeManager.SetSkipTheme(this, true);
         _showHints = TipsEnabled();
         Build();
+        SizeChanged += (_, e) => ApplyWidth(e.NewSize.Width);
         FillKindChoices();
         _side.ItemsSource = new[] { "Home", "Visitors" };
         _side.SelectedIndex = 0;
@@ -191,7 +206,7 @@ public sealed class MacroDock : UserControl
         _splitterColumn.Width = new GridLength(8);
         _splitterColumn.MinWidth = 0;
 
-        var board = new DockPanel { Margin = new Thickness(0, 0, 4, 0) };
+        var board = _board;
         var top = new StackPanel();
         var titleRow = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -241,11 +256,14 @@ public sealed class MacroDock : UserControl
         board.Children.Add(scroll);
         _root.Children.Add(board);
 
-        var splitter = new Border { Width = 8, Background = _border, Margin = new Thickness(4, 0) };
+        var splitter = _splitter;
+        splitter.Background = _border;
         Grid.SetColumn(splitter, 1);
         _root.Children.Add(splitter);
 
-        var editor = new Border { Background = _panel, CornerRadius = new CornerRadius(9), Padding = new Thickness(12, 10), BorderBrush = _border, BorderThickness = new Thickness(1) };
+        var editor = _editorHost;
+        editor.Background = _panel;
+        editor.BorderBrush = _border;
         var editorScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
@@ -463,13 +481,68 @@ public sealed class MacroDock : UserControl
     void ToggleEditor()
     {
         _editorVisible = !_editorVisible;
-        _editorColumn.Width = new GridLength(_editorVisible ? EditorWidth : 0);
-        _splitterColumn.Width = new GridLength(_editorVisible ? 8 : 0);
-        foreach (var child in _root.Children.OfType<Border>())
-            child.IsVisible = _editorVisible || child.Width != 8;
-        if (_root.Children.Count > 2 && _root.Children[2] is Control editor) editor.IsVisible = _editorVisible;
         _editorToggle.Content = _editorVisible ? "Hide editor" : "Show editor";
+        ApplyEditorLayout();
         RenderMacros();
+    }
+
+    /// <summary>
+    /// Fits the desk to its width: wide keeps the board and the editor side by side with the
+    /// splitter between them, narrow stacks the editor under the board so neither is squeezed.
+    /// </summary>
+    void ApplyWidth(double width)
+    {
+        if (!double.IsFinite(width) || width <= 0) return;
+        var stacked = width < StackedBelowWidth;
+        if (stacked == _stacked) return;
+        _stacked = stacked;
+        if (stacked)
+        {
+            _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            _root.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            Grid.SetColumn(_board, 0);
+            Grid.SetColumnSpan(_board, 3);
+            Grid.SetRow(_board, 0);
+            Grid.SetColumn(_editorHost, 0);
+            Grid.SetColumnSpan(_editorHost, 3);
+            Grid.SetRow(_editorHost, 1);
+            _editorHost.Margin = new Thickness(0, 8, 0, 0);
+        }
+        else
+        {
+            _root.RowDefinitions.Clear();
+            Grid.SetColumn(_board, 0);
+            Grid.SetColumnSpan(_board, 1);
+            Grid.SetRow(_board, 0);
+            Grid.SetColumn(_editorHost, 2);
+            Grid.SetColumnSpan(_editorHost, 1);
+            Grid.SetRow(_editorHost, 0);
+            _editorHost.Margin = default;
+        }
+        ApplyEditorLayout();
+        RenderMacros();
+    }
+
+    /// <summary>Puts the editor where the current mode wants it, and honours the editor toggle.</summary>
+    void ApplyEditorLayout()
+    {
+        if (_stacked)
+        {
+            _splitterColumn.Width = new GridLength(0);
+            _editorColumn.Width = new GridLength(0);
+            _splitter.IsVisible = false;
+            _root.RowDefinitions[1].Height = _editorVisible
+                ? new GridLength(1, GridUnitType.Star)
+                : new GridLength(0);
+            _editorHost.IsVisible = _editorVisible;
+            return;
+        }
+
+        _splitterColumn.Width = new GridLength(_editorVisible ? 8 : 0);
+        _editorColumn.Width = new GridLength(_editorVisible ? EditorWidth : 0);
+        _splitter.IsVisible = _editorVisible;
+        _editorHost.IsVisible = _editorVisible;
     }
 
     IEnumerable<SavedMacro> MacrosOnPage => _macros.Where(macro => macro.Page == _page);

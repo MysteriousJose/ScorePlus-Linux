@@ -215,6 +215,7 @@ internal sealed class QuickMediaPickerWindow : Window
     QuickMediaPickerWindow(MediaSession session, string theme, QuickMediaBinding current)
     {
         Title = "Quick media";
+        ScreenFit.FitDialog(this);
         Width = 470;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

@@ -46,6 +46,7 @@ public sealed class LeagueCloudWindow : Avalonia.Controls.Window
         Height = 640;
         MinWidth = 540;
         MinHeight = 520;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         FontFamily = new FontFamily("Segoe UI");
         Content = Build();

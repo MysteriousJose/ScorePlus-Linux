@@ -159,6 +159,9 @@
 </UserControl.Styles>
 
   <Border x:Name="Chrome" Background="{DynamicResource DockPanel}" CornerRadius="9" Padding="11,9">
+    <!-- A very short dock scrolls the whole body instead of letting its own rows clip; the tile
+         grid keeps its star row so a tall dock still fills the window. -->
+    <ScrollViewer x:Name="DockScroller" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled">
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
@@ -177,19 +180,19 @@
       <!-- Header: library actions on the first line, live camera on the second, so nothing is
            clipped when the dock is only a rail wide. -->
       <StackPanel Margin="0,0,0,5">
-        <DockPanel>
-          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-            <Button x:Name="RemoveButton" Content="Remove" Classes="dock-action" Click="Remove_Click" ToolTip.Tip="Remove the selected clip from the library"/>
-            <Button Content="Import" Classes="dock-action" Click="Import_Click" ToolTip.Tip="Import audio or video clips"/>
-            <Button Content="Clear" Classes="dock-action clear-action" Click="Clear_Click"
-                    ToolTip.Tip="Stop playback, close the camera and blank every scorebug video box"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal">
-            <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,6,0"/>
-            <TextBlock Text="MEDIA" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center"/>
-            <TextBlock x:Name="HintText" Text="  tags route to the scorebug · folders organise" FontSize="10" Foreground="{DynamicResource DockMuted}" Opacity="0.7" VerticalAlignment="Center" IsVisible="False"/>
-          </StackPanel>
-        </DockPanel>
+        <StackPanel Orientation="Horizontal">
+          <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,6,0"/>
+          <TextBlock Text="MEDIA" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center"/>
+          <TextBlock x:Name="HintText" Text="  tags route to the scorebug · folders organise" FontSize="10" Foreground="{DynamicResource DockMuted}" Opacity="0.7" VerticalAlignment="Center" IsVisible="False"/>
+        </StackPanel>
+        <!-- Library actions on their own wrapping line, so nothing is docked off the edge of a
+             rail-width dock. -->
+        <WrapPanel Margin="0,3,0,0">
+          <Button x:Name="RemoveButton" Content="Remove" Classes="dock-action" Click="Remove_Click" ToolTip.Tip="Remove the selected clip from the library"/>
+          <Button Content="Import" Classes="dock-action" Click="Import_Click" ToolTip.Tip="Import audio or video clips"/>
+          <Button Content="Clear" Classes="dock-action clear-action" Click="Clear_Click"
+                  ToolTip.Tip="Stop playback, close the camera and blank every scorebug video box"/>
+        </WrapPanel>
         <!-- Camera items: add one, rename/re-route one, and scrub the last two minutes. -->
         <WrapPanel Margin="0,4,0,0">
           <TextBlock Text="CAMERA" Classes="dock-label" VerticalAlignment="Center" Margin="0,0,4,0"/>
@@ -260,7 +263,7 @@
                      VerticalAlignment="Center" Margin="8,0,0,0" IsHitTestVisible="False"/>
         </Grid>
         <Button x:Name="SearchClearButton" Grid.Column="2" Classes="dock-action"
-                Content="✕" Width="30" Padding="0" Margin="3,0,0,0" IsVisible="False"
+                Content="✕" MinWidth="30" Padding="0" Margin="3,0,0,0" IsVisible="False"
                 Click="ClearSearch_Click" ToolTip.Tip="Clear the search"/>
       </Grid>
 
@@ -396,10 +399,10 @@
                     IsVisible="False"
                     ToolTip.Tip="Start the playlist again after the last clip"/>
           <TextBlock Text="SWITCH" Classes="dock-label" VerticalAlignment="Center" Margin="8,0,4,0"/>
-          <ComboBox x:Name="TransitionBox" Width="76" Classes="dock-combo"
+          <ComboBox x:Name="TransitionBox" MinWidth="76" MaxWidth="110" Classes="dock-combo"
                     SelectionChanged="Transition_Changed"
                     ToolTip.Tip="How this video replaces the last cue on the scorebug"/>
-          <TextBox x:Name="TransitionSecondsBox" Width="42" Margin="3,0,0,0" Classes="dock-search"
+          <TextBox x:Name="TransitionSecondsBox" MinWidth="42" MaxWidth="56" Margin="3,0,0,0" Classes="dock-search"
                    TextChanged="TransitionSeconds_Changed" LostFocus="TransitionSeconds_LostFocus"
                    ToolTip.Tip="How long the switch takes, in seconds (0–5)"/>
         </WrapPanel>
@@ -419,7 +422,7 @@
                 SmallChange="5" LargeChange="10" ToolTip.Tip="This clip's own output level"
                 ValueChanged="Volume_Changed"/>
         <TextBlock x:Name="VolumeText" Grid.Column="2" Text="100%" FontFamily="Consolas" FontSize="11"
-                   Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center" Width="42" TextAlignment="Right"/>
+                   Foreground="{DynamicResource DockMuted}" VerticalAlignment="Center" MinWidth="42" TextAlignment="Right"/>
       </Grid>
 
       <Grid Grid.Row="10" Margin="0,4,0,0">
@@ -432,5 +435,6 @@
                   ToolTip.Tip="Play this clip's sound on a specific speaker; Default uses the Windows output"/>
       </Grid>
     </Grid>
+    </ScrollViewer>
   </Border>
 </UserControl>

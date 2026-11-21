@@ -75,22 +75,57 @@
       <Setter Property="ToolTip.Tip" Value="Click and type a value to set it exactly, then press Enter"/>
     </Style>
 </UserControl.Styles>
-  <Grid>
-    <Grid.RowDefinitions>
-      <RowDefinition Height="*" MinHeight="226"/>
-      <RowDefinition Height="*" MinHeight="190"/>
-      <RowDefinition Height="196" MinHeight="196"/>
-      <RowDefinition Height="Auto"/>
-    </Grid.RowDefinitions>
+  <DockPanel>
+    <!-- The publish bar is pinned to the bottom of the panel: on a short window the cards above
+         it scroll, but Live and Update Output never leave the screen. It wraps into two lines
+         once the panel is narrower than the bar's single-line width. -->
+    <Border DockPanel.Dock="Bottom" Background="#111721" CornerRadius="9" Padding="9,6" Margin="0,8,0,0">
+      <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+          <ComboBox x:Name="HornType" MinWidth="88" MaxWidth="130" MinHeight="32" Margin="0,0,4,0" SelectionChanged="HornType_Changed"
+                    ToolTip.Tip="Choose the horn sound"/>
+          <Button x:Name="HornButton" Content="HORN" MinWidth="62" MinHeight="36" Padding="10,6" FontWeight="Bold"
+                  Click="Horn_Click" ToolTip.Tip="Play the selected horn"/>
+          <Button x:Name="HornPickButton" Content="…" MinWidth="30" MinHeight="36" Padding="4,6" Margin="3,0,0,0"
+                  Click="HornPick_Click" ToolTip.Tip="Choose a custom horn audio file"/>
+        </StackPanel>
+        <!-- The staging status sits between the horn and the publishing controls, so a single line
+             still reads left to right and a wrapped bar keeps it above Live and Update Output. -->
+        <TextBlock x:Name="StagedText" Text="EVERYTHING ON AIR" FontSize="11" FontWeight="Bold" Foreground="#38D7A3"
+                   VerticalAlignment="Center" Margin="0,0,10,0"/>
+        <Border Background="#171C25" CornerRadius="6" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="LAYOUT" FontSize="10" FontWeight="Bold" Foreground="#7C8A9C" VerticalAlignment="Center" Margin="2,0,5,0"/>
+            <Button x:Name="LayoutPrevButton" Classes="control-tiny" Content="◀" Click="LayoutPrev_Click" ToolTip.Tip="Previous scorebug layout"/>
+            <TextBlock x:Name="LayoutLabel" Text="1 · Broadcast Classic" FontSize="11" FontWeight="SemiBold"
+                       MinWidth="100" MaxWidth="160" TextTrimming="CharacterEllipsis" TextAlignment="Center"
+                       VerticalAlignment="Center" Margin="4,0"/>
+            <Button x:Name="LayoutNextButton" Classes="control-tiny" Content="▶" Click="LayoutNext_Click" ToolTip.Tip="Next scorebug layout"/>
+          </StackPanel>
+        </Border>
+        <ToggleButton x:Name="LiveOutputToggle" Content="Live: ON" IsChecked="True" Checked="LiveOutput_Changed" Unchecked="LiveOutput_Changed"
+                      Padding="12,8" MinHeight="36" FontSize="12" MinWidth="86" Margin="0,0,6,0" VerticalAlignment="Center"
+                      ToolTip.Tip="Publish score, clocks and team names as they change"/>
+        <Button x:Name="UpdateButton" Content="Update Output" FontSize="13" Padding="16,10" MinHeight="40" Background="#0B6B50"
+                BorderBrush="#14A67C" Tag="output.publish" Click="Action_Click" VerticalAlignment="Center"
+                ToolTip.Tip="Publish down, distance, possession, timeouts, stats and the chosen layout"/>
+      </WrapPanel>
+    </Border>
 
-    <!-- ============ VISITORS / HOME ============ -->
-    <Grid Grid.Row="0" Margin="0,0,0,6">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="*"/>
-      </Grid.ColumnDefinitions>
+    <!-- The card area scrolls when the window is too short for its three rows. The code-behind
+         pins the grid's minimum to the viewport, so the star rows still fill a tall window. -->
+    <ScrollViewer x:Name="CardsScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <Grid x:Name="CardsGrid">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*" MinHeight="226"/>
+          <RowDefinition Height="*" MinHeight="190"/>
+          <RowDefinition Height="*" MinHeight="196"/>
+        </Grid.RowDefinitions>
 
-      <Border Classes="control-card" Grid.Column="0">
+        <!-- ============ VISITORS / HOME ============ -->
+        <local:ResponsiveGrid Grid.Row="0" Margin="0,0,0,6" MaxColumns="2" MinItemWidth="300">
+
+          <Border Classes="control-card">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -125,7 +160,7 @@
         </Grid>
       </Border>
 
-      <Border Classes="control-card" Grid.Column="1" Margin="0">
+      <Border Classes="control-card" Margin="0">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -159,15 +194,10 @@
           <ContentControl x:Name="HomeScoreHost" Grid.Row="2" VerticalAlignment="Center" Margin="0,4,0,0"/>
         </Grid>
       </Border>
-    </Grid>
-    <!-- ============ DOWN & DISTANCE (football) + TIMING ============ -->
-    <Grid Grid.Row="1" Margin="0,0,0,6">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="*"/>
-      </Grid.ColumnDefinitions>
-
-      <Border Classes="control-card" Grid.Column="0">
+        </local:ResponsiveGrid>
+        <!-- ============ DOWN & DISTANCE (football) + TIMING ============ -->
+        <local:ResponsiveGrid Grid.Row="1" Margin="0,0,0,6" MaxColumns="2" MinItemWidth="340">
+          <Border Classes="control-card">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -211,13 +241,15 @@
               </Border>
               <Button x:Name="FootballModeNextButton" Grid.Column="2" Classes="control-tiny" Content="▶" Click="FootballModeNext_Click" ToolTip.Tip="Next down-line type"/>
             </Grid>
-            <!-- The flag card: type, team and whether a flag is down. -->
-            <DockPanel x:Name="PenaltyStrip" Grid.Row="2" Grid.ColumnSpan="3" Margin="0,4,0,0">
-              <ToggleButton x:Name="PenaltyActiveToggle" Content="NO FLAG" FontSize="11" FontWeight="Bold" MinHeight="32" Width="96"
+            <!-- The flag card: type, team and whether a flag is down. A WrapPanel rather than a
+                 row of fixed widths, so a narrow card folds the row instead of drawing the
+                 combos over the toggle. -->
+            <WrapPanel x:Name="PenaltyStrip" Grid.Row="2" Grid.ColumnSpan="3" Margin="0,4,0,0">
+              <ToggleButton x:Name="PenaltyActiveToggle" Content="NO FLAG" FontSize="11" FontWeight="Bold" MinHeight="32" MinWidth="88" Margin="0,2,0,0"
                             Checked="Penalty_Changed" Unchecked="Penalty_Changed" ToolTip.Tip="Put a flag down or clear it"/>
-              <ComboBox x:Name="PenaltyTypeBox" Width="126" MinHeight="30" Margin="5,0,0,0" SelectionChanged="Penalty_Changed" ToolTip.Tip="What the flag was for"/>
-              <ComboBox x:Name="PenaltyTeamBox" Width="110" MinHeight="30" Margin="5,0,0,0" SelectionChanged="Penalty_Changed" ToolTip.Tip="Which team the flag is against"/>
-            </DockPanel>
+              <ComboBox x:Name="PenaltyTypeBox" MinWidth="96" MaxWidth="150" MinHeight="30" Margin="5,2,0,0" SelectionChanged="Penalty_Changed" ToolTip.Tip="What the flag was for"/>
+              <ComboBox x:Name="PenaltyTeamBox" MinWidth="90" MaxWidth="140" MinHeight="30" Margin="5,2,0,0" SelectionChanged="Penalty_Changed" ToolTip.Tip="Which team the flag is against"/>
+            </WrapPanel>
           </Grid>
 
           <!-- Every sport's own values — balls, bases, power play, overs, sets — as full-size
@@ -235,7 +267,7 @@
         </Grid>
       </Border>
 
-      <Border Classes="control-card" Grid.Column="1" Margin="0">
+      <Border Classes="control-card" Margin="0">
         <StackPanel>
           <StackPanel Orientation="Horizontal">
             <Border Classes="control-accent"/>
@@ -246,7 +278,7 @@
           <ContentControl x:Name="QuarterHost" Margin="0,6,0,0"/>
           <DockPanel Margin="0,5,0,0">
             <TextBlock Text="CLOCK READS" Classes="control-caption" VerticalAlignment="Center"/>
-            <ComboBox x:Name="ClockMessageBox" DockPanel.Dock="Right" Width="132" Height="28" FontSize="11"
+            <ComboBox x:Name="ClockMessageBox" DockPanel.Dock="Right" MinWidth="96" MaxWidth="140" Height="28" FontSize="11"
                       SelectionChanged="ClockMessage_Changed" ToolTip.Tip="Show the running time, FINAL or END OF REG. on the game clock"/>
           </DockPanel>
 
@@ -327,17 +359,10 @@
           </Grid>
         </StackPanel>
       </Border>
-    </Grid>
-    <!-- ============ TIMEOUTS / POSSESSION / TIMEOUT CLOCK / STATS ============ -->
-    <Grid Grid.Row="2">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="0.8*"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="1.2*"/>
-      </Grid.ColumnDefinitions>
-
-      <Border Classes="control-card" Grid.Column="0">
+        </local:ResponsiveGrid>
+        <!-- ============ TIMEOUTS / POSSESSION / TIMEOUT CLOCK / STATS ============ -->
+        <local:ResponsiveGrid Grid.Row="2" MaxColumns="4" MinItemWidth="245">
+          <Border Classes="control-card">
         <StackPanel>
           <StackPanel Orientation="Horizontal">
             <Border Classes="control-accent"/>
@@ -354,7 +379,7 @@
         </StackPanel>
       </Border>
 
-      <Border Classes="control-card" Grid.Column="1">
+      <Border Classes="control-card">
         <StackPanel>
           <StackPanel Orientation="Horizontal">
             <Border Classes="control-accent"/>
@@ -368,7 +393,7 @@
         </StackPanel>
       </Border>
 
-      <Border Classes="control-card" Grid.Column="2">
+      <Border Classes="control-card">
         <StackPanel>
           <StackPanel Orientation="Horizontal">
             <Border Classes="control-accent"/>
@@ -391,7 +416,7 @@
         </StackPanel>
       </Border>
 
-      <Border Classes="control-card" Grid.Column="3" Margin="0">
+      <Border Classes="control-card" Margin="0">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -410,35 +435,10 @@
           </ScrollViewer>
         </Grid>
       </Border>
-    </Grid>
-
-    <!-- ============ PUBLISH BAR ============ -->
-    <Border Grid.Row="3" Background="#111721" CornerRadius="9" Padding="9,6" Margin="0,8,0,0">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
-          <ComboBox x:Name="HornType" Width="104" MinHeight="32" Margin="0,0,4,0" SelectionChanged="HornType_Changed"
-                    ToolTip.Tip="Choose the horn sound"/>
-          <Button x:Name="HornButton" Content="HORN" MinWidth="62" MinHeight="36" Padding="10,6" FontWeight="Bold"
-                  Click="Horn_Click" ToolTip.Tip="Play the selected horn"/>
-          <Button x:Name="HornPickButton" Content="…" MinWidth="30" MinHeight="36" Padding="4,6" Margin="3,0,0,0"
-                  Click="HornPick_Click" ToolTip.Tip="Choose a custom horn audio file"/>
-        </StackPanel>
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-          <Border Background="#171C25" CornerRadius="6" Padding="6,2" Margin="0,0,8,0">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-              <TextBlock Text="LAYOUT" FontSize="10" FontWeight="Bold" Foreground="#7C8A9C" VerticalAlignment="Center" Margin="2,0,5,0"/>
-              <Button x:Name="LayoutPrevButton" Classes="control-tiny" Content="◀" Click="LayoutPrev_Click" ToolTip.Tip="Previous scorebug layout"/>
-              <TextBlock x:Name="LayoutLabel" Text="1 · Broadcast Classic" FontSize="11" FontWeight="SemiBold" MinWidth="140" TextAlignment="Center" VerticalAlignment="Center" Margin="4,0"/>
-              <Button x:Name="LayoutNextButton" Classes="control-tiny" Content="▶" Click="LayoutNext_Click" ToolTip.Tip="Next scorebug layout"/>
-            </StackPanel>
-          </Border>
-          <ToggleButton x:Name="LiveOutputToggle" Content="Live: ON" IsChecked="True" Checked="LiveOutput_Changed" Unchecked="LiveOutput_Changed" Padding="12,8" MinHeight="36" FontSize="12" Width="92" ToolTip.Tip="Publish score, clocks and team names as they change"/>
-          <Button x:Name="UpdateButton" Content="Update Output" FontSize="13" Padding="16,10" MinHeight="40" Background="#0B6B50" BorderBrush="#14A67C" Tag="output.publish" Click="Action_Click" Margin="6,0,0,0" ToolTip.Tip="Publish down, distance, possession, timeouts, stats and the chosen layout"/>
-        </StackPanel>
-        <TextBlock x:Name="StagedText" Text="EVERYTHING ON AIR" FontSize="11" FontWeight="Bold" Foreground="#38D7A3" VerticalAlignment="Center"/>
-      </DockPanel>
-    </Border>
-  </Grid>
+        </local:ResponsiveGrid>
+      </Grid>
+    </ScrollViewer>
+  </DockPanel>
 
 
 

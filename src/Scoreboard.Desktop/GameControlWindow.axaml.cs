@@ -1,3 +1,4 @@
+using System;
 using Avalonia.Interactivity;
 using Avalonia;
 using Avalonia.Controls;
@@ -22,6 +23,15 @@ public partial class GameControlWindow : Window
     bool _displaySync;
     ConsoleTab _tab = ConsoleTab.Control;
     MacroDock? _macroDock;
+    // Below this width the audience column is dropped: the main window still shows it, and the
+    // program preview plus its controls need the room more in a detached panel.
+    const double CompactWidth = 1050;
+    // Below this height the preview section folds behind one toggle, so the console and its tabs
+    // keep the room instead of being pushed off the bottom of the window.
+    const double ShortHeight = 760;
+    bool _compactStrip;
+    bool _shortWindow;
+    bool _previewOpen = true;
 
     /// <summary>The four desks a control window carries: console, media, rosters and macros.</summary>
     public enum ConsoleTab { Control, Media, Rosters, Macros }
@@ -51,6 +61,7 @@ public partial class GameControlWindow : Window
     {
         InitializeComponent();
         ScreenFit.Track(this);
+        SizeChanged += (_, e) => ApplyResponsiveLayout(e.NewSize.Width, e.NewSize.Height);
         _engine = engine;
         if (host is DelegateHost detached) detached.NewPanel = () => NewPanelRequested?.Invoke();
         Panel = new ControlPanelView(engine, host);
@@ -76,6 +87,7 @@ public partial class GameControlWindow : Window
     {
         InitializeComponent();
         ScreenFit.Track(this);
+        SizeChanged += (_, e) => ApplyResponsiveLayout(e.NewSize.Width, e.NewSize.Height);
         _engine = engine;
         _catalog = catalog;
         Program = new ProgramSelection(catalog);
@@ -134,6 +146,54 @@ public partial class GameControlWindow : Window
         _quickLayouts?.Refresh();
         // In a tab the dock has the full panel width, so its buttons are the size of the console's.
         MediaControl.SetLargeMode(true);
+    }
+
+    /// <summary>
+    /// Fits the panel to its window: a narrow panel drops the audience column, and a short one folds
+    /// the whole preview section behind a toggle. The console stays where it was; only the section
+    /// above it gives up its room. Idempotent, so it can run on every resize.
+    /// </summary>
+    void ApplyResponsiveLayout(double width, double height)
+    {
+        if (double.IsFinite(width) && width > 0)
+        {
+            var compact = width < CompactWidth;
+            if (compact != _compactStrip)
+            {
+                _compactStrip = compact;
+                AudiencePanel.IsVisible = !compact;
+                ProgramGrid.ColumnDefinitions[2].Width = compact
+                    ? new GridLength(0)
+                    : new GridLength(1, GridUnitType.Star);
+            }
+        }
+
+        var hasPreview = Program is not null;
+        var shortWindow = double.IsFinite(height) && height > 0 && height < ShortHeight;
+        if (shortWindow != _shortWindow)
+        {
+            _shortWindow = shortWindow;
+            // A short window starts folded; the console is the priority and the toggle is one press
+            // away. Growing back to a tall window opens it again.
+            _previewOpen = !shortWindow;
+        }
+        PreviewToggle.IsVisible = shortWindow && hasPreview;
+        PreviewScroller.IsVisible = hasPreview && (!shortWindow || _previewOpen);
+        PreviewScroller.VerticalScrollBarVisibility = shortWindow
+            ? Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
+            : Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+        // When the preview is open on a short window it takes at most the top half, so the console
+        // below it is never pushed out of reach.
+        PreviewScroller.MaxHeight = shortWindow ? Math.Max(240, height * 0.45) : double.PositiveInfinity;
+        PreviewToggle.Content = _previewOpen ? "▾ PREVIEW" : "▸ PREVIEW";
+        MediaControl.SetCompact(compact: _compactStrip);
+    }
+
+    void PreviewToggle_Click(object? sender, RoutedEventArgs e)
+    {
+        _previewOpen = !_previewOpen;
+        PreviewScroller.IsVisible = _previewOpen;
+        PreviewToggle.Content = _previewOpen ? "▾ PREVIEW" : "▸ PREVIEW";
     }
 
     public void SetHintVisibility(bool show)
@@ -380,6 +440,7 @@ internal sealed class AddStatDialog : Window
     {
         Title = "Add custom stat";
         Width = 380; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.FromRgb(23, 28, 37));
         Foreground = Brushes.White;
@@ -424,6 +485,7 @@ internal sealed class ClockTimeDialog : Window
     {
         Title = title;
         Width = 360; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.FromRgb(23, 28, 37));
         Foreground = Brushes.White;

@@ -186,15 +186,11 @@ public partial class ScorebugEditorWindow : Window
         ThemeManager.Apply(this,theme);
         ApplyTipVisibility(PreferencesStore.Load().ShowHeadingHints);
         // The studio opens filling the desktop (windowed, so the title bar and taskbar stay), and it
-        // can never be sized past the working area: a window that runs off the bottom of the screen
+        // can never be sized past the monitor: a window that runs off the bottom of the screen
         // hides the lower edge of the artwork, which read as a canvas you could not drag into.
-        var work=WpfSystemParameters.WorkArea;
-        MinWidth=Math.Min(MinWidth,Math.Max(720,work.Width-40));
-        MinHeight=Math.Min(MinHeight,Math.Max(480,work.Height-40));
-        MaxWidth=work.Width; MaxHeight=work.Height;
-        Width=MaxWidth; Height=MaxHeight;
+        // ScreenFit owns that arithmetic for every window, including a portrait or higher-DPI
+        // monitor, so the studio does not keep its own copy of the work-area clamp.
         WindowState=WindowState.Maximized;
-        // Follow it onto a portrait or higher-DPI monitor without running off the screen.
         ScreenFit.Track(this);
         RefreshMotionLists();
         // Saved clips are offered beside the presets by RefreshMotionLists.

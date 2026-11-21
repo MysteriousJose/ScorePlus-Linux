@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
@@ -85,6 +86,20 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     string? _savedDesignJson;
     bool _closingAfterPrompt;
     GameControlWindow.ConsoleTab _tab = GameControlWindow.ConsoleTab.Control;
+    // How the shell is laid out right now: full, compact (narrow headers, slim rail) or the
+    // overlay tier where the rail hides behind a header toggle instead of squeezing the console.
+    enum RailTier { Wide, Compact, Overlay }
+    RailTier _railTier;
+    bool _narrow;
+    bool _railOverlayOpen;
+    // The rail width the operator last had at full size, restored when the window grows back.
+    double _railPreferredWidth = 336;
+    /// <summary>Below this content width the headers compact and the rail narrows.</summary>
+    const double NarrowWidth = 980;
+    /// <summary>Below this content width the rail would squeeze the console, so it becomes an overlay.</summary>
+    const double RailOverlayWidth = 860;
+    /// <summary>Below this content height the workspace scrolls instead of clipping its bottom.</summary>
+    const double ScrollBelowHeight = 900;
 
     /// <summary>
     /// The exit prompt is on for operators. The UI checks turn it off because they create and close
@@ -112,6 +127,10 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         // Follow the window onto portrait monitors and laptops at 150% scaling instead of hanging
         // the console off the screen; the console itself is reflowable down to its minimum width.
         ScreenFit.Track(this);
+        // Reflow the shell as the window changes size. The handlers are names-only; only the
+        // widths of the header strips and the rail column change, never which control a button
+        // is or what it does.
+        SizeChanged += (_, e) => ApplyShellLayout(e.NewSize.Width, e.NewSize.Height);
         _session = new MediaSession(_preferences);
         _booth = new ReplayBoothController(_session, _engine, _preferences);
         _hardware = new HardwareService(_engine);
@@ -281,6 +300,115 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         StartHardware();
         _leagueCloud?.Start();
         _ = CheckForUpdatesAsync();
+    }
+
+    /// <summary>
+    /// Fits the shell to the window: the two header strips wrap and compact, the rail narrows and
+    /// then becomes an overlay, and a window too short for the console scrolls the workspace.
+    /// Idempotent, so it can run on every resize without disturbing the operator's splitter width.
+    /// </summary>
+    void ApplyShellLayout(double width, double height)
+    {
+        if (!double.IsFinite(width) || width <= 0) return;
+
+        var narrow = width < NarrowWidth;
+        if (narrow != _narrow)
+        {
+            _narrow = narrow;
+            Root.Classes.Set("narrow", narrow);
+            // Give the action rows back the room the fields were holding, so the buttons wrap
+            // less instead of growing the header downward.
+            GameNameBox.Width = narrow ? 110 : 150;
+            SportSelector.MaxWidth = narrow ? 160 : 220;
+            // At the compact tier the header hints are the first thing to give up their room.
+            ApplyHintVisibility();
+        }
+
+        // A narrow window trims the media desk's own chrome too, so its columns keep the room.
+        MediaControl.SetCompact(narrow);
+
+        SetRailTier(width < RailOverlayWidth ? RailTier.Overlay
+            : narrow ? RailTier.Compact
+            : RailTier.Wide);
+        // The overlay is a panel over the console, so it is never taller than the visible
+        // workspace; its own scroller takes over when the rail's cards do not fit.
+        if (_railTier == RailTier.Overlay) RailHost.MaxHeight = Math.Max(220, WorkspaceViewportHeight());
+
+        // A scroller measures its content with unlimited height, which turns the console's star
+        // rows into auto rows. Only switch it on when the window is too short to hold the console;
+        // at normal heights the rows must keep filling the window as they always have.
+        var scrolling = double.IsFinite(height) && height > 0 && height < ScrollBelowHeight;
+        var mode = scrolling
+            ? Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
+            : Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+        if (WorkspaceScroller.VerticalScrollBarVisibility != mode)
+            WorkspaceScroller.VerticalScrollBarVisibility = mode;
+    }
+
+    /// <summary>
+    /// Moves the rail between its three tiers. The operator's own splitter width is remembered at
+    /// full size and put back when the window grows again; the compact and overlay tiers force
+    /// their widths so the console keeps working.
+    /// </summary>
+    void SetRailTier(RailTier tier)
+    {
+        if (tier == _railTier) return;
+        var column = Workspace.ColumnDefinitions[0];
+        if (_railTier == RailTier.Wide && double.IsFinite(column.Width.Value) && column.Width.Value > 0)
+            _railPreferredWidth = Math.Max(240, column.Width.Value);
+        _railTier = tier;
+        switch (tier)
+        {
+            case RailTier.Wide:
+                column.MinWidth = 260;
+                column.Width = new GridLength(_railPreferredWidth);
+                break;
+            case RailTier.Compact:
+                column.MinWidth = 240;
+                column.Width = new GridLength(240);
+                break;
+            default:
+                column.MinWidth = 0;
+                column.Width = new GridLength(0);
+                break;
+        }
+
+        var overlay = tier == RailTier.Overlay;
+        if (overlay) _railOverlayOpen = false;
+        RailToggleButton.IsVisible = overlay;
+        RailSplitter.IsVisible = !overlay;
+        RailHost.IsVisible = !overlay || _railOverlayOpen;
+        // An overlay rail spans every column and sits above the console, so nothing is removed
+        // from the operator's reach; the toggle in the header brings it back and puts it away.
+        Grid.SetColumnSpan(RailHost, overlay ? 3 : 1);
+        RailHost.HorizontalAlignment = overlay ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+        RailHost.Width = overlay ? RailWidthForWindow() : double.NaN;
+        RailHost.Margin = overlay ? new Thickness(0) : new Thickness(0, 0, 6, 0);
+        RailHost.ZIndex = overlay ? 10 : 0;
+        RailHost.MaxHeight = overlay ? Math.Max(220, WorkspaceViewportHeight()) : double.PositiveInfinity;
+    }
+
+    double WorkspaceViewportHeight()
+    {
+        var viewport = WorkspaceScroller.Bounds.Height;
+        if (!double.IsFinite(viewport) || viewport <= 0) viewport = Math.Max(0, Bounds.Height - 150);
+        return viewport;
+    }
+
+    double RailWidthForWindow()
+    {
+        var available = Root.Bounds.Width - 24;
+        return double.IsFinite(available) && available > 0 ? Math.Clamp(available, 220, 320) : 320;
+    }
+
+    void RailToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_railTier != RailTier.Overlay) return;
+        _railOverlayOpen = !_railOverlayOpen;
+        RailHost.IsVisible = _railOverlayOpen;
+        RailHost.Width = RailWidthForWindow();
+        RailHost.MaxHeight = Math.Max(220, WorkspaceViewportHeight());
+        RailToggleButton.Content = _railOverlayOpen ? "◨" : "◧";
     }
 
     /// <summary>Locks or unlocks everything inside the window while the launch box is up.</summary>
@@ -585,7 +713,8 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
 
     void ApplyHintVisibility()
     {
-        var visibility = _preferences.ShowHeadingHints ? Visibility.Visible : Visibility.Collapsed;
+        // Hints are the first thing the compact tier gives up, whatever the preference says.
+        var visibility = _preferences.ShowHeadingHints && !_narrow ? Visibility.Visible : Visibility.Collapsed;
         SportHint.Visibility = PreviewAudienceHint.Visibility = visibility;
         MediaControl.SetHintVisibility(_preferences.ShowHeadingHints);
         RosterControl.SetHintVisibility(_preferences.ShowHeadingHints);

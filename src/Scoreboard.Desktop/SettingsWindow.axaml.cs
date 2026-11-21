@@ -20,6 +20,7 @@ public partial class SettingsWindow : Window
     public SettingsWindow(UserPreferences prefs)
     {
         InitializeComponent();
+        ScreenFit.FitDialog(this);
         // Enter while typing in a preference field must settle that field, not fire the window's
         // default Save button. Avalonia has no PreviewKeyDown event, so the tunnel route of the
         // KeyDown routed event is the same moment WPF's preview handler fired.

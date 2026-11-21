@@ -50,6 +50,7 @@ public sealed class HardwareWindow : Window
         Height = 840;
         MinWidth = 640;
         MinHeight = 600;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.Parse("#171C25"));
         Foreground = new SolidColorBrush(Color.Parse("#F4F7FB"));

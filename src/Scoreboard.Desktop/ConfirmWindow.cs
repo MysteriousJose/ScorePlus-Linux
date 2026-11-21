@@ -21,6 +21,7 @@ public sealed class ConfirmWindow : Window
     public ConfirmWindow(string theme, string heading, string detail, string confirmText, bool destructive = false, string? secondaryText = null)
     {
         Title = $"{heading} — ScorePlus";
+        ScreenFit.FitDialog(this);
         Width = 520;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

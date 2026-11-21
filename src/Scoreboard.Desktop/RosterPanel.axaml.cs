@@ -30,6 +30,10 @@ public partial class RosterPanel : UserControl
     int _shownCount;
     // The theme this desk is painted with, so its own dialogs match it.
     string _theme = "Dark";
+    // Below this width the roster and the player editor stack instead of sharing one line, which
+    // is what made the two 240/280 px columns overlap in a rail-narrow tab.
+    const double StackedBelowWidth = 760;
+    bool _stacked;
 
     /// <summary>A player row, or a squad-group header that can fold the rows beneath it.</summary>
     sealed class PlayerRow
@@ -73,7 +77,46 @@ public partial class RosterPanel : UserControl
         // A panel can be used on its own (an export box, the checks) before any window applies a
         // theme, so it paints itself with the saved theme's palette straight away.
         RosterPalette.Apply(PreferencesStore.Load().Theme, Resources);
+        SizeChanged += (_, e) => ApplyColumnLayout(e.NewSize.Width);
         Loaded += (_, _) => Refresh(force: true);
+    }
+
+    /// <summary>
+    /// Folds the desk to one column when it is too narrow to hold the roster list and the player
+    /// editor side by side. The whole page then scrolls, which is the same fallback the other
+    /// desks use on a small panel.
+    /// </summary>
+    void ApplyColumnLayout(double width)
+    {
+        if (!double.IsFinite(width) || width <= 0) return;
+        var stacked = width < StackedBelowWidth;
+        if (stacked == _stacked) return;
+        _stacked = stacked;
+        if (stacked)
+        {
+            RosterColumns.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            RosterColumns.ColumnDefinitions[0].MinWidth = 0;
+            RosterColumns.ColumnDefinitions[1].Width = new GridLength(0);
+            RosterColumns.ColumnDefinitions[2].Width = new GridLength(0);
+            RosterColumns.ColumnDefinitions[2].MinWidth = 0;
+            RosterColumns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetColumn(PlayerEditorPanel, 0);
+            Grid.SetRow(PlayerEditorPanel, 1);
+            PlayerEditorPanel.Margin = new Thickness(0, 12, 0, 0);
+            RosterScroller.VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+            return;
+        }
+
+        RosterColumns.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        RosterColumns.ColumnDefinitions[0].MinWidth = 240;
+        RosterColumns.ColumnDefinitions[1].Width = new GridLength(12);
+        RosterColumns.ColumnDefinitions[2].Width = new GridLength(1.15, GridUnitType.Star);
+        RosterColumns.ColumnDefinitions[2].MinWidth = 280;
+        RosterColumns.RowDefinitions.Clear();
+        Grid.SetColumn(PlayerEditorPanel, 2);
+        Grid.SetRow(PlayerEditorPanel, 0);
+        PlayerEditorPanel.Margin = default;
+        RosterScroller.VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
     }
 
     /// <summary>True for the home side's desk, false for the visitors'.</summary>

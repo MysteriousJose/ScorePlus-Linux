@@ -20,6 +20,7 @@ internal sealed class SpeakerRoutingWindow : Window
     SpeakerRoutingWindow(MediaSession session, MediaEntry entry, string theme)
     {
         Title = "Route speaker";
+        ScreenFit.FitDialog(this);
         Width = 440;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

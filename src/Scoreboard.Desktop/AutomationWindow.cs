@@ -80,6 +80,7 @@ public sealed class AutomationWindow : Window
         Height = 780;
         MinWidth = 900;
         MinHeight = 560;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.FromRgb(12, 17, 23));
         FontFamily = new FontFamily("Segoe UI");

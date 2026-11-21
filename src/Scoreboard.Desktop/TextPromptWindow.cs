@@ -17,6 +17,7 @@ public sealed class TextPromptWindow : Window
     TextPromptWindow(string title, string label, string initial)
     {
         Title = title;
+        ScreenFit.FitDialog(this);
         Width = 380;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

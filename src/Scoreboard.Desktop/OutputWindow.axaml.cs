@@ -33,6 +33,8 @@ public partial class OutputWindow : Window
     public OutputWindow(GameEngine engine, ScorebugCatalog catalog,string broadcastTheme="Dark",MediaPlayback? playback=null,string? displayId=null, bool annotations=false, AnnotationBoard? annotationBoard=null)
     {
         InitializeComponent(); _broadcastTheme=broadcastTheme; _engine = engine; _catalog=catalog; _displayState=engine.CloneState();
+        // Deliberately not ScreenFit: an audience output may fill the whole monitor, taskbar included.
+        // Its own FillMonitor owns that geometry, and a work-area cap would leave a desktop strip.
         _displayId=(catalog.FindDisplay(displayId)??catalog.Displays[0]).Id;
         // The audience only ever sees the layout that was published, never the one being designed.
         _scorebugView=new ScorebugCanvasView(catalog,engine,()=>_displayState,playback,muteVideo:false,layoutProvider:()=>_catalog.PublishedLayoutOf(_displayId),displayId:_displayId);

@@ -22,6 +22,7 @@ internal sealed class MicrophonePickerWindow : Window
     MicrophonePickerWindow(IReadOnlyList<MicrophoneDevice> devices, string theme)
     {
         Title = "Add microphone";
+        ScreenFit.FitDialog(this);
         Width = 470;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

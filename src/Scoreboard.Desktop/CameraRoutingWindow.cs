@@ -17,6 +17,7 @@ internal sealed class CameraRoutingWindow : Window
     CameraRoutingWindow(MediaSession session, MediaEntry entry, string theme)
     {
         Title = "Route camera";
+        ScreenFit.FitDialog(this);
         Width = 430;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

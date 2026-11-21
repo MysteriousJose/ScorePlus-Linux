@@ -15,6 +15,7 @@ public sealed class NoticeWindow : Window
     public NoticeWindow(string theme, string heading, string detail, bool warning = false)
     {
         Title = $"{heading} — ScorePlus";
+        ScreenFit.FitDialog(this);
         Width = 520;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

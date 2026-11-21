@@ -23,6 +23,10 @@
     <AllowedReferenceRelatedFileExtensions>.pdb</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Scoreboard.Core/Scoreboard.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <!-- The headless UI harness checks the fit arithmetic and simulates a small work area. -->
+    <InternalsVisibleTo Include="UiSmoke" />
+  </ItemGroup>
   <ItemGroup Label="Avalonia embedded media, reached by avares:// URIs (logo, scorebug art)">
     <!-- The .axaml surfaces need no listing: Avalonia's targets glob **/*.axaml as AvaloniaXaml
          and compile them. WPF-era <Resource> items did nothing here, so they are gone. -->

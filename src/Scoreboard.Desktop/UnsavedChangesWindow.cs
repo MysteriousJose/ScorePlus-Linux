@@ -20,6 +20,7 @@ public sealed class UnsavedChangesWindow : Window
     public UnsavedChangesWindow(string theme, string detail)
     {
         Title = "Unsaved game — ScorePlus";
+        ScreenFit.FitDialog(this);
         Width = 560;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

@@ -35,6 +35,7 @@ public sealed class SportPickerWindow : Window
     public SportPickerWindow(SportCatalog catalog, string? current, string theme, string heading = "START A NEW GAME")
     {
         Title = $"{heading} — ScorePlus";
+        ScreenFit.FitDialog(this);
         Width = 580;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;
