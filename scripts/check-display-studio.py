@@ -105,6 +105,19 @@ WINDOW_FEATURES = {
     "TextShadowSoftnessInput": "shadow softness",
     "TextShadowAngleInput": "shadow angle",
     "CornerRadiusInput": "shape corner radius",
+    "IconCustomInput": "made-icon picker",
+    "IconTokenInput": "icon value binding",
+    "IconOffsetXInput": "icon horizontal offset",
+    "IconOffsetYInput": "icon vertical offset",
+    "IconColorInput": "icon colour",
+    "IconBorderWidthInput": "icon border width",
+    "IconBorderColorInput": "icon border colour",
+    "IconBackgroundInput": "icon background",
+    "IconUsedColorInput": "used-timeout colour",
+    "IconOpacitySlider": "icon opacity",
+    "IconArrowDownInput": "possession arrow direction",
+    "IconScaleInput": "timeout bar size",
+    "IconVerticalInput": "timeout bar stacking",
 }
 for name, label in WINDOW_FEATURES.items():
     need(xaml, f'x:Name="{name}"', f"{label} control")
@@ -112,8 +125,13 @@ for name, label in WINDOW_FEATURES.items():
         problems.append(f"{label}: {name} is not wired in the studio code-behind")
 for writer in ("target.TextAlign=", "target.DownCaps=", "target.PlayClockColon=",
                "target.GameClockLeadingZero=", "target.Ticker=", "target.TickerSpeed=",
-               "target.TickerReverse=", "target.TextShadow=", "target.CornerRadius="):
+               "target.TickerReverse=", "target.TextShadow=", "target.CornerRadius=",
+               "target.IconToken=", "target.IconBorderThickness=", "target.IconBackground=",
+               "target.IconUsedColor=", "target.IconOpacity=", "target.IconScale=",
+               "target.IconArrowDown="):
     need(code, writer, "property writer")
+need(code, "void IconMaker_Click", "Icon Creator button")
+need(code, "void RefreshIconChoices", "made-icon library")
 
 if problems:
     print("Display Studio surface drifted:")

@@ -1009,6 +1009,46 @@ internal static class Program
               && Math.Abs(shadowed.TextShadowOffset - 7) < 0.01,
             "a text shadow stores its switch, colour and offset");
 
+        // Icon artwork carries its own fill, border, colours, scale and value binding.
+        var iconPicker = (ComboBox)studio.FindName("IconInput")!;
+        var iconLook = (Control)studio.FindName("IconLookPanel")!;
+        var iconScale = (Control)studio.FindName("IconScalePanel")!;
+        var madeIconPicker = (ComboBox)studio.FindName("IconCustomInput")!;
+        iconPicker.SelectedItem = ScorebugIcon.TimeoutBars;
+        studio.UpdateLayout();
+        Check(iconLook.IsVisible && iconScale.IsVisible && !madeIconPicker.IsVisible,
+            "a timeout icon reveals its fill, border and size controls, not the made-icon picker");
+        ((TextBox)studio.FindName("IconBorderWidthInput")!).Text = "3";
+        ((TextBox)studio.FindName("IconBorderColorInput")!).Text = "#FF112233";
+        ((TextBox)studio.FindName("IconUsedColorInput")!).Text = "#FF445566";
+        ((TextBox)studio.FindName("IconTokenInput")!).Text = "{{PERIOD}}";
+        var iconOffset = (TextBox)studio.FindName("IconOffsetXInput")!;
+        iconOffset.Text = "12";
+        Press(iconOffset, Key.Enter);
+        studio.UpdateLayout();
+        var iconItem = catalog.Layout.Elements[textIndex];
+        Check(Math.Abs(iconItem.IconBorderThickness - 3) < 0.01
+              && iconItem.IconBorderColor == "#FF112233"
+              && iconItem.IconUsedColor == "#FF445566"
+              && iconItem.IconToken == "{{PERIOD}}"
+              && Math.Abs(iconItem.IconOffsetX - 12) < 0.01,
+            "icon border, used-timeout colour, token and offset are stored on the element");
+        ((Slider)studio.FindName("IconOpacitySlider")!).Value = 40;
+        studio.UpdateLayout();
+        Check(Math.Abs(catalog.Layout.Elements[textIndex].IconOpacity - 0.4) < 0.01,
+            "icon opacity is stored on the element");
+        iconPicker.SelectedItem = ScorebugIcon.Custom;
+        studio.UpdateLayout();
+        Check(madeIconPicker.IsVisible, "choosing a made icon reveals the icon picker");
+        iconPicker.SelectedItem = ScorebugIcon.PossessionArrow;
+        studio.UpdateLayout();
+        var arrowDown = (CheckBox)studio.FindName("IconArrowDownInput")!;
+        Check(arrowDown.IsVisible, "a possession arrow offers the downward direction");
+        arrowDown.IsChecked = true;
+        studio.UpdateLayout();
+        Check(catalog.Layout.Elements[textIndex].IconArrowDown,
+            "a possession arrow can be pointed down");
+
         // Canvas presets scale the artwork and persist.
         var firstX = catalog.Layout.Elements[0].X;
         ((ComboBox)studio.FindName("CanvasPreset")!).SelectedIndex = 1; // Full HD

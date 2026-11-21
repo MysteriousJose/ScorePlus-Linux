@@ -200,6 +200,7 @@ public partial class ScorebugEditorWindow : Window
         WindowState=WindowState.Maximized;
         ScreenFit.Track(this);
         RefreshMotionLists();
+        RefreshIconChoices();
         // Saved clips are offered beside the presets by RefreshMotionLists.
         // Built-in arrivals plus the show's named transitions, by RefreshLayoutTransitionChoices.
         ShapeInput.ItemsSource=Enum.GetValues<ScorebugShape>();
@@ -843,7 +844,7 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,TextAlignInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,CornerRadiusInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,DownCapsInput,PlayClockColonInput,GameClockLeadingZeroInput,TickerInput,TickerSpeedInput,TickerReverseInput,TextShadowInput,TextShadowColorInput,TextShadowOffsetInput,TextShadowSoftnessInput,TextShadowAngleInput,IconInput,IconVisitorsInput,IconFlipInput,IconFillInput,IconFillSourceInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput,GradientInput,GradientSourceInput,GradientColorInput,GradientAngleInput,OpacitySlider,TextOpacitySlider,BackgroundOpacitySlider,BorderOpacitySlider,VideoCropLeftInput,VideoCropTopInput,VideoCropRightInput,VideoCropBottomInput,ChromaKeyInput,ChromaKeyToleranceInput,PlayerPhotoSideInput,NestedLayoutInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,TextAlignInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,CornerRadiusInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,DownCapsInput,PlayClockColonInput,GameClockLeadingZeroInput,TickerInput,TickerSpeedInput,TickerReverseInput,TextShadowInput,TextShadowColorInput,TextShadowOffsetInput,TextShadowSoftnessInput,TextShadowAngleInput,IconInput,IconCustomInput,IconTokenInput,IconOffsetXInput,IconOffsetYInput,IconColorInput,IconArrowDownInput,IconScaleInput,IconVerticalInput,IconBorderWidthInput,IconBorderColorInput,IconBackgroundInput,IconUsedColorInput,IconOpacitySlider,IconVisitorsInput,IconFlipInput,IconFillInput,IconFillSourceInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput,GradientInput,GradientSourceInput,GradientColorInput,GradientAngleInput,OpacitySlider,TextOpacitySlider,BackgroundOpacitySlider,BorderOpacitySlider,VideoCropLeftInput,VideoCropTopInput,VideoCropRightInput,VideoCropBottomInput,ChromaKeyInput,ChromaKeyToleranceInput,PlayerPhotoSideInput,NestedLayoutInput})
             control.IsEnabled=has;
         if(has)
         {
@@ -903,6 +904,21 @@ public partial class ScorebugEditorWindow : Window
             LogoInput.SelectedItem=Logos.FirstOrDefault(l=>l.Side==e.LogoSide)??Logos[0];
             PeriodFormatInput.SelectedItem=PeriodOptions.FirstOrDefault(o=>o.Key==e.PeriodFormat)??PeriodOptions[0];
             IconInput.SelectedItem=e.Icon; IconVisitorsInput.IsChecked=e.IconVisitors; IconFlipInput.IsChecked=e.IconFlipped;
+            IconArrowDownInput.IsChecked=e.IconArrowDown;
+            IconVerticalInput.IsChecked=e.IconVertical;
+            IconBorderWidthInput.Text=Math.Clamp(e.IconBorderThickness,0,40).ToString("0.#");
+            IconBorderColorInput.Text=e.IconBorderColor;
+            IconBackgroundInput.Text=e.IconBackground;
+            IconUsedColorInput.Text=e.IconUsedColor;
+            IconOpacitySlider.Value=Math.Clamp(e.IconOpacity,0,1)*100;
+            IconOpacityReadout.Text=$"{IconOpacitySlider.Value:0}%";
+            IconCustomInput.SelectedItem=(IconCustomInput.ItemsSource as List<CustomIconChoice>)
+                ?.FirstOrDefault(choice=>string.Equals(choice.Icon.Id,e.CustomIconId,StringComparison.OrdinalIgnoreCase));
+            IconTokenInput.Text=e.IconToken;
+            IconOffsetXInput.Text=e.IconOffsetX.ToString("0.##");
+            IconOffsetYInput.Text=e.IconOffsetY.ToString("0.##");
+            IconColorInput.Text=e.IconColor;
+            IconScaleInput.Text=Math.Clamp(e.IconScale,0.25,3).ToString("0.##");
             IconFillInput.Text=e.IconFillColor;
             IconFillSourceInput.SelectedItem=ColorSources.FirstOrDefault(c=>c.Source==e.IconFillSource)??ColorSources[0];
             VideoCropLeftInput.Text=e.VideoCropLeft.ToString("0.###");
@@ -935,11 +951,19 @@ public partial class ScorebugEditorWindow : Window
         BackgroundColorSwatch.Background=item is null||item.TransparentBackground?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveBackground(item,_engine.State));
         GradientColorSwatch.Background=item is null||item.TransparentBackground||!item.BackgroundGradient?Brushes.Transparent:ScorebugRender.ParseBrush(_engine.State.ColorFor(item.BackgroundSource2)??item.BackgroundColor2);
         BorderColorSwatch.Background=item is null||item.BorderThickness<=0?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveBorder(item,_engine.State));
+        IconColorSwatch.Background=item is null||string.IsNullOrWhiteSpace(item.IconColor)?Brushes.Transparent:ScorebugRender.ParseBrush(item.IconColor);
+        IconBorderColorSwatch.Background=item is null?Brushes.Transparent:ScorebugRender.ParseBrush(item.IconBorderColor);
+        IconBackgroundSwatch.Background=item is null||string.IsNullOrWhiteSpace(item.IconBackground)?Brushes.Transparent:ScorebugRender.ParseBrush(item.IconBackground);
+        IconUsedSwatch.Background=item is null?Brushes.Transparent:ScorebugRender.ParseBrush(item.IconUsedColor);
         IconFillSwatch.Background=item is null||item.Icon!=ScorebugIcon.Bases?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveIconFill(item,_engine.State));
         TextColorSwatch.ToolTip=item is null?null:$"Text colour: {ScorebugRender.ResolveForeground(item,_engine.State)}";
         BackgroundColorSwatch.ToolTip=item is null?null:item.TransparentBackground?"No background box":$"Background colour: {ScorebugRender.ResolveBackground(item,_engine.State)}";
         GradientColorSwatch.ToolTip=item is null||!item.BackgroundGradient?"No gradient":$"Second gradient colour: {_engine.State.ColorFor(item.BackgroundSource2)??item.BackgroundColor2}";
         BorderColorSwatch.ToolTip=item is null||item.BorderThickness<=0?"No border":$"Border colour: {ScorebugRender.ResolveBorder(item,_engine.State)}";
+        IconColorSwatch.ToolTip=item is null||string.IsNullOrWhiteSpace(item.IconColor)?"Uses the text colour":$"Icon colour: {item.IconColor}";
+        IconBorderColorSwatch.ToolTip=item is null?"No icon":$"Icon outline: {item.IconBorderColor}";
+        IconBackgroundSwatch.ToolTip=item is null||string.IsNullOrWhiteSpace(item.IconBackground)?"No icon background":$"Icon background: {item.IconBackground}";
+        IconUsedSwatch.ToolTip=item is null?"No icon":$"Used timeout: {item.IconUsedColor}";
         IconFillSwatch.ToolTip=item is null||item.Icon!=ScorebugIcon.Bases?"No bases":$"Base fill: {ScorebugRender.ResolveIconFill(item,_engine.State)}";
     }
 
@@ -972,7 +996,7 @@ public partial class ScorebugEditorWindow : Window
         var kind=e?.Kind;
         var text=kind==ScorebugElementKind.Text;
         var any=e is not null;
-        var boundSource=e?.Content ?? "";
+        var boundSource=$"{e?.Content} {e?.IconToken}";
         // An HTML element has no printed value, but its markup is edited in the same content box.
         TextSection.IsVisible = text||kind==ScorebugElementKind.Html?true:false;
         // Type is typography: a logo, shape or video has no text to set a face, weight or colour on.
@@ -1000,12 +1024,12 @@ public partial class ScorebugEditorWindow : Window
         TickerSection.IsVisible = text?true:false;
         TickerOptionsPanel.IsVisible = text&&TickerInput.IsChecked==true?true:false;
         // The format flags only show on the values they print, so an unrelated label stays clean.
-        DownFormatSection.IsVisible = text&&(boundSource.Contains("{{DOWNS}}",StringComparison.OrdinalIgnoreCase)
+        DownFormatSection.IsVisible = any&&(boundSource.Contains("{{DOWNS}}",StringComparison.OrdinalIgnoreCase)
             ||boundSource.Contains("{{DOWN}}",StringComparison.OrdinalIgnoreCase)
             ||boundSource.Contains("{{TO_GO}}",StringComparison.OrdinalIgnoreCase)
             ||boundSource.Contains("{{YARDS_TO_GO}}",StringComparison.OrdinalIgnoreCase))?true:false;
-        PlayClockFormatSection.IsVisible = text&&boundSource.Contains("{{PLAY_CLOCK}}",StringComparison.OrdinalIgnoreCase)?true:false;
-        GameClockFormatSection.IsVisible = text&&boundSource.Contains("{{GAME_CLOCK}}",StringComparison.OrdinalIgnoreCase)?true:false;
+        PlayClockFormatSection.IsVisible = any&&boundSource.Contains("{{PLAY_CLOCK}}",StringComparison.OrdinalIgnoreCase)?true:false;
+        GameClockFormatSection.IsVisible = any&&boundSource.Contains("{{GAME_CLOCK}}",StringComparison.OrdinalIgnoreCase)?true:false;
         // Corner radius is a rectangle's property; circles and triangles have no corners to round.
         var rectangle=e is not null&&e.Kind==ScorebugElementKind.Shape&&e.Shape==ScorebugShape.Rectangle;
         CornerRadiusLabel.IsVisible = rectangle?true:false;
@@ -1015,8 +1039,24 @@ public partial class ScorebugEditorWindow : Window
         // A value transition needs a printed value to cross to.
         TransitionSection.IsVisible = text?true:false;
         var icon=e?.Icon??ScorebugIcon.None;
-        IconVisitorsInput.IsVisible = icon==ScorebugIcon.TimeoutBars?true:false;
-        IconFlipInput.IsVisible = icon==ScorebugIcon.PossessionDot?true:false;
+        var countedIcon=icon is ScorebugIcon.TimeoutBars or ScorebugIcon.TimeoutDots;
+        // The made-icon row and its Icon Creator button stay visible for every text element: the
+        // maker is where icons are created, so hiding it until one already exists hid the feature.
+        IconCustomPanel.IsVisible = text?true:false;
+        var customIcon=text&&icon==ScorebugIcon.Custom;
+        IconCustomLabel.IsVisible = customIcon?true:false;
+        IconCustomInput.IsVisible = customIcon?true:false;
+        // Which value the icon follows, its own colours and where it sits only mean something
+        // once an icon is actually chosen.
+        IconValuePanel.IsVisible = text&&icon!=ScorebugIcon.None?true:false;
+        IconLookPanel.IsVisible = text&&icon!=ScorebugIcon.None?true:false;
+        IconUsedPanel.IsVisible = text&&countedIcon?true:false;
+        IconVisitorsInput.IsVisible = text&&(countedIcon||icon==ScorebugIcon.PossessionArrow)?true:false;
+        IconVisitorsInput.Content = countedIcon?"Count the visitors' timeouts":"Mark the visitors' plate";
+        IconScalePanel.IsVisible = text&&countedIcon?true:false;
+        IconVerticalInput.IsVisible = text&&icon==ScorebugIcon.TimeoutBars?true:false;
+        IconFlipInput.IsVisible = text&&(icon is ScorebugIcon.PossessionDot or ScorebugIcon.PossessionArrow)?true:false;
+        IconArrowDownInput.IsVisible = text&&icon==ScorebugIcon.PossessionArrow?true:false;
     }
 
     /// <summary>
@@ -1150,7 +1190,11 @@ public partial class ScorebugEditorWindow : Window
             else RefreshAllVisuals();
             return;
         }
-        if(sender==ColorInput||sender==BackgroundInput||sender==GradientColorInput){SaveProperties();RefreshAllVisuals();return;}
+        // The swatch has to follow the hex box, or a colour that did land reads as unchanged.
+        if(sender==ColorInput||sender==BackgroundInput||sender==GradientColorInput||sender==IconColorInput
+            ||sender==IconBorderColorInput||sender==IconBackgroundInput||sender==IconUsedColorInput)RefreshColorSwatches();
+        if(sender==ColorInput||sender==BackgroundInput||sender==GradientColorInput||sender==IconColorInput
+            ||sender==IconBorderColorInput||sender==IconBackgroundInput||sender==IconUsedColorInput){SaveProperties();RefreshAllVisuals();return;}
         if(sender==ContentInput) UpdatePropertyVisibility();
         _propertySave.Stop(); _propertySave.Start();
     }
@@ -1214,6 +1258,23 @@ public partial class ScorebugEditorWindow : Window
         var iconFillText=IconFillInput.Text?.Trim() ?? "";
         var iconFillOk=iconFillText.Length==0||TryColor(iconFillText,out _);
         var iconFillSource=(IconFillSourceInput.SelectedItem as ColorSourceOption)?.Source;
+        var iconCustom=(IconCustomInput.SelectedItem as CustomIconChoice)?.Icon.Id;
+        var iconToken=IconTokenInput.Text?.Trim() ?? "";
+        var iconColor=IconColorInput.Text?.Trim() ?? "";
+        var iconColorOk=iconColor.Length==0||TryColor(iconColor,out _);
+        var iconOffsetXOk=double.TryParse(IconOffsetXInput.Text,out var iconOffsetX);
+        var iconOffsetYOk=double.TryParse(IconOffsetYInput.Text,out var iconOffsetY);
+        var iconArrowDown=IconArrowDownInput.IsChecked==true;
+        var iconVertical=IconVerticalInput.IsChecked==true;
+        var iconScaleOk=double.TryParse(IconScaleInput.Text,out var iconScale);
+        var iconBorderWidthOk=double.TryParse(IconBorderWidthInput.Text,out var iconBorderWidth);
+        var iconBorderColor=IconBorderColorInput.Text?.Trim() ?? "";
+        var iconBorderColorOk=TryColor(iconBorderColor,out _);
+        var iconBackground=IconBackgroundInput.Text?.Trim() ?? "";
+        var iconBackgroundOk=iconBackground.Length==0||TryColor(iconBackground,out _);
+        var iconUsedColor=IconUsedColorInput.Text?.Trim() ?? "";
+        var iconUsedColorOk=TryColor(iconUsedColor,out _);
+        var iconOpacity=Math.Clamp(IconOpacitySlider.Value/100,0,1);
         var font=(FontInput.SelectedItem as FontChoice)?.Source;
         var bold=BoldInput.IsChecked==true; var italic=ItalicInput.IsChecked==true;
         var underline=UnderlineInput.IsChecked==true; var strike=StrikeInput.IsChecked==true;
@@ -1246,6 +1307,18 @@ public partial class ScorebugEditorWindow : Window
             &&(icon is null||item.Icon==icon)&&item.IconVisitors==iconVisitors&&item.IconFlipped==iconFlipped
             &&(!iconFillOk||string.Equals(item.IconFillColor,iconFillText,StringComparison.OrdinalIgnoreCase))
             &&(iconFillSource is null||item.IconFillSource==iconFillSource)
+            &&(iconCustom is null||string.Equals(item.CustomIconId,iconCustom,StringComparison.OrdinalIgnoreCase))
+            &&string.Equals(item.IconToken,iconToken,StringComparison.Ordinal)
+            &&(!iconColorOk||string.Equals(item.IconColor,iconColor,StringComparison.OrdinalIgnoreCase))
+            &&(!iconOffsetXOk||Math.Abs(item.IconOffsetX-iconOffsetX)<0.001)
+            &&(!iconOffsetYOk||Math.Abs(item.IconOffsetY-iconOffsetY)<0.001)
+            &&item.IconArrowDown==iconArrowDown&&item.IconVertical==iconVertical
+            &&(!iconScaleOk||Math.Abs(item.IconScale-Math.Clamp(iconScale,0.25,3))<0.001)
+            &&(!iconBorderWidthOk||Math.Abs(item.IconBorderThickness-Math.Clamp(iconBorderWidth,0,40))<0.001)
+            &&(!iconBorderColorOk||string.Equals(item.IconBorderColor,iconBorderColor,StringComparison.OrdinalIgnoreCase))
+            &&(!iconBackgroundOk||string.Equals(item.IconBackground,iconBackground,StringComparison.OrdinalIgnoreCase))
+            &&(!iconUsedColorOk||string.Equals(item.IconUsedColor,iconUsedColor,StringComparison.OrdinalIgnoreCase))
+            &&Math.Abs(item.IconOpacity-iconOpacity)<0.001
             &&(font is null||item.FontFamily==font)&&item.Bold==bold&&item.Italic==italic&&item.Underline==underline&&item.StrikeThrough==strike
             &&(foregroundSource is null||item.ForegroundSource==foregroundSource)&&(backgroundSource is null||item.BackgroundSource==backgroundSource)
             &&(logoSide is null||item.LogoSide==logoSide)
@@ -1312,6 +1385,19 @@ public partial class ScorebugEditorWindow : Window
                 target.IconVisitors=iconVisitors; target.IconFlipped=iconFlipped;
                 if(iconFillOk)target.IconFillColor=iconFillText;
                 if(iconFillSource is not null)target.IconFillSource=iconFillSource.Value;
+                if(iconCustom is not null&&target.Icon==ScorebugIcon.Custom)target.CustomIconId=iconCustom;
+                target.IconToken=iconToken;
+                if(iconColorOk)target.IconColor=iconColor;
+                if(iconOffsetXOk)target.IconOffsetX=Math.Clamp(iconOffsetX,-500,500);
+                if(iconOffsetYOk)target.IconOffsetY=Math.Clamp(iconOffsetY,-500,500);
+                target.IconArrowDown=iconArrowDown;
+                target.IconVertical=iconVertical;
+                if(iconScaleOk)target.IconScale=Math.Clamp(iconScale,0.25,3);
+                if(iconBorderWidthOk)target.IconBorderThickness=Math.Clamp(iconBorderWidth,0,40);
+                if(iconBorderColorOk)target.IconBorderColor=iconBorderColor;
+                if(iconBackgroundOk)target.IconBackground=iconBackground;
+                if(iconUsedColorOk)target.IconUsedColor=iconUsedColor;
+                target.IconOpacity=iconOpacity;
                 if(font is not null)target.FontFamily=font;
                 target.Bold=bold; target.Italic=italic;
                 target.Underline=underline; target.StrikeThrough=strike;
@@ -1776,6 +1862,63 @@ public partial class ScorebugEditorWindow : Window
     void ChromaKeyColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(ChromaKeyInput);
 
     void TextShadowColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(TextShadowColorInput);
+
+    void IconColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(IconColorInput);
+
+    void IconBorderColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(IconBorderColorInput);
+
+    void IconBackgroundColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(IconBackgroundInput);
+
+    void IconUsedColor_Click(object sender,RoutedEventArgs e)=>ChoosePresetColor(IconUsedColorInput);
+
+    /// <summary>Lists the icon library in the Made icon picker, keeping the current choice if it survives.</summary>
+    void RefreshIconChoices()
+    {
+        var previous=(IconCustomInput.SelectedItem as CustomIconChoice)?.Icon.Id;
+        var choices=CustomIconStore.All().Select(icon=>new CustomIconChoice(icon)).ToList();
+        IconCustomInput.ItemsSource=choices;
+        IconCustomInput.SelectedItem=choices.FirstOrDefault(choice=>string.Equals(choice.Icon.Id,previous,StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Opens the Icon Creator, then points the selected element at the icon it made.</summary>
+    void IconMaker_Click(object sender,RoutedEventArgs e)
+    {
+        var maker=new IconMakerWindow(_theme){Owner=this};
+        maker.ShowDialog();
+        RefreshIconChoices();
+        var madeIconId=maker.SelectedIconId;
+        // A newly made or selected icon should be the one the element uses when the maker closes.
+        if(madeIconId is not null)
+            IconCustomInput.SelectedItem=(IconCustomInput.ItemsSource as List<CustomIconChoice>)
+                ?.FirstOrDefault(choice=>string.Equals(choice.Icon.Id,madeIconId,StringComparison.OrdinalIgnoreCase));
+        if(Selected is null||IconCustomInput.SelectedItem is not CustomIconChoice choice)return;
+        IconInput.SelectedItem=ScorebugIcon.Custom;
+        var id=Selected.Id;
+        _catalog.Update(layout=>
+        {
+            var target=layout.Elements.FirstOrDefault(z=>z.Id==id);
+            if(target is null)return;
+            target.Icon=ScorebugIcon.Custom;
+            target.CustomIconId=choice.Icon.Id;
+        });
+        Render();
+        UpdatePropertyVisibility();
+    }
+
+    sealed record CustomIconChoice(CustomIcon Icon)
+    {
+        public override string ToString()=>Icon.Label;
+    }
+
+    /// <summary>The icon's own opacity, written through the same save as every other property.</summary>
+    void IconOpacity_Changed(object sender,RangeBaseValueChangedEventArgs e)
+    {
+        if(_loading||IconOpacityReadout is null)return;
+        IconOpacityReadout.Text=$"{IconOpacitySlider.Value:0}%";
+        if(Selected is null)return;
+        SaveProperties();
+        RefreshAllVisuals();
+    }
 
     // ---------- display rules ----------
 
