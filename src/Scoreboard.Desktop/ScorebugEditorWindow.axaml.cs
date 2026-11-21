@@ -1066,6 +1066,7 @@ public partial class ScorebugEditorWindow : Window
         IconBorderColorSwatch.Background=item is null?Brushes.Transparent:ScorebugRender.ParseBrush(item.IconBorderColor);
         IconBackgroundSwatch.Background=item is null||string.IsNullOrWhiteSpace(item.IconBackground)?Brushes.Transparent:ScorebugRender.ParseBrush(item.IconBackground);
         IconUsedSwatch.Background=item is null?Brushes.Transparent:ScorebugRender.ParseBrush(item.IconUsedColor);
+        ChromaKeySwatch.Background=item is null||string.IsNullOrWhiteSpace(item.ChromaKeyColor)?Brushes.Transparent:ScorebugRender.ParseBrush(item.ChromaKeyColor);
         IconFillSwatch.Background=item is null||item.Icon!=ScorebugIcon.Bases?Brushes.Transparent:ScorebugRender.ParseBrush(ScorebugRender.ResolveIconFill(item,_engine.State));
         TextColorSwatch.ToolTip=item is null?null:$"Text colour: {ScorebugRender.ResolveForeground(item,_engine.State)}";
         BackgroundColorSwatch.ToolTip=item is null?null:item.TransparentBackground?"No background box":$"Background colour: {ScorebugRender.ResolveBackground(item,_engine.State)}";
@@ -1326,7 +1327,8 @@ public partial class ScorebugEditorWindow : Window
         }
         // The swatch has to follow the hex box, or a colour that did land reads as unchanged.
         if(sender==ColorInput||sender==BackgroundInput||sender==GradientColorInput||sender==IconColorInput
-            ||sender==IconBorderColorInput||sender==IconBackgroundInput||sender==IconUsedColorInput)RefreshColorSwatches();
+            ||sender==IconBorderColorInput||sender==IconBackgroundInput||sender==IconUsedColorInput
+            ||sender==ChromaKeyInput)RefreshColorSwatches();
         if(sender==ColorInput||sender==BackgroundInput||sender==GradientColorInput||sender==IconColorInput
             ||sender==IconBorderColorInput||sender==IconBackgroundInput||sender==IconUsedColorInput){SaveProperties();RefreshAllVisuals();return;}
         if(sender==ContentInput) UpdatePropertyVisibility();

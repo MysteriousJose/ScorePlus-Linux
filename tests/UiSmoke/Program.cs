@@ -1160,6 +1160,27 @@ internal static class Program
             "Clear removes the custom logo image");
         logoStudio.Close();
 
+        // A video element's chroma key has a swatch of the colour actually removed.
+        var chromaCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        chromaCatalog.Update(layout =>
+        {
+            layout.Elements.Clear();
+            layout.Elements.Add(new ScorebugElement
+            {
+                Name = "Clip", Kind = ScorebugElementKind.Video, X = 10, Y = 10,
+                Width = 300, Height = 170, ChromaKeyColor = "#FF00B140"
+            });
+        });
+        var chromaStudio = new ScorebugEditorWindow(chromaCatalog, engine);
+        chromaStudio.Show();
+        chromaStudio.UpdateLayout();
+        ((ListBox)chromaStudio.FindName("Layers")!).SelectedIndex = 0;
+        chromaStudio.UpdateLayout();
+        var chromaSwatch = (Border)chromaStudio.FindName("ChromaKeySwatch")!;
+        Check((chromaSwatch.Background as ISolidColorBrush)?.Color == Color.FromRgb(0, 177, 64),
+            "the chroma-key swatch paints the key colour");
+        chromaStudio.Close();
+
         // Canvas presets scale the artwork and persist.
         var firstX = catalog.Layout.Elements[0].X;
         ((ComboBox)studio.FindName("CanvasPreset")!).SelectedIndex = 1; // Full HD

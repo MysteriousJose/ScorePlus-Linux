@@ -132,6 +132,7 @@ WINDOW_FEATURES = {
     "TransitionKeyToleranceInput": "hand-over key tolerance",
     "NestedAspectInput": "live-layout shape lock",
     "LogoImagePathText": "custom logo image status",
+    "ChromaKeySwatch": "chroma-key swatch",
 }
 for name, label in WINDOW_FEATURES.items():
     need(xaml, f'x:Name="{name}"', f"{label} control")

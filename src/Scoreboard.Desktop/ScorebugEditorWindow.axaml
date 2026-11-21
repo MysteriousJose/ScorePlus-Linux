@@ -718,6 +718,9 @@
           <TextBlock Text="Chroma key colour" Classes="field-label"/>
           <DockPanel Margin="10,0,10,3">
             <Button DockPanel.Dock="Right" Content="Choose…" Margin="4,0,0,0" Click="ChromaKeyColor_Click" ToolTip.Tip="Pick the green or blue backdrop to remove"/>
+            <Border x:Name="ChromaKeySwatch" Width="24" Height="24" CornerRadius="4" Margin="10,0,6,0"
+                    BorderBrush="#3A4552" BorderThickness="1" VerticalAlignment="Center"
+                    local:ThemeManager.SkipTheme="True" ToolTip.Tip="The colour removed from this clip"/>
             <TextBox x:Name="ChromaKeyInput" Margin="0" TextChanged="Property_Changed" ToolTip.Tip="#FF00B140, or empty to leave the clip untouched"/>
           </DockPanel>
           <TextBlock Text="Chroma tolerance (0–1)" Classes="field-label"/>

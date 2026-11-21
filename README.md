@@ -575,10 +575,10 @@ Every button is a capitalised label with a plus: **TEXT +**, **LOGO +**, **IMAGE
 
 | Type | What it draws | Notable properties |
 | --- | --- | --- |
-| **Text** | Any bound or typed string | Font, size, bold/italic/underline/strike, rotation, color or text gradient, texture, value transition, icon, quarter style |
-| **Logo** | One team's logo | Which side (Home/Away); the artwork itself comes from the console |
+| **Text** | Any bound or typed string | Font, size, alignment, bold/italic/underline/strike, rotation, colour or text gradient, texture, text shadow, ticker speed/direction, clock and down formats, value transition, icon, quarter style |
+| **Logo** | One team's logo or a custom picture | Which side (Home/Away), or **Choose image…** for a standalone crest |
 | **Image** | A still picture imported with **IMAGE +** | The file is copied into the app, so the design survives the original being moved |
-| **Shape** | Rectangle, circle or triangle | Shape type, fill or gradient, border, opacity |
+| **Shape** | Rectangle, circle or triangle | Shape type, corner radius (rectangles), fill or gradient, border, opacity |
 | **Video** | Live clip from one tag | Media tag (or **ANY**), preserve aspect ratio, audio output, border, radius |
 | **HTML** | A live web widget | Free HTML/CSS/JS, `data-token` bindings |
 
@@ -593,7 +593,12 @@ Every button is a capitalised label with a plus: **TEXT +**, **LOGO +**, **IMAGE
 - **Opacity** is four sliders, not one: the whole element, the printed value, the background plate and the outline each fade on their own. A score can dissolve away while its plate stays solid, or a border can fade without touching the text.
 - **Motion** has two routes: the built-in `None / Pulse / Drift` presets, or a clip from the animation maker that replaces them.
 - **Rotation** is in degrees; negative angles are fine.
-- **Transition** and its **duration** (0–5s) live with the element, next to the font controls.
+- **Transition** and its **duration** (0–5s) live with the element, next to the font controls. A value can have its own **down** crossing and speed, and `Shrink Wheel`/`Jump Flip` expose a shrink amount, jump height and direction.
+- **Text shadow**, **text alignment** and **ticker** options are per element, so a ribbon and a label can read differently on the same layout.
+- **Clock and down formats** — game-clock leading zero, play-clock colon and full-caps down words — are switches on the element that prints the value, not global settings.
+- **Icons** have their own appearance: a made icon from the Icon Creator, a value binding, offsets, colour, border, background, used-timeout colour, opacity, bar size and stacking, and a downward possession arrow.
+- **Live layouts** can keep the source's shape or stretch to the box.
+- **Layer order** moves one step with **▲ Forward / ▼ Backward**, or all the way with **▲ To front / ▼ To back**.
 
 ### Keyboard and Mouse
 
@@ -614,7 +619,7 @@ Every button is a capitalised label with a plus: **TEXT +**, **LOGO +**, **IMAGE
 ### Display and Layout Bars
 
 - **DISPLAY** — which screen you're editing; also where displays are added, renamed and removed.
-- **Motions…** — the **TRANSITION IN** hand-over and its duration, plus score celebrations, in their own window.
+- **Motions…** — the **TRANSITION IN** hand-over and its duration (including a video hand-over with its cut beat and key), plus score celebrations, in their own window.
 - **LINK THIS LAYOUT TO** — the layout on another display that moves with this one, with a both-ways checkbox.
 - **LAYOUT** — the display's layouts as thumbnails with their names underneath, plus **Import .spl… / Export .spl…** and **Import .spd… / Export .spd…**, **Copy to… / Move to…** and **PARTS +**.
 - **CANVAS BACKGROUND** — green screen, navy reset, black, custom color.
