@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
 using Avalonia.Headless;
@@ -1370,6 +1371,28 @@ internal static class Program
 
     static void ThemeChecks()
     {
+        // The launcher sits outside ThemeManager and is always dark. Fluent's default variant has
+        // to be dark too: on a light desktop its light-theme hover foreground is near-black, so
+        // the launcher's white button labels would turn black while the pointer is over them.
+        var launcher = new LauncherWindow();
+        launcher.Show();
+        launcher.UpdateLayout();
+        var newGame = ButtonByContent(launcher, "New Game")!;
+        var label = newGame.GetVisualDescendants().OfType<ContentPresenter>()
+            .FirstOrDefault(presenter => presenter.Name == "PART_ContentPresenter")
+            ?? throw new Exception("FAIL: the launcher's primary button has no template label");
+        var point = newGame.TranslatePoint(new Point(newGame.Bounds.Width / 2, newGame.Bounds.Height / 2), launcher)
+            ?? throw new Exception("FAIL: the launcher's primary button has no position");
+        launcher.MouseMove(point);
+        Pump(TimeSpan.FromMilliseconds(50));
+        Check(newGame.IsPointerOver, "the launcher's primary button reports the pointer over it");
+        var hovered = label.Foreground as ISolidColorBrush;
+        Check(hovered is not null && hovered.Color.R > 0xC0 && hovered.Color.G > 0xC0 && hovered.Color.B > 0xC0,
+            "hovering the launcher's white button label keeps it light instead of turning it black");
+        launcher.Close();
+        Check(Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark,
+            "the app pins Fluent to the dark variant for its unthemed dark surfaces");
+
         Check(ThemeManager.Resolve("System") is "Dark" or "Light", "the System theme resolves to a real theme");
         var fresh = new UserPreferences();
         Check(fresh.Theme == "System" && !fresh.ShowHeadingHints, "preferences default to System with heading tips off");
