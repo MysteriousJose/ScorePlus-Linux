@@ -862,6 +862,12 @@ internal static class Program
         Check(studio.Title == "ScorePlus — Display Studio"
               && All<TextBlock>(studio).Any(text => (text.Text ?? "").Contains("DISPLAY STUDIO", StringComparison.Ordinal)),
             "the studio window and its header call it Display Studio");
+        Check((((Button)studio.FindName("LayerFrontButton")!).Content as string) == "▲ To front"
+              && (((Button)studio.FindName("LayerBackButton")!).Content as string) == "▼ To back"
+              && (((Button)studio.FindName("CopyTextSizeButton")!).Content as string) == "Copy"
+              && (((Button)studio.FindName("PasteTextSizeButton")!).Content as string) == "Paste"
+              && All<Button>(studio).Any(button => (button.Content as string) == "Transition builder…"),
+            "the layer, text-size and transition buttons use the current Display Studio names");
 
         var layers = (ListBox)studio.FindName("Layers")!;
         var nameInput = (TextBox)studio.FindName("NameInput")!;
@@ -1167,9 +1173,9 @@ internal static class Program
         Check(All<TextBlock>(videoRows).Any(text => (text.Text ?? "").Contains("+6", StringComparison.Ordinal)
                 && (text.Text ?? "").Contains("touchdown.mp4", StringComparison.Ordinal)),
             "the score-video row names its score change and clip");
-        Check(All<Button>(videoRows).Any(button => (button.Content as string) == "Keyed")
+        Check(All<Button>(videoRows).Any(button => (button.Content as string) == "Clear key")
               && All<Button>(videoRows).Any(button => (button.Content as string) == "Video…"),
-            "a keyed score video offers key status and clip replacement");
+            "a keyed score video offers clear-key and clip-replacement buttons");
 
         // Transitions and score celebrations are one Motions popout on the display panel.
         var motionRows = (StackPanel)videoStudio.FindName("MotionRows")!;
@@ -1190,7 +1196,7 @@ internal static class Program
         Check(videoStudio.MotionWindow is null && !motionRows.IsVisible && motionRows.Parent is StackPanel,
             "closing Motions puts the rows back on the display panel and hides them");
 
-        Click(ButtonByContent(videoRows, "×"));
+        Click(ButtonByContent(videoRows, "Remove"));
         videoStudio.UpdateLayout();
         Check(videoCatalog.Layout.ScoreVideos.Count == 0 && videoRows.Children.Count == 0 && videoEmpty.IsVisible,
             "removing a score-video row deletes the rule and restores the empty hint");

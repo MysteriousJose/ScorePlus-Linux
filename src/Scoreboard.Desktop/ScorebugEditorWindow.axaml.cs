@@ -503,7 +503,7 @@ public partial class ScorebugEditorWindow : Window
                 : LayoutTransitions.FirstOrDefault(option=>option.Transition==layout.Transition)??LayoutTransitions[1];
             TransitionSecondsInput.Text=layout.TransitionSeconds.ToString("0.##");
             TransitionCaption.Text=layout.TransitionClip is { } custom
-                ? $"  Custom “{custom.Name}” — the transition maker's hand-over, saved with {layout.Name}."
+                ? $"  Custom “{custom.Name}” — the transition builder's hand-over, saved with {layout.Name}."
                 : $"  Saved with {layout.Name} — every layout can arrive differently.";
         }
         finally { _displayLoading=false; }
@@ -1320,14 +1320,14 @@ public partial class ScorebugEditorWindow : Window
             NoticeWindow.Tell(this,"No layout can be embedded","Every other layout is already inside this one, or is this layout. Add another layout first.",warning:true);
             return;
         }
-        var picker=new Window{Title="Embed a live layout",Width=430,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
+        var picker=new Window{Title="Add live layout",Width=430,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,Owner=this,WindowStartupLocation=WindowStartupLocation.CenterOwner};
         var panel=new StackPanel{Margin=new Thickness(14)};
         panel.Children.Add(new TextBlock{Text="Choose the layout this box should follow.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(2,0,2,8)});
         var list=new ListBox{ItemsSource=candidates.Select(pair=>$"{pair.Display.Name} · {pair.Layout.Name} · {pair.Layout.Width}×{pair.Layout.Height}").ToArray(),Height=220};
         if(list.Items.Count>0)list.SelectedIndex=0;
         panel.Children.Add(list);
         panel.Children.Add(new TextBlock{Text="The feed draws the source layout's own artwork and live values. It is not a copy, so later edits appear here too.",TextWrapping=TextWrapping.Wrap,FontSize=11,Opacity=0.7,Margin=new Thickness(2,8,2,0)});
-        var add=new Button{Content="Embed layout",IsDefault=true,HorizontalAlignment=global::Avalonia.Layout.HorizontalAlignment.Right,Margin=new Thickness(2,12,2,0)};
+        var add=new Button{Content="Add live layout",IsDefault=true,HorizontalAlignment=global::Avalonia.Layout.HorizontalAlignment.Right,Margin=new Thickness(2,12,2,0)};
         add.Click+=(_,_)=>{
             if(list.SelectedIndex<0)return;
             var source=candidates[list.SelectedIndex].Layout;
@@ -1557,7 +1557,7 @@ public partial class ScorebugEditorWindow : Window
     {
         if(Selected is not { } item)return;
         _copiedTextSize=item.FontSize;
-        FontInputSize.ToolTip=$"Copied {item.FontSize:0} px — Paste text size applies it to another element";
+        FontInputSize.ToolTip=$"Copied {item.FontSize:0} px — Paste applies it to another element";
         LoadProperties();
     }
 
@@ -1637,15 +1637,16 @@ public partial class ScorebugEditorWindow : Window
         var video=new Button{Content="Video…",FontSize=9,Padding=new Thickness(6,2),Margin=new Thickness(4,0,0,0)};
         ToolTip.SetTip(video,"Choose the clip for this score value");
         video.Click+=(_,_)=>ScoreVideoEdit_Click(index);
-        var key=new Button{Content=hasKey?"Keyed":"Key…",FontSize=9,Padding=new Thickness(6,2),Margin=new Thickness(3,0,0,0)};
-        ToolTip.SetTip(key,"Choose the green or blue backdrop to remove");
+        var key=new Button{Content="Key…",FontSize=9,Padding=new Thickness(6,2),Margin=new Thickness(3,0,0,0)};
+        ToolTip.SetTip(key,"Choose the green or blue backdrop to remove from this score video");
         key.Click+=(_,_)=>ScoreVideoKey_Click(index,rule);
-        var clear=new Button{Content="Clear",IsVisible=hasKey,FontSize=9,Padding=new Thickness(6,2),Margin=new Thickness(3,0,0,0)};
+        var clear=new Button{Content="Clear key",IsVisible=hasKey,FontSize=9,Padding=new Thickness(6,2),Margin=new Thickness(3,0,0,0)};
+        ToolTip.SetTip(clear,"Leave this clip's colours untouched");
         clear.Click+=(_,_)=>ApplyScoreVideo(index,video=>video.ChromaKeyColor="");
         var tolerance=new TextBox{Text=rule.Video.ChromaKeyTolerance.ToString("0.##"),Width=42,FontSize=9,Margin=new Thickness(3,0,0,0)};
         ToolTip.SetTip(tolerance,"Chroma tolerance 0–1");
         tolerance.LostFocus+=(_,_)=>ScoreVideoTolerance_Changed(index,tolerance);
-        var remove=new Button{Content="×",FontSize=10,Padding=new Thickness(6,2),Margin=new Thickness(3,0,0,0)};
+        var remove=new Button{Content="Remove",FontSize=10,Padding=new Thickness(6,2),Margin=new Thickness(3,0,0,0)};
         ToolTip.SetTip(remove,"Remove this score video");
         remove.Click+=(_,_)=>RemoveScoreVideo(index);
         var line=new Grid{ColumnDefinitions=new ColumnDefinitions("*,Auto,Auto,Auto,Auto,Auto"),Margin=new Thickness(0,2,0,2)};
