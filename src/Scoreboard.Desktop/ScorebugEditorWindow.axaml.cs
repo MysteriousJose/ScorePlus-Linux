@@ -20,6 +20,8 @@ public partial class ScorebugEditorWindow : Window
     readonly GameEngine _engine;
     readonly MediaPlayback? _playback;
     readonly string _theme;
+    /// <summary>The open Motions popout, exposed so the checks can open and close it.</summary>
+    public Window? MotionWindow => _motionWindow;
     // Keyed by element id: a rebuild reuses the surface so a playing clip is never restarted.
     readonly Dictionary<string, VideoSurface> _videoSurfaces = [];
     // Property edits save through the catalog; the resulting Changed event must not rebuild the
@@ -75,6 +77,11 @@ public partial class ScorebugEditorWindow : Window
     AutomationWindow? _conditionals;
     string? _conditionalsDisplayId;
     string? _conditionalsLayoutId;
+    // The motion rows live in the studio until Motions… opens them in their own window; the
+    // original parent and index remember where to put them back when that window closes.
+    Window? _motionWindow;
+    Panel? _motionParent;
+    int _motionIndex;
     // Score-video rows only rebuild when the value, file or key changes, so typing a tolerance
     // never takes focus away from the field being typed in.
     bool _scoreVideoLoading;
@@ -1705,6 +1712,58 @@ public partial class ScorebugEditorWindow : Window
         _conditionals=window; _conditionalsDisplayId=displayId; _conditionalsLayoutId=layoutId;
         window.Closed+=(_,_)=>{if(ReferenceEquals(_conditionals,window)){_conditionals=null;_conditionalsDisplayId=null;_conditionalsLayoutId=null;}};
         window.Show(this);
+    }
+
+    /// <summary>
+    /// Opens the transition and score-celebration controls in their own window. The existing rows
+    /// are reparented, not copied, so every handler and every live status update keeps working.
+    /// </summary>
+    void MotionWindow_Click(object sender,RoutedEventArgs e)
+    {
+        if(_motionWindow is { IsVisible:true })
+        {
+            _motionWindow.Activate();
+            return;
+        }
+        if(_motionParent is null&&MotionRows.Parent is Panel owner)
+        {
+            _motionParent=owner;
+            _motionIndex=owner.Children.IndexOf(MotionRows);
+        }
+        if(MotionRows.Parent is Panel current) current.Children.Remove(MotionRows);
+        MotionRows.IsVisible=true;
+        var host=new ScrollViewer
+        {
+            Content=MotionRows,
+            VerticalScrollBarVisibility=global::Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility=global::Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            HorizontalContentAlignment=global::Avalonia.Layout.HorizontalAlignment.Stretch,
+            Padding=new Thickness(14,10,14,10)
+        };
+        var window=new Window
+        {
+            Owner=this,
+            Title="Transitions & score celebrations",
+            Width=1160,
+            Height=520,
+            MinWidth=780,
+            MinHeight=320,
+            WindowStartupLocation=WindowStartupLocation.CenterOwner,
+            Background=new SolidColorBrush(Color.FromRgb(14,18,24)),
+            Foreground=Brushes.White,
+            FontFamily=new FontFamily("Segoe UI"),
+            Content=host
+        };
+        window.Closed+=(_,_)=>{
+            host.Content=null;
+            MotionRows.IsVisible=false;
+            if(_motionParent is not null)
+                _motionParent.Children.Insert(Math.Min(_motionIndex,_motionParent.Children.Count),MotionRows);
+            _motionWindow=null;
+        };
+        _motionWindow=window;
+        ThemeManager.Apply(window,_theme);
+        window.Show();
     }
 
     static bool TryColor(string? value,out Color color){try{color=(Color)ColorConverter.ConvertFromString(value ?? "")!;return true;}catch{color=Colors.White;return false;}}

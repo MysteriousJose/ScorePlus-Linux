@@ -1170,6 +1170,26 @@ internal static class Program
         Check(All<Button>(videoRows).Any(button => (button.Content as string) == "Keyed")
               && All<Button>(videoRows).Any(button => (button.Content as string) == "Video…"),
             "a keyed score video offers key status and clip replacement");
+
+        // Transitions and score celebrations are one Motions popout on the display panel.
+        var motionRows = (StackPanel)videoStudio.FindName("MotionRows")!;
+        var transitionBox = (ComboBox)videoStudio.FindName("TransitionBox")!;
+        Check(!motionRows.IsVisible,
+            "transitions and score celebrations stay out of the studio bar until Motions opens");
+        Click(ButtonByContent(videoStudio, "Motions…"));
+        videoStudio.UpdateLayout();
+        var motionWindow = videoStudio.MotionWindow
+            ?? throw new Exception("FAIL: Motions did not open its own window");
+        motionWindow.UpdateLayout();
+        Check(motionWindow.Title == "Transitions & score celebrations"
+              && motionWindow.Content is ScrollViewer { Content: StackPanel hosted } && ReferenceEquals(hosted, motionRows)
+              && motionRows.IsVisible && All<ComboBox>(motionRows).Any(box => ReferenceEquals(box, transitionBox)),
+            "the Motions window rehosts the live transition and score-celebration rows");
+        motionWindow.Close();
+        videoStudio.UpdateLayout();
+        Check(videoStudio.MotionWindow is null && !motionRows.IsVisible && motionRows.Parent is StackPanel,
+            "closing Motions puts the rows back on the display panel and hides them");
+
         Click(ButtonByContent(videoRows, "×"));
         videoStudio.UpdateLayout();
         Check(videoCatalog.Layout.ScoreVideos.Count == 0 && videoRows.Children.Count == 0 && videoEmpty.IsVisible,

@@ -85,10 +85,12 @@
         <StackPanel>
           <DockPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-              <Button Content="Conditionals…" Classes="layout-button" Click="Conditionals_Click" ToolTip.Tip="Display rules that change this layout from live game data"/>
               <Button Content="New display…" Classes="layout-button" Click="DisplayNew_Click" ToolTip.Tip="Add another screen, for example a lower-thirds display"/>
               <Button Content="Import .spd…" Classes="layout-button" Click="DisplayImport_Click" ToolTip.Tip="Add a whole ScorePlus Display file — every layout it holds — to this game"/>
               <Button Content="Export .spd…" Classes="layout-button" Click="DisplayExport_Click" ToolTip.Tip="Write this display and all its layouts to a ScorePlus Display file"/>
+              <Button Content="Conditionals…" Classes="layout-button" Click="Conditionals_Click" ToolTip.Tip="Display rules that change this layout from live game data"/>
+              <Button Content="Motions…" Classes="layout-button" Click="MotionWindow_Click"
+                      ToolTip.Tip="Open transitions and score celebrations in their own window"/>
               <Button Content="Rename…" Classes="layout-button" Click="DisplayRename_Click"/>
               <Button Content="Delete" Classes="layout-button" Click="DisplayDelete_Click" ToolTip.Tip="Remove this display and its layouts (the last one cannot be deleted)"/>
             </StackPanel>
@@ -99,6 +101,9 @@
               <TextBlock x:Name="DisplayHintText" Text="  Each display gets its own audience window." Foreground="#5C6B7E" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0"/>
             </StackPanel>
           </DockPanel>
+          <!-- Transitions and score celebrations live in their own window; this hidden host is
+               reparented when the operator opens Motions… so the normal studio bar stays compact. -->
+          <StackPanel x:Name="MotionRows" IsVisible="False">
           <!-- How this layout lands on air: dissolve, slide or swing, over 0–5 seconds. -->
           <DockPanel Margin="0,7,0,0">
             <StackPanel Orientation="Horizontal">
@@ -112,6 +117,25 @@
               <TextBlock x:Name="TransitionCaption" Text="  Saved with this layout — every layout can arrive differently." Foreground="#5C6B7E" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0"/>
             </StackPanel>
           </DockPanel>
+          <!-- Score celebrations: one clip per exact signed score change. -->
+          <Border Background="#171C25" CornerRadius="9" Padding="10,7" Margin="0,6,0,0">
+            <StackPanel>
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Add score video…" FontSize="10" Padding="8,3" Click="AddScoreVideo_Click"
+                        ToolTip.Tip="Choose a clip for one score change, for example +6 or -3"/>
+                <StackPanel Orientation="Horizontal">
+                  <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,7,0"/>
+                  <TextBlock Text="SCORE CELEBRATIONS" FontSize="11" FontWeight="Bold" Foreground="#93A0B2" VerticalAlignment="Center"/>
+                </StackPanel>
+              </DockPanel>
+              <TextBlock x:Name="ScoreVideoHintText" Text="One clip for each score change; key the background so the scorebug shows through."
+                         Foreground="#5C6B7E" FontSize="10" TextWrapping="Wrap" Margin="2,3,2,2"/>
+              <TextBlock x:Name="ScoreVideoEmptyText" Text="No score videos yet. Add +6, +3, or a correction such as -6."
+                         Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="2,2,2,2"/>
+              <StackPanel x:Name="ScoreVideoRows" Margin="0,4,0,0"/>
+            </StackPanel>
+          </Border>
+          </StackPanel>
           <DockPanel Margin="0,7,0,0">
             <Button DockPanel.Dock="Right" Content="Clear link" Classes="layout-button" Click="LinkClear_Click" ToolTip.Tip="Stop this layout, and the layout it links to, from switching the other display"/>
             <StackPanel Orientation="Horizontal">
@@ -163,24 +187,6 @@
             <StackPanel x:Name="LayoutStrip" Orientation="Horizontal"/>
           </ScrollViewer>
         </Grid>
-      </Border>
-      <!-- Score celebrations: one clip per exact signed score change. -->
-      <Border Background="#171C25" CornerRadius="9" Padding="10,7" Margin="0,6,0,0">
-        <StackPanel>
-          <DockPanel>
-            <Button DockPanel.Dock="Right" Content="Add score video…" FontSize="10" Padding="8,3" Click="AddScoreVideo_Click"
-                    ToolTip.Tip="Choose a clip for one score change, for example +6 or -3"/>
-            <StackPanel Orientation="Horizontal">
-              <Border Width="3" Height="12" CornerRadius="2" Background="#38D7A3" Margin="0,0,7,0"/>
-              <TextBlock Text="SCORE CELEBRATIONS" FontSize="11" FontWeight="Bold" Foreground="#93A0B2" VerticalAlignment="Center"/>
-            </StackPanel>
-          </DockPanel>
-          <TextBlock x:Name="ScoreVideoHintText" Text="One clip for each score change; key the background so the scorebug shows through."
-                     Foreground="#5C6B7E" FontSize="10" TextWrapping="Wrap" Margin="2,3,2,2"/>
-          <TextBlock x:Name="ScoreVideoEmptyText" Text="No score videos yet. Add +6, +3, or a correction such as -6."
-                     Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="2,2,2,2"/>
-          <StackPanel x:Name="ScoreVideoRows" Margin="0,4,0,0"/>
-        </StackPanel>
       </Border>
     </StackPanel>
 
