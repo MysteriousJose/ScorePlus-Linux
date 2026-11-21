@@ -290,7 +290,7 @@ Every layout on the chosen display appears as a strip of **thumbnails with the l
 
 ### Switching Transitions
 
-When a display switches layouts, the hand-over belongs to the layout **arriving**. Each layout carries its own **TRANSITION IN** — `Cut`, `Fade`, `Slide Left`, `Slide Right`, `Slide Up`, `Slide Down` or `Zoom` — over anything from **0 to 5 seconds**. Set it on the layout bar. One scorebug can snap on while the next dissolves in slowly, and the choice saves in the game, the `.spl` file and the `.spd` file.
+When a display switches layouts, the hand-over belongs to the layout **arriving**. Each layout carries its own **TRANSITION IN** — `Cut`, `Fade`, `Slide Left`, `Slide Right`, `Slide Up`, `Slide Down` or `Zoom` — over anything from **0 to 5 seconds**. Set it in the display panel's **Motions…** window. One scorebug can snap on while the next dissolves in slowly, and the choice saves in the game, the `.spl` file and the `.spd` file.
 
 ### Building the Hand-Over (Transition Maker)
 
@@ -614,7 +614,7 @@ Every button is a capitalised label with a plus: **TEXT +**, **LOGO +**, **IMAGE
 ### Display and Layout Bars
 
 - **DISPLAY** — which screen you're editing; also where displays are added, renamed and removed.
-- **TRANSITION IN** — the arriving layout's hand-over and its duration.
+- **Motions…** — the **TRANSITION IN** hand-over and its duration, plus score celebrations, in their own window.
 - **LINK THIS LAYOUT TO** — the layout on another display that moves with this one, with a both-ways checkbox.
 - **LAYOUT** — the display's layouts as thumbnails with their names underneath, plus **Import .spl… / Export .spl…** and **Import .spd… / Export .spd…**, **Copy to… / Move to…** and **PARTS +**.
 - **CANVAS BACKGROUND** — green screen, navy reset, black, custom color.
