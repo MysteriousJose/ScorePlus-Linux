@@ -142,6 +142,11 @@ for writer in ("target.TextAlign=", "target.DownCaps=", "target.PlayClockColon="
 need(code, "void IconMaker_Click", "Icon Creator button")
 need(code, "void RefreshIconChoices", "made-icon library")
 need(code, "void OnlyChanges_Changed", "only-animate-changes handler")
+need(code, "void StepSelectedLayer", "one-step layer move")
+for button, handler in (("LayerForwardButton", "LayerForward_Click"),
+                        ("LayerBackwardButton", "LayerBackward_Click")):
+    need(xaml, f'x:Name="{button}"', "one-step layer control")
+    need(code, f"void {handler}", "one-step layer handler")
 
 if problems:
     print("Display Studio surface drifted:")

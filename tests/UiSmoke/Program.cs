@@ -1090,6 +1090,26 @@ internal static class Program
         Check(!catalog.Layout.OnlyAnimateChanges,
             "Only animate changes writes the layout preference");
 
+        // Layer order can move one step at a time, not just all the way front or back.
+        var stepCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var stepStudio = new ScorebugEditorWindow(stepCatalog, engine);
+        stepStudio.Show();
+        stepStudio.UpdateLayout();
+        var stepLayers = (ListBox)stepStudio.FindName("Layers")!;
+        var stepBefore = stepCatalog.Layout.Elements.Select(element => element.Id).ToArray();
+        stepLayers.SelectedIndex = 1;
+        stepStudio.UpdateLayout();
+        var stepped = stepCatalog.Layout.Elements[^2];
+        Click((Button)stepStudio.FindName("LayerForwardButton")!);
+        stepStudio.UpdateLayout();
+        Check(stepCatalog.Layout.Elements[^1].Id == stepped.Id,
+            "Forward moves the selected element one step towards the front");
+        Click((Button)stepStudio.FindName("LayerBackwardButton")!);
+        stepStudio.UpdateLayout();
+        Check(stepCatalog.Layout.Elements.Select(element => element.Id).SequenceEqual(stepBefore),
+            "Backward returns the element one step");
+        stepStudio.Close();
+
         // Canvas presets scale the artwork and persist.
         var firstX = catalog.Layout.Elements[0].X;
         ((ComboBox)studio.FindName("CanvasPreset")!).SelectedIndex = 1; // Full HD

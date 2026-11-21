@@ -3067,6 +3067,18 @@ public partial class ScorebugEditorWindow : Window
 
     void LayerFront_Click(object sender, RoutedEventArgs e)=>MoveSelectedLayer(1);
     void LayerBack_Click(object sender, RoutedEventArgs e)=>MoveSelectedLayer(-1);
+    void LayerForward_Click(object sender,RoutedEventArgs e)=>StepSelectedLayer(1);
+    void LayerBackward_Click(object sender,RoutedEventArgs e)=>StepSelectedLayer(-1);
+
+    /// <summary>Moves the selected element one place towards the front (+1) or the back (-1).</summary>
+    void StepSelectedLayer(int step)
+    {
+        if(Selected is not { } item)return;
+        var from=_catalog.Layout.Elements.IndexOf(item);
+        var to=Math.Clamp(from+step,0,_catalog.Layout.Elements.Count-1);
+        if(from<0||from==to)return;
+        _catalog.Update(layout=>{var moved=layout.Elements[from];layout.Elements.RemoveAt(from);layout.Elements.Insert(to,moved);});
+    }
 
     sealed record NestedLayoutChoice(string? Id,string Label,bool Selected);
 
