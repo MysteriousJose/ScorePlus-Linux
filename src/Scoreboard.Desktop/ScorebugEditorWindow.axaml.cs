@@ -360,6 +360,7 @@ public partial class ScorebugEditorWindow : Window
             CanvasHeightInput.Text=_catalog.Layout.Height.ToString();
             CanvasPreset.SelectedIndex=PresetIndex(_catalog.Layout.Width,_catalog.Layout.Height);
             CanvasBackgroundInput.Text=_catalog.Layout.Background;
+            SyncTransitionVideo();
             _canvasLoading=false;
             CanvasBackgroundSwatch.Background=backdrop;
             CanvasBackgroundSwatch.ToolTip=$"Backdrop colour: {_catalog.Layout.Background}";
@@ -526,6 +527,87 @@ public partial class ScorebugEditorWindow : Window
     {
         if(_displayLoading||_layoutLoading)return;
         _catalog.Update(layout=>layout.OnlyAnimateChanges=OnlyChangesInput.IsChecked==true);
+    }
+
+    /// <summary>Chooses a video file to play as this layout's hand-over.</summary>
+    void TransitionVideo_Click(object sender,RoutedEventArgs e)
+    {
+        var dialog=new Microsoft.Win32.OpenFileDialog
+        {
+            Title="Choose a transition video",
+            Filter="Video (*.mp4;*.wmv;*.avi;*.mov;*.mkv;*.webm)|*.mp4;*.wmv;*.avi;*.mov;*.mkv;*.webm|All files (*.*)|*.*"
+        };
+        if(dialog.ShowDialog(this)!=true)return;
+        var path=dialog.FileName;
+        _catalog.Update(layout=>layout.TransitionVideoPath=path);
+        SyncTransitionVideo();
+        LoadProperties();
+    }
+
+    void TransitionVideoClear_Click(object sender,RoutedEventArgs e)
+    {
+        _catalog.Update(layout=>{layout.TransitionVideoPath="";layout.TransitionVideoChromaKeyColor="";});
+        SyncTransitionVideo();
+        LoadProperties();
+    }
+
+    /// <summary>Chooses the backdrop colour removed from the video hand-over.</summary>
+    void TransitionChromaKey_Click(object sender,RoutedEventArgs e)
+    {
+        var current=_catalog.Layout.TransitionVideoChromaKeyColor;
+        var chosen=ColorPickerWindow.Pick(this,string.IsNullOrWhiteSpace(current)?"#FF00B140":current);
+        if(chosen is null)return;
+        _catalog.Update(layout=>layout.TransitionVideoChromaKeyColor=chosen);
+        SyncTransitionVideo();
+        LoadProperties();
+    }
+
+    void TransitionChromaKeyClear_Click(object sender,RoutedEventArgs e)
+    {
+        _catalog.Update(layout=>layout.TransitionVideoChromaKeyColor="");
+        SyncTransitionVideo();
+        LoadProperties();
+    }
+
+    void TransitionChromaTolerance_Changed(object sender,TextChangedEventArgs e)
+    {
+        if(_loading)return;
+        if(!double.TryParse(TransitionKeyToleranceInput.Text,out var tolerance))return;
+        _catalog.Update(layout=>layout.TransitionVideoChromaKeyTolerance=Math.Clamp(tolerance,0,1));
+    }
+
+    /// <summary>The beat after the video starts before the incoming layout is revealed.</summary>
+    void TransitionVideoCut_Changed(object sender,TextChangedEventArgs e)
+    {
+        if(_loading||_canvasLoading)return;
+        if(!double.TryParse(TransitionVideoCutInput.Text,out var seconds))return;
+        _catalog.Update(layout=>layout.TransitionVideoCutSeconds=Math.Clamp(seconds,0,30));
+    }
+
+    /// <summary>Names the chosen hand-over video and its optional chroma key.</summary>
+    void SyncTransitionVideo()
+    {
+        if(TransitionVideoClearButton is null||TransitionCaption is null)return;
+        var path=_catalog.Layout.TransitionVideoPath;
+        var hasVideo=!string.IsNullOrWhiteSpace(path);
+        var hasKey=hasVideo&&!string.IsNullOrWhiteSpace(_catalog.Layout.TransitionVideoChromaKeyColor);
+        TransitionVideoClearButton.IsVisible=hasVideo;
+        TransitionVideoCutLabel.IsVisible=hasVideo;
+        TransitionVideoCutInput.IsVisible=hasVideo;
+        TransitionVideoCutUnit.IsVisible=hasVideo;
+        TransitionKeyButton.IsVisible=hasVideo;
+        TransitionKeyClearButton.IsVisible=hasKey;
+        TransitionKeyToleranceLabel.IsVisible=hasVideo;
+        TransitionKeyToleranceInput.IsVisible=hasVideo;
+        var cut=_catalog.Layout.TransitionVideoCutSeconds.ToString("0.##");
+        if(TransitionVideoCutInput.Text!=cut)TransitionVideoCutInput.Text=cut;
+        var tolerance=_catalog.Layout.TransitionVideoChromaKeyTolerance.ToString("0.00");
+        if(TransitionKeyToleranceInput.Text!=tolerance)TransitionKeyToleranceInput.Text=tolerance;
+        TransitionCaption.Text=!hasVideo
+            ? "  Saved with this layout — every layout can arrive differently."
+            : hasKey
+                ? $"  Video hand-over · {Path.GetFileName(path)} · key {_catalog.Layout.TransitionVideoChromaKeyColor}"
+                : $"  Video hand-over · {Path.GetFileName(path)}";
     }
 
     void Transition_Changed(object sender,SelectionChangedEventArgs e)
@@ -1245,6 +1327,24 @@ public partial class ScorebugEditorWindow : Window
         _propertySave.Stop(); _propertySave.Start();
     }
 
+    /// <summary>Persists the layout-level hand-over cut beat and key tolerance.</summary>
+    void SaveLayoutHandover()
+    {
+        if(TransitionVideoCutInput is null||TransitionKeyToleranceInput is null)return;
+        var cutOk=double.TryParse(TransitionVideoCutInput.Text,out var cutSeconds);
+        var toleranceOk=double.TryParse(TransitionKeyToleranceInput.Text,out var tolerance);
+        var cut=Math.Clamp(cutSeconds,0,30);
+        var keyTolerance=Math.Clamp(tolerance,0,1);
+        var cutChanged=cutOk&&Math.Abs(_catalog.Layout.TransitionVideoCutSeconds-cut)>0.001;
+        var toleranceChanged=toleranceOk
+            &&Math.Abs(_catalog.Layout.TransitionVideoChromaKeyTolerance-keyTolerance)>0.001;
+        if(!cutChanged&&!toleranceChanged)return;
+        _catalog.Update(layout=>{
+            if(cutChanged)layout.TransitionVideoCutSeconds=cut;
+            if(toleranceChanged)layout.TransitionVideoChromaKeyTolerance=keyTolerance;
+        });
+    }
+
     /// <summary>
     /// Writes the property panel onto the graphic. With several rows selected every visual property
     /// lands on all of them, so a background, border or colour is set once for the whole group; the
@@ -1254,6 +1354,10 @@ public partial class ScorebugEditorWindow : Window
     void SaveProperties()
     {
         if(_loading)return;
+        // The hand-over belongs to the layout, not an element, so it is saved even when nothing is
+        // selected. Enter and the debounce route through here, which also covers environments
+        // where assigning Text programmatically does not raise the box's own change event.
+        SaveLayoutHandover();
         var item=Selected; if(item is null)return;
         var ids=_selectedIds.Count>0?_selectedIds.ToArray():[item.Id];
         var name=NameInput.Text ?? ""; var content=ContentInput.Text ?? "";

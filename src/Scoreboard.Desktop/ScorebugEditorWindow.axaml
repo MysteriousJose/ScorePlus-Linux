@@ -114,6 +114,30 @@
               <TextBox x:Name="TransitionSecondsInput" Width="54" FontSize="11" Margin="6,0,0,0" TextChanged="TransitionSeconds_Changed"
                        ToolTip.Tip="Seconds this layout's hand-over takes: 0 cuts, 5 is a slow dissolve"/>
               <TextBlock Text="s" FontSize="10" Foreground="#5C6B7E" VerticalAlignment="Center" Margin="2,0,0,0"/>
+              <Button Content="Video…" FontSize="10" Padding="8,3" Margin="8,0,0,0" Click="TransitionVideo_Click"
+                      ToolTip.Tip="Use a video clip as this layout's hand-over"/>
+              <Button x:Name="TransitionVideoClearButton" Content="Clear video" FontSize="10" Padding="8,3" Margin="4,0,0,0"
+                      Click="TransitionVideoClear_Click" IsVisible="False"
+                      ToolTip.Tip="Go back to the preset transition"/>
+              <TextBlock x:Name="TransitionVideoCutLabel" Text="CUT AT" FontSize="10" FontWeight="Bold"
+                         Foreground="#5C6B7E" VerticalAlignment="Center" Margin="8,0,3,0" IsVisible="False"/>
+              <TextBox x:Name="TransitionVideoCutInput" Width="38" Height="24" FontSize="10" Padding="3,1"
+                       TextAlignment="Center" VerticalContentAlignment="Center" Margin="0" IsVisible="False"
+                       TextChanged="TransitionVideoCut_Changed"
+                       ToolTip.Tip="Seconds after the video starts before the new layout cuts in; 0 cuts on its first frame"/>
+              <TextBlock x:Name="TransitionVideoCutUnit" Text="s" FontSize="10" Foreground="#5C6B7E"
+                         VerticalAlignment="Center" Margin="2,0,0,0" IsVisible="False"/>
+              <Button x:Name="TransitionKeyButton" Content="Key…" FontSize="10" Padding="8,3" Margin="4,0,0,0"
+                      Click="TransitionChromaKey_Click" IsVisible="False"
+                      ToolTip.Tip="Choose the green or blue backdrop to remove from this hand-over video"/>
+              <Button x:Name="TransitionKeyClearButton" Content="Clear key" FontSize="10" Padding="8,3" Margin="4,0,0,0"
+                      Click="TransitionChromaKeyClear_Click" IsVisible="False"
+                      ToolTip.Tip="Leave the hand-over video untouched"/>
+              <TextBlock x:Name="TransitionKeyToleranceLabel" Text="Tol" FontSize="10" Foreground="#5C6B7E"
+                         VerticalAlignment="Center" Margin="8,0,3,0" IsVisible="False"/>
+              <TextBox x:Name="TransitionKeyToleranceInput" Width="38" FontSize="10" Padding="4,2" IsVisible="False"
+                       TextChanged="TransitionChromaTolerance_Changed"
+                       ToolTip.Tip="How different a pixel may be from the key colour and still disappear (0–1)"/>
               <CheckBox x:Name="OnlyChangesInput" Content="Only animate changes" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0"
                         Checked="OnlyChanges_Changed" Unchecked="OnlyChanges_Changed"
                         ToolTip.Tip="Leave unchanged items still: adding one stat window animates only that window, not the whole graphic"/>

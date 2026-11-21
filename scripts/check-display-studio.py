@@ -125,6 +125,11 @@ WINDOW_FEATURES = {
     "TransitionJumpHeightInput": "jump height",
     "TransitionJumpDirectionInput": "jump direction",
     "OnlyChangesInput": "only animate changes",
+    "TransitionVideoClearButton": "hand-over video clear",
+    "TransitionVideoCutInput": "hand-over cut beat",
+    "TransitionKeyButton": "hand-over key",
+    "TransitionKeyClearButton": "hand-over key clear",
+    "TransitionKeyToleranceInput": "hand-over key tolerance",
 }
 for name, label in WINDOW_FEATURES.items():
     need(xaml, f'x:Name="{name}"', f"{label} control")
@@ -143,6 +148,13 @@ need(code, "void IconMaker_Click", "Icon Creator button")
 need(code, "void RefreshIconChoices", "made-icon library")
 need(code, "void OnlyChanges_Changed", "only-animate-changes handler")
 need(code, "void StepSelectedLayer", "one-step layer move")
+for handler in ("TransitionVideo_Click", "TransitionVideoClear_Click", "TransitionChromaKey_Click",
+                "TransitionChromaKeyClear_Click", "TransitionVideoCut_Changed",
+                "TransitionChromaTolerance_Changed", "SyncTransitionVideo", "SaveLayoutHandover"):
+    need(code, f"void {handler}", "hand-over handler")
+for writer in ("layout.TransitionVideoPath=", "layout.TransitionVideoCutSeconds=",
+               "layout.TransitionVideoChromaKeyColor=", "layout.TransitionVideoChromaKeyTolerance="):
+    need(code, writer, "hand-over writer")
 for button, handler in (("LayerForwardButton", "LayerForward_Click"),
                         ("LayerBackwardButton", "LayerBackward_Click")):
     need(xaml, f'x:Name="{button}"', "one-step layer control")

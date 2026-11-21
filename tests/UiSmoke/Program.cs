@@ -1110,6 +1110,29 @@ internal static class Program
             "Backward returns the element one step");
         stepStudio.Close();
 
+        // A layout can arrive on a video hand-over, with its own cut beat and key.
+        var handoverCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var handoverStudio = new ScorebugEditorWindow(handoverCatalog, engine);
+        handoverStudio.Show();
+        handoverStudio.UpdateLayout();
+        var clearVideo = (Button)handoverStudio.FindName("TransitionVideoClearButton")!;
+        var cutInput = (TextBox)handoverStudio.FindName("TransitionVideoCutInput")!;
+        var keyButton = (Button)handoverStudio.FindName("TransitionKeyButton")!;
+        handoverCatalog.Update(layout => layout.TransitionVideoPath = "/tmp/handover.mp4");
+        handoverStudio.UpdateLayout();
+        Check(clearVideo.IsVisible && cutInput.IsVisible && keyButton.IsVisible,
+            "a hand-over video reveals its cut time and key controls");
+        cutInput.Text = "1.5";
+        Press(cutInput, Key.Enter);
+        handoverStudio.UpdateLayout();
+        Check(Math.Abs(handoverCatalog.Layout.TransitionVideoCutSeconds - 1.5) < 0.01,
+            "the hand-over cut time is stored on the layout");
+        Click(clearVideo);
+        handoverStudio.UpdateLayout();
+        Check(string.IsNullOrEmpty(handoverCatalog.Layout.TransitionVideoPath) && !cutInput.IsVisible,
+            "Clear video removes the hand-over and hides its controls");
+        handoverStudio.Close();
+
         // Canvas presets scale the artwork and persist.
         var firstX = catalog.Layout.Elements[0].X;
         ((ComboBox)studio.FindName("CanvasPreset")!).SelectedIndex = 1; // Full HD
