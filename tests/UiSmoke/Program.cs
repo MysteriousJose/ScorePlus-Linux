@@ -1320,6 +1320,12 @@ internal static class Program
         feedStudio.UpdateLayout();
         Check(feedCatalog.Layout.Elements[0].NestedLayoutId == sourceLayout.Id,
             "choosing a source stores the live-layout feed");
+        var shapeLock = (CheckBox)feedStudio.FindName("NestedAspectInput")!;
+        Check(shapeLock.IsChecked == true, "a live layout keeps its source shape by default");
+        shapeLock.IsChecked = false;
+        feedStudio.UpdateLayout();
+        Check(!feedCatalog.Layout.Elements[0].NestedPreserveAspect,
+            "the live-layout shape lock is stored on the element");
         feedStudio.Close();
 
         // Score-video rows are rendered from the layout and their remove button edits it.

@@ -130,6 +130,7 @@ WINDOW_FEATURES = {
     "TransitionKeyButton": "hand-over key",
     "TransitionKeyClearButton": "hand-over key clear",
     "TransitionKeyToleranceInput": "hand-over key tolerance",
+    "NestedAspectInput": "live-layout shape lock",
 }
 for name, label in WINDOW_FEATURES.items():
     need(xaml, f'x:Name="{name}"', f"{label} control")
@@ -142,7 +143,8 @@ for writer in ("target.TextAlign=", "target.DownCaps=", "target.PlayClockColon="
                "target.IconUsedColor=", "target.IconOpacity=", "target.IconScale=",
                "target.IconArrowDown=", "target.TransitionDown=", "target.TransitionDownSeconds=",
                "target.TransitionShrink=", "target.TransitionJumpHeight=",
-               "target.TransitionJumpDirection=", "layout.OnlyAnimateChanges="):
+               "target.TransitionJumpDirection=", "target.NestedPreserveAspect=",
+               "layout.OnlyAnimateChanges="):
     need(code, writer, "property writer")
 need(code, "void IconMaker_Click", "Icon Creator button")
 need(code, "void RefreshIconChoices", "made-icon library")

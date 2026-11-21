@@ -943,7 +943,7 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,TextAlignInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,CornerRadiusInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,DownCapsInput,PlayClockColonInput,GameClockLeadingZeroInput,TickerInput,TickerSpeedInput,TickerReverseInput,TextShadowInput,TextShadowColorInput,TextShadowOffsetInput,TextShadowSoftnessInput,TextShadowAngleInput,DownTransitionInput,TransitionDownInput,TransitionDownSpeedInput,TransitionShrinkInput,TransitionJumpHeightInput,TransitionJumpDirectionInput,IconInput,IconCustomInput,IconTokenInput,IconOffsetXInput,IconOffsetYInput,IconColorInput,IconArrowDownInput,IconScaleInput,IconVerticalInput,IconBorderWidthInput,IconBorderColorInput,IconBackgroundInput,IconUsedColorInput,IconOpacitySlider,IconVisitorsInput,IconFlipInput,IconFillInput,IconFillSourceInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput,GradientInput,GradientSourceInput,GradientColorInput,GradientAngleInput,OpacitySlider,TextOpacitySlider,BackgroundOpacitySlider,BorderOpacitySlider,VideoCropLeftInput,VideoCropTopInput,VideoCropRightInput,VideoCropBottomInput,ChromaKeyInput,ChromaKeyToleranceInput,PlayerPhotoSideInput,NestedLayoutInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,TextAlignInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,CornerRadiusInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,DownCapsInput,PlayClockColonInput,GameClockLeadingZeroInput,TickerInput,TickerSpeedInput,TickerReverseInput,TextShadowInput,TextShadowColorInput,TextShadowOffsetInput,TextShadowSoftnessInput,TextShadowAngleInput,DownTransitionInput,TransitionDownInput,TransitionDownSpeedInput,TransitionShrinkInput,TransitionJumpHeightInput,TransitionJumpDirectionInput,IconInput,IconCustomInput,IconTokenInput,IconOffsetXInput,IconOffsetYInput,IconColorInput,IconArrowDownInput,IconScaleInput,IconVerticalInput,IconBorderWidthInput,IconBorderColorInput,IconBackgroundInput,IconUsedColorInput,IconOpacitySlider,IconVisitorsInput,IconFlipInput,IconFillInput,IconFillSourceInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput,GradientInput,GradientSourceInput,GradientColorInput,GradientAngleInput,OpacitySlider,TextOpacitySlider,BackgroundOpacitySlider,BorderOpacitySlider,VideoCropLeftInput,VideoCropTopInput,VideoCropRightInput,VideoCropBottomInput,ChromaKeyInput,ChromaKeyToleranceInput,PlayerPhotoSideInput,NestedLayoutInput,NestedAspectInput})
             control.IsEnabled=has;
         if(has)
         {
@@ -1033,6 +1033,7 @@ public partial class ScorebugEditorWindow : Window
             ChromaKeyInput.Text=e.ChromaKeyColor;
             ChromaKeyToleranceInput.Text=e.ChromaKeyTolerance.ToString("0.###");
             PlayerPhotoSideInput.SelectedItem=e.PlayerPhotoSide;
+            NestedAspectInput.IsChecked=e.NestedPreserveAspect;
             if(e.Kind==ScorebugElementKind.Layout)RefreshNestedLayoutChoices(e);
         }
         if(e is not null&&e.Kind==ScorebugElementKind.Text) LoadPlayerBinding(e);
@@ -1431,6 +1432,7 @@ public partial class ScorebugEditorWindow : Window
         var iconUsedColor=IconUsedColorInput.Text?.Trim() ?? "";
         var iconUsedColorOk=TryColor(iconUsedColor,out _);
         var iconOpacity=Math.Clamp(IconOpacitySlider.Value/100,0,1);
+        var nestedAspect=NestedAspectInput.IsChecked==true;
         var font=(FontInput.SelectedItem as FontChoice)?.Source;
         var bold=BoldInput.IsChecked==true; var italic=ItalicInput.IsChecked==true;
         var underline=UnderlineInput.IsChecked==true; var strike=StrikeInput.IsChecked==true;
@@ -1475,6 +1477,7 @@ public partial class ScorebugEditorWindow : Window
             &&(!iconBackgroundOk||string.Equals(item.IconBackground,iconBackground,StringComparison.OrdinalIgnoreCase))
             &&(!iconUsedColorOk||string.Equals(item.IconUsedColor,iconUsedColor,StringComparison.OrdinalIgnoreCase))
             &&Math.Abs(item.IconOpacity-iconOpacity)<0.001
+            &&item.NestedPreserveAspect==nestedAspect
             &&(font is null||item.FontFamily==font)&&item.Bold==bold&&item.Italic==italic&&item.Underline==underline&&item.StrikeThrough==strike
             &&(foregroundSource is null||item.ForegroundSource==foregroundSource)&&(backgroundSource is null||item.BackgroundSource==backgroundSource)
             &&(logoSide is null||item.LogoSide==logoSide)
@@ -1559,6 +1562,7 @@ public partial class ScorebugEditorWindow : Window
                 if(iconBackgroundOk)target.IconBackground=iconBackground;
                 if(iconUsedColorOk)target.IconUsedColor=iconUsedColor;
                 target.IconOpacity=iconOpacity;
+                target.NestedPreserveAspect=nestedAspect;
                 if(font is not null)target.FontFamily=font;
                 target.Bold=bold; target.Italic=italic;
                 target.Underline=underline; target.StrikeThrough=strike;

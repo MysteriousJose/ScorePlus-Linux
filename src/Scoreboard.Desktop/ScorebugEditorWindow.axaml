@@ -544,7 +544,12 @@
         <StackPanel x:Name="LayoutSection">
           <TextBlock Text="LIVE LAYOUT" Classes="section-title"/>
           <TextBlock Text="The source layout is not copied: this box follows its artwork and values." Foreground="#93A0B2" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,4"/>
-          <ComboBox x:Name="NestedLayoutInput" Margin="10,0,10,8" SelectionChanged="NestedLayout_Changed"/>
+          <ComboBox x:Name="NestedLayoutInput" Margin="10,0,10,4" SelectionChanged="NestedLayout_Changed"/>
+          <CheckBox x:Name="NestedAspectInput" Content="Keep the source layout's shape" Margin="10,2,10,4"
+                    Checked="Property_Changed" Unchecked="Property_Changed"
+                    ToolTip.Tip="On: letterbox the feed to the source's proportions. Off: stretch it to this box."/>
+          <TextBlock Text="Tip: drag the corner handle to resize the feed. Open the source layout above to edit its artwork; this box follows automatically."
+                     Foreground="#5C6B7E" FontSize="10" TextWrapping="Wrap" Margin="10,0,10,8"/>
         </StackPanel>
 
         <StackPanel x:Name="LogoSection">
