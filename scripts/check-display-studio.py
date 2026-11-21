@@ -118,6 +118,13 @@ WINDOW_FEATURES = {
     "IconArrowDownInput": "possession arrow direction",
     "IconScaleInput": "timeout bar size",
     "IconVerticalInput": "timeout bar stacking",
+    "DownTransitionInput": "separate down crossing",
+    "TransitionDownInput": "down crossing picker",
+    "TransitionDownSpeedInput": "down crossing speed",
+    "TransitionShrinkInput": "shrink amount",
+    "TransitionJumpHeightInput": "jump height",
+    "TransitionJumpDirectionInput": "jump direction",
+    "OnlyChangesInput": "only animate changes",
 }
 for name, label in WINDOW_FEATURES.items():
     need(xaml, f'x:Name="{name}"', f"{label} control")
@@ -128,10 +135,13 @@ for writer in ("target.TextAlign=", "target.DownCaps=", "target.PlayClockColon="
                "target.TickerReverse=", "target.TextShadow=", "target.CornerRadius=",
                "target.IconToken=", "target.IconBorderThickness=", "target.IconBackground=",
                "target.IconUsedColor=", "target.IconOpacity=", "target.IconScale=",
-               "target.IconArrowDown="):
+               "target.IconArrowDown=", "target.TransitionDown=", "target.TransitionDownSeconds=",
+               "target.TransitionShrink=", "target.TransitionJumpHeight=",
+               "target.TransitionJumpDirection=", "layout.OnlyAnimateChanges="):
     need(code, writer, "property writer")
 need(code, "void IconMaker_Click", "Icon Creator button")
 need(code, "void RefreshIconChoices", "made-icon library")
+need(code, "void OnlyChanges_Changed", "only-animate-changes handler")
 
 if problems:
     print("Display Studio surface drifted:")

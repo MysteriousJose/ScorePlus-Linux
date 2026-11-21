@@ -155,6 +155,14 @@ public partial class ScorebugEditorWindow : Window
         new(LayoutTransition.Zoom, "Zoom")
     ];
 
+    static readonly string[] JumpDirectionLabels =
+    [
+        "360° left to right (default)",
+        "360° right to left",
+        "360° down to up",
+        "360° up to down"
+    ];
+
     // Per-element quarter style. "Follow game default" keeps the old behaviour for layouts that
     // never asked for anything else.
     static readonly PeriodOption[] PeriodOptions =
@@ -206,6 +214,8 @@ public partial class ScorebugEditorWindow : Window
         ShapeInput.ItemsSource=Enum.GetValues<ScorebugShape>();
         IconInput.ItemsSource=Enum.GetValues<ScorebugIcon>();
         TextAlignInput.ItemsSource=Enum.GetValues<ScorebugTextAlign>();
+        TransitionDownInput.ItemsSource=Enum.GetValues<ScorebugTransition>();
+        TransitionJumpDirectionInput.ItemsSource=JumpDirectionLabels;
         PeriodFormatInput.ItemsSource=PeriodOptions;
         ForegroundSourceInput.ItemsSource=ColorSources;
         BackgroundSourceInput.ItemsSource=ColorSources;
@@ -504,11 +514,18 @@ public partial class ScorebugEditorWindow : Window
                 ? (object)MotionChoice(TransitionBox,handover)
                 : LayoutTransitions.FirstOrDefault(option=>option.Transition==layout.Transition)??LayoutTransitions[1];
             TransitionSecondsInput.Text=layout.TransitionSeconds.ToString("0.##");
+            OnlyChangesInput.IsChecked=layout.OnlyAnimateChanges;
             TransitionCaption.Text=layout.TransitionClip is { } custom
                 ? $"  Custom “{custom.Name}” — the transition builder's hand-over, saved with {layout.Name}."
                 : $"  Saved with {layout.Name} — every layout can arrive differently.";
         }
         finally { _displayLoading=false; }
+    }
+
+    void OnlyChanges_Changed(object sender,RoutedEventArgs e)
+    {
+        if(_displayLoading||_layoutLoading)return;
+        _catalog.Update(layout=>layout.OnlyAnimateChanges=OnlyChangesInput.IsChecked==true);
     }
 
     void Transition_Changed(object sender,SelectionChangedEventArgs e)
@@ -844,7 +861,7 @@ public partial class ScorebugEditorWindow : Window
     {
         _loading=true;
         var e=Selected; var has=e is not null;
-        foreach(var control in new Control[]{NameInput,ContentInput,TextAlignInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,CornerRadiusInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,DownCapsInput,PlayClockColonInput,GameClockLeadingZeroInput,TickerInput,TickerSpeedInput,TickerReverseInput,TextShadowInput,TextShadowColorInput,TextShadowOffsetInput,TextShadowSoftnessInput,TextShadowAngleInput,IconInput,IconCustomInput,IconTokenInput,IconOffsetXInput,IconOffsetYInput,IconColorInput,IconArrowDownInput,IconScaleInput,IconVerticalInput,IconBorderWidthInput,IconBorderColorInput,IconBackgroundInput,IconUsedColorInput,IconOpacitySlider,IconVisitorsInput,IconFlipInput,IconFillInput,IconFillSourceInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput,GradientInput,GradientSourceInput,GradientColorInput,GradientAngleInput,OpacitySlider,TextOpacitySlider,BackgroundOpacitySlider,BorderOpacitySlider,VideoCropLeftInput,VideoCropTopInput,VideoCropRightInput,VideoCropBottomInput,ChromaKeyInput,ChromaKeyToleranceInput,PlayerPhotoSideInput,NestedLayoutInput})
+        foreach(var control in new Control[]{NameInput,ContentInput,TextAlignInput,XInput,YInput,WidthInput,HeightInput,FontInput,FontInputSize,RotationInput,ColorInput,BackgroundInput,BorderWidthInput,BorderColorInput,BorderSourceInput,AnimationInput,TransitionInput,TransitionSpeedInput,ShapeInput,CornerRadiusInput,VisibleInput,TransparentBackgroundInput,MediaTagInput,PeriodFormatInput,DownCapsInput,PlayClockColonInput,GameClockLeadingZeroInput,TickerInput,TickerSpeedInput,TickerReverseInput,TextShadowInput,TextShadowColorInput,TextShadowOffsetInput,TextShadowSoftnessInput,TextShadowAngleInput,DownTransitionInput,TransitionDownInput,TransitionDownSpeedInput,TransitionShrinkInput,TransitionJumpHeightInput,TransitionJumpDirectionInput,IconInput,IconCustomInput,IconTokenInput,IconOffsetXInput,IconOffsetYInput,IconColorInput,IconArrowDownInput,IconScaleInput,IconVerticalInput,IconBorderWidthInput,IconBorderColorInput,IconBackgroundInput,IconUsedColorInput,IconOpacitySlider,IconVisitorsInput,IconFlipInput,IconFillInput,IconFillSourceInput,ForegroundSourceInput,BackgroundSourceInput,LogoInput,BoldInput,ItalicInput,UnderlineInput,StrikeInput,PreserveAspectInput,AspectInput,AudioDeviceInput,GradientInput,GradientSourceInput,GradientColorInput,GradientAngleInput,OpacitySlider,TextOpacitySlider,BackgroundOpacitySlider,BorderOpacitySlider,VideoCropLeftInput,VideoCropTopInput,VideoCropRightInput,VideoCropBottomInput,ChromaKeyInput,ChromaKeyToleranceInput,PlayerPhotoSideInput,NestedLayoutInput})
             control.IsEnabled=has;
         if(has)
         {
@@ -872,6 +889,12 @@ public partial class ScorebugEditorWindow : Window
             ColorInput.Text=e.Foreground; BackgroundInput.Text=e.Background;
             BorderColorInput.Text=e.BorderColor; BorderWidthInput.Text=e.BorderThickness.ToString("0.#");
             TransitionSpeedInput.Text=e.TransitionSeconds.ToString("0.00");
+            TransitionDownInput.SelectedItem=e.TransitionDown??ScorebugTransition.Fade;
+            DownTransitionInput.IsChecked=e.TransitionDown is not null;
+            TransitionDownSpeedInput.Text=(e.TransitionDownSeconds??e.TransitionSeconds).ToString("0.00");
+            TransitionShrinkInput.Text=Math.Clamp(e.TransitionShrink,0.2,1).ToString("0.##");
+            TransitionJumpHeightInput.Text=Math.Clamp(e.TransitionJumpHeight,0,300).ToString("0.#");
+            TransitionJumpDirectionInput.SelectedIndex=(int)Math.Clamp((int)e.TransitionJumpDirection,0,JumpDirectionLabels.Length-1);
             GradientInput.IsChecked=e.BackgroundGradient;
             GradientColorInput.Text=e.BackgroundColor2;
             GradientAngleInput.Text=e.GradientAngle.ToString("0");
@@ -1057,6 +1080,18 @@ public partial class ScorebugEditorWindow : Window
         IconVerticalInput.IsVisible = text&&icon==ScorebugIcon.TimeoutBars?true:false;
         IconFlipInput.IsVisible = text&&(icon is ScorebugIcon.PossessionDot or ScorebugIcon.PossessionArrow)?true:false;
         IconArrowDownInput.IsVisible = text&&icon==ScorebugIcon.PossessionArrow?true:false;
+        // Only show the extra tuning that the chosen crossings actually use. Read the pickers, not
+        // just the model, so a special crossing reveals its fields before the debounced save runs.
+        var selectedTransition=TransitionInput.SelectedItem is ScorebugTransition transitionChoice
+            ? transitionChoice
+            : e?.Transition??ScorebugTransition.Cut;
+        var selectedDown=DownTransitionInput.IsChecked==true&&TransitionDownInput.SelectedItem is ScorebugTransition downChoice
+            ? downChoice
+            : (ScorebugTransition?)null;
+        var shrinkActive=any&&(selectedTransition==ScorebugTransition.ShrinkWheel||selectedDown==ScorebugTransition.ShrinkWheel);
+        var jumpActive=any&&(selectedTransition==ScorebugTransition.JumpFlip||selectedDown==ScorebugTransition.JumpFlip);
+        ShrinkAnimationPanel.IsVisible=shrinkActive?true:false;
+        JumpAnimationPanel.IsVisible=jumpActive?true:false;
     }
 
     /// <summary>
@@ -1170,6 +1205,12 @@ public partial class ScorebugEditorWindow : Window
     {
         if(_loading||Selected is null)return;
         if(sender==ForegroundSourceInput||sender==BackgroundSourceInput||sender==GradientSourceInput||sender==IconFillSourceInput){UpdateColorAvailability();SaveProperties();RefreshAllVisuals();return;}
+        // The down transition is only a stored property: rebuilding the studio here would reload
+        // the panel from the model and snap the just-picked choice back to its old value.
+        if(sender==TransitionDownInput)
+        {
+            SaveProperties(); UpdatePropertyVisibility(); RefreshAllVisuals(); return;
+        }
         if(sender is ComboBox)
         {
             // Shape/font/animation changes need fresh geometry or a new face.
@@ -1177,8 +1218,9 @@ public partial class ScorebugEditorWindow : Window
             // Choosing a different icon changes which properties exist (a diamond has a base fill)
             // and whether the fill colour can be typed, so the panel is repainted with it.
             if(sender==IconInput){UpdatePropertyVisibility();UpdateColorAvailability();RefreshColorSwatches();}
-            // Only a rectangle has corners to round.
-            if(sender==ShapeInput)UpdatePropertyVisibility();
+            // Only a rectangle has corners to round, and only the special crossings use their
+            // shrink amount or jump height.
+            if(sender==ShapeInput||sender==TransitionInput)UpdatePropertyVisibility();
             Render(); return;
         }
         if(sender is CheckBox)
@@ -1187,7 +1229,11 @@ public partial class ScorebugEditorWindow : Window
             // The ticker's speed and direction only exist while the element scrolls, so the panel
             // is repainted with the switch instead of leaving dead fields behind.
             if(sender==TickerInput){UpdatePropertyVisibility();Render();}
-            else RefreshAllVisuals();
+            else
+            {
+                if(sender==DownTransitionInput)UpdatePropertyVisibility();
+                RefreshAllVisuals();
+            }
             return;
         }
         // The swatch has to follow the hex box, or a colour that did land reads as unchanged.
@@ -1219,6 +1265,12 @@ public partial class ScorebugEditorWindow : Window
         var borderWidthOk=double.TryParse(BorderWidthInput.Text,out var borderWidth);
         var borderColorOk=TryColor(BorderColorInput.Text,out _);
         var transitionSpeedOk=double.TryParse(TransitionSpeedInput.Text,out var transitionSpeed);
+        var downOn=DownTransitionInput.IsChecked==true;
+        var downTransition=TransitionDownInput.SelectedItem is ScorebugTransition downChoice?(ScorebugTransition?)downChoice:null;
+        var downSpeedOk=double.TryParse(TransitionDownSpeedInput.Text,out var downSpeed);
+        var shrinkOk=double.TryParse(TransitionShrinkInput.Text,out var shrink);
+        var jumpHeightOk=double.TryParse(TransitionJumpHeightInput.Text,out var jumpHeight);
+        var jumpDirection=(ScorebugJumpDirection)Math.Clamp(TransitionJumpDirectionInput.SelectedIndex,0,JumpDirectionLabels.Length-1);
         var gradient=GradientInput.IsChecked==true;
         var gradientColorOk=TryColor(GradientColorInput.Text,out _);
         var gradientAngleOk=double.TryParse(GradientAngleInput.Text,out var gradientAngle);
@@ -1337,6 +1389,11 @@ public partial class ScorebugEditorWindow : Window
             &&(!shadowSoftnessOk||Math.Abs(item.TextShadowSoftness-shadowSoftness)<0.001)
             &&(!shadowAngleOk||Math.Abs(item.TextShadowAngle-shadowAngle)<0.001)
             &&(!transitionSpeedOk||Math.Abs(item.TransitionSeconds-transitionSpeed)<0.001)
+            &&item.TransitionDown==(downOn?downTransition:null)
+            &&(!downOn||!downSpeedOk||item.TransitionDownSeconds is null||Math.Abs(item.TransitionDownSeconds.Value-Math.Clamp(downSpeed,0,5))<0.001)
+            &&(!shrinkOk||Math.Abs(item.TransitionShrink-Math.Clamp(shrink,0.2,1))<0.001)
+            &&(!jumpHeightOk||Math.Abs(item.TransitionJumpHeight-Math.Clamp(jumpHeight,0,300))<0.001)
+            &&item.TransitionJumpDirection==jumpDirection
             &&(!cropLeftOk||Math.Abs(item.VideoCropLeft-cropLeft)<0.0005)&&(!cropTopOk||Math.Abs(item.VideoCropTop-cropTop)<0.0005)
             &&(!cropRightOk||Math.Abs(item.VideoCropRight-cropRight)<0.0005)&&(!cropBottomOk||Math.Abs(item.VideoCropBottom-cropBottom)<0.0005)
             &&(!keyOk||string.Equals(item.ChromaKeyColor,keyText,StringComparison.OrdinalIgnoreCase))
@@ -1430,6 +1487,19 @@ public partial class ScorebugEditorWindow : Window
                 if(borderColorOk)target.BorderColor=BorderColorInput.Text ?? "";
                 if(borderSource is not null)target.BorderSource=borderSource.Value;
                 if(transitionSpeedOk)target.TransitionSeconds=Math.Clamp(transitionSpeed,0,5);
+                if(downOn&&downTransition is not null)
+                {
+                    target.TransitionDown=downTransition;
+                    if(downSpeedOk)target.TransitionDownSeconds=Math.Clamp(downSpeed,0,5);
+                }
+                else if(!downOn)
+                {
+                    target.TransitionDown=null;
+                    target.TransitionDownSeconds=null;
+                }
+                if(shrinkOk)target.TransitionShrink=Math.Clamp(shrink,0.2,1);
+                if(jumpHeightOk)target.TransitionJumpHeight=Math.Clamp(jumpHeight,0,300);
+                target.TransitionJumpDirection=jumpDirection;
                 if(cropLeftOk)target.VideoCropLeft=Math.Clamp(cropLeft,0,0.49);
                 if(cropTopOk)target.VideoCropTop=Math.Clamp(cropTop,0,0.49);
                 if(cropRightOk)target.VideoCropRight=Math.Clamp(cropRight,0,0.49);

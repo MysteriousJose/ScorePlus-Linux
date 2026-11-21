@@ -1049,6 +1049,47 @@ internal static class Program
         Check(catalog.Layout.Elements[textIndex].IconArrowDown,
             "a possession arrow can be pointed down");
 
+        // A falling value can use its own crossing, and the special crossings expose their tuning.
+        var downSwitch = (CheckBox)studio.FindName("DownTransitionInput")!;
+        downSwitch.IsChecked = true;
+        ((ComboBox)studio.FindName("TransitionDownInput")!).SelectedItem = ScorebugTransition.SlideUp;
+        var downSpeed = (TextBox)studio.FindName("TransitionDownSpeedInput")!;
+        downSpeed.Text = "1.2";
+        Press(downSpeed, Key.Enter);
+        studio.UpdateLayout();
+        Check(catalog.Layout.Elements[textIndex].TransitionDown == ScorebugTransition.SlideUp
+              && Math.Abs((catalog.Layout.Elements[textIndex].TransitionDownSeconds ?? -1) - 1.2) < 0.01,
+            "a separate down transition and speed are stored on the element");
+        var transitionPicker = (ComboBox)studio.FindName("TransitionInput")!;
+        var shrinkPanel = (Control)studio.FindName("ShrinkAnimationPanel")!;
+        var jumpPanel = (Control)studio.FindName("JumpAnimationPanel")!;
+        transitionPicker.SelectedItem = ScorebugTransition.ShrinkWheel;
+        studio.UpdateLayout();
+        Check(shrinkPanel.IsVisible && !jumpPanel.IsVisible,
+            "Shrink Wheel reveals only its shrink amount");
+        var shrinkBox = (TextBox)studio.FindName("TransitionShrinkInput")!;
+        shrinkBox.Text = "0.6";
+        Press(shrinkBox, Key.Enter);
+        Check(Math.Abs(catalog.Layout.Elements[textIndex].TransitionShrink - 0.6) < 0.01,
+            "the shrink amount is stored on the element");
+        transitionPicker.SelectedItem = ScorebugTransition.JumpFlip;
+        studio.UpdateLayout();
+        Check(jumpPanel.IsVisible && !shrinkPanel.IsVisible,
+            "Jump Flip reveals only its jump tuning");
+        var jumpHeight = (TextBox)studio.FindName("TransitionJumpHeightInput")!;
+        jumpHeight.Text = "55";
+        ((ComboBox)studio.FindName("TransitionJumpDirectionInput")!).SelectedIndex = 2;
+        Press(jumpHeight, Key.Enter);
+        studio.UpdateLayout();
+        Check(Math.Abs(catalog.Layout.Elements[textIndex].TransitionJumpHeight - 55) < 0.01
+              && catalog.Layout.Elements[textIndex].TransitionJumpDirection == ScorebugJumpDirection.DownToUp,
+            "jump height and direction are stored on the element");
+        var onlyChanges = (CheckBox)studio.FindName("OnlyChangesInput")!;
+        onlyChanges.IsChecked = false;
+        studio.UpdateLayout();
+        Check(!catalog.Layout.OnlyAnimateChanges,
+            "Only animate changes writes the layout preference");
+
         // Canvas presets scale the artwork and persist.
         var firstX = catalog.Layout.Elements[0].X;
         ((ComboBox)studio.FindName("CanvasPreset")!).SelectedIndex = 1; // Full HD
