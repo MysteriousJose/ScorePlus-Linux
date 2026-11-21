@@ -64,29 +64,6 @@ It was built around four ideas:
 
 ---
 
-## Install and Run
-
-There are two ways to get ScorePlus running, and they behave differently on purpose.
-
-### The Installer (Recommended)
-
-Download **`ScorePlusSetup.exe`** from the releases page and run it. You do not need administrator rights: it installs for the current user into
-
-```
-%LOCALAPPDATA%\Programs\ScorePlus
-```
-
-and adds a Start Menu shortcut, an optional desktop shortcut and an entry in Windows' installed-apps list. `Uninstall.exe` in that folder removes it cleanly.
-
-An installed copy is the only kind that **checks for updates** and can replace itself.
-
-The setup also accepts `/SILENT`, `/DIR=<path>`, `/NOICONS` and `/NOREG` for scripted or unattended installs.
-
-### The Portable Build
-
-Download **`ScorePlusPortable.exe`** and run it from anywhere — a USB stick, a desktop folder, a network share. It needs nothing else: one file, no loose DLLs, no runtime install.
-
-A portable copy never checks for updates and never touches the registry, so it is the safe choice for testing a new alpha beside the version that runs your show.
 
 ### Linux Builds
 
@@ -157,6 +134,16 @@ An installed copy — from the `.deb` or the tarball — carries an `install.jso
 
 Prefer to build it yourself? One command and the .NET 10 SDK — see [Building and Releasing](#building-and-releasing).
 
+### FAQ's / Issues
+- **[]** as button icons, this means you are missing one or more of the following fonts. Installation is different for each distro. 
+
+```
+fonts-noto-core (Noto Sans) or fonts-dejavu-core
+fonts-noto-core (Noto Sans Symbols + Symbols 2), plus DejaVu Sans
+fonts-noto-color-emoji (Noto Color Emoji)
+DejaVu Sans Mono / Liberation Mono
+```
+
 ### First Launch
 
 Two windows open together: the compact **launch box** with the ScorePlus mark and version, and the **main window** behind it, dimmed and locked. The console is visible so you know where the game will land, but nothing on it can be changed until you create or open a game.
@@ -194,9 +181,9 @@ That's a working show. Everything from here is refinement.
 
 ---
 
-## Tutorial: Design a Scorebug
+## Tutorial: Design a Studio Display
 
-Open **Scorebug Studio** from the second row of the console. The studio opens maximized and fills the desktop: toolbar on top, layers on the left, property panel on the right, and the scorebug canvas in the middle framed with a border marking exactly where the artwork ends.
+Open **Display Studio** from the second row of the console. The studio opens maximized and fills the desktop: toolbar on top, layers on the left, property panel on the right, and the scorebug canvas in the middle framed with a border marking exactly where the artwork ends.
 
 ### Add Your First Three Elements
 
