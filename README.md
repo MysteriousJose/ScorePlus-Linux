@@ -24,7 +24,7 @@ Linux builds are maintained in their own repository, [MysteriousJose/ScorePlus-L
 - [Tutorial: The Phone Remote](#tutorial-the-phone-remote)
 - [Tutorial: Sport Profiles](#tutorial-sport-profiles)
 - [Reference: The Control Panel](#reference-the-control-panel)
-- [Reference: The Scorebug Studio](#reference-the-scorebug-studio)
+- [Reference: The Display Studio](#reference-the-display-studio)
 - [Reference: Data Tokens](#reference-data-tokens)
 - [Reference: Preferences](#reference-preferences)
 - [Reference: File Types](#reference-file-types)
@@ -537,7 +537,7 @@ The main window is one page, top to bottom.
 | **☰ Event log** | The game's event history in its own movable window |
 | **▦ Game report** | Export a printable HTML summary of the game |
 | **Save Game** / **Open Game** | `.spg` save and load |
-| **Scorebug Studio** | Design the on-air graphic |
+| **Display Studio** | Design the on-air graphic |
 | **Sport Profiles** | Edit how the sport behaves |
 | **New Game** | Start a blank slate |
 
@@ -563,7 +563,7 @@ Every notice and confirmation in ScorePlus is the app's own themed window — cl
 
 ---
 
-## Reference: The Scorebug Studio
+## Reference: The Display Studio
 
 Layout: toolbar across the top, layers down the left, canvas in the middle, properties on the right, and the display/layout bars above the canvas.
 

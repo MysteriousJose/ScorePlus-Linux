@@ -2,7 +2,7 @@
         xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Scoreboard.Desktop"
-        Title="ScorePlus — Scorebug Studio" Width="1360" Height="900" MinWidth="1120" MinHeight="720"
+        Title="ScorePlus — Display Studio" Width="1360" Height="900" MinWidth="1120" MinHeight="720"
         WindowStartupLocation="CenterOwner" Background="#0E1218" Foreground="#F4F7FB" FontFamily="Segoe UI">
   <Window.Styles>
     <Style Selector="Button.tool-button">
@@ -49,7 +49,7 @@
     <StackPanel Grid.ColumnSpan="3" Margin="2,0,2,10">
       <Grid Margin="0,0,0,8" RowDefinitions="Auto,Auto">
         <StackPanel Orientation="Horizontal">
-          <TextBlock Text="SCOREPLUS · SCOREBUG STUDIO" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
+          <TextBlock Text="SCOREPLUS · DISPLAY STUDIO" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
           <TextBlock x:Name="HeaderHint" Text="   Arrange audience graphics · edits save automatically" Foreground="#93A0B2" VerticalAlignment="Center"/>
         </StackPanel>
         <WrapPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">

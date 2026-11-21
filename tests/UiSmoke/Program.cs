@@ -859,6 +859,9 @@ internal static class Program
         var studio = new ScorebugEditorWindow(catalog, engine) { Width = 1500, Height = 900 };
         studio.Show();
         studio.UpdateLayout();
+        Check(studio.Title == "ScorePlus — Display Studio"
+              && All<TextBlock>(studio).Any(text => (text.Text ?? "").Contains("DISPLAY STUDIO", StringComparison.Ordinal)),
+            "the studio window and its header call it Display Studio");
 
         var layers = (ListBox)studio.FindName("Layers")!;
         var nameInput = (TextBox)studio.FindName("NameInput")!;
