@@ -131,6 +131,7 @@ WINDOW_FEATURES = {
     "TransitionKeyClearButton": "hand-over key clear",
     "TransitionKeyToleranceInput": "hand-over key tolerance",
     "NestedAspectInput": "live-layout shape lock",
+    "LogoImagePathText": "custom logo image status",
 }
 for name, label in WINDOW_FEATURES.items():
     need(xaml, f'x:Name="{name}"', f"{label} control")
@@ -152,8 +153,10 @@ need(code, "void OnlyChanges_Changed", "only-animate-changes handler")
 need(code, "void StepSelectedLayer", "one-step layer move")
 for handler in ("TransitionVideo_Click", "TransitionVideoClear_Click", "TransitionChromaKey_Click",
                 "TransitionChromaKeyClear_Click", "TransitionVideoCut_Changed",
-                "TransitionChromaTolerance_Changed", "SyncTransitionVideo", "SaveLayoutHandover"):
-    need(code, f"void {handler}", "hand-over handler")
+                "TransitionChromaTolerance_Changed", "SyncTransitionVideo", "SaveLayoutHandover",
+                "LogoImage_Click", "LogoImageClear_Click"):
+    need(code, f"void {handler}", "studio handler")
+need(code, 'new(ScorebugLogoSide.None, "Custom image")', "custom logo option")
 for writer in ("layout.TransitionVideoPath=", "layout.TransitionVideoCutSeconds=",
                "layout.TransitionVideoChromaKeyColor=", "layout.TransitionVideoChromaKeyTolerance="):
     need(code, writer, "hand-over writer")

@@ -185,7 +185,8 @@ public partial class ScorebugEditorWindow : Window
     static readonly LogoOption[] Logos =
     [
         new(ScorebugLogoSide.Home, "Home team logo"),
-        new(ScorebugLogoSide.Away, "Visitors team logo")
+        new(ScorebugLogoSide.Away, "Visitors team logo"),
+        new(ScorebugLogoSide.None, "Custom image")
     ];
 
     public ScorebugEditorWindow(ScorebugCatalog catalog, GameEngine engine, MediaPlayback? playback=null, string theme="Dark")
@@ -1007,6 +1008,10 @@ public partial class ScorebugEditorWindow : Window
             AspectInput.Text=e.VideoAspect.ToString("0.###");
             AudioDeviceInput.SelectedItem=_audioOptions.FirstOrDefault(option=>string.Equals(option.Id??"",e.AudioDevice??"",StringComparison.OrdinalIgnoreCase))??_audioOptions[0];
             LogoInput.SelectedItem=Logos.FirstOrDefault(l=>l.Side==e.LogoSide)??Logos[0];
+            LogoImagePathText.Text=string.IsNullOrWhiteSpace(e.ImagePath)
+                ? e.LogoSide==ScorebugLogoSide.None?"No custom image":"Using the team logo"
+                : Path.GetFileName(e.ImagePath);
+            ToolTip.SetTip(LogoImagePathText,string.IsNullOrWhiteSpace(e.ImagePath)?null:e.ImagePath);
             PeriodFormatInput.SelectedItem=PeriodOptions.FirstOrDefault(o=>o.Key==e.PeriodFormat)??PeriodOptions[0];
             IconInput.SelectedItem=e.Icon; IconVisitorsInput.IsChecked=e.IconVisitors; IconFlipInput.IsChecked=e.IconFlipped;
             IconArrowDownInput.IsChecked=e.IconArrowDown;
@@ -2187,6 +2192,56 @@ public partial class ScorebugEditorWindow : Window
         {
             NoticeWindow.Tell(this,"That font could not be imported",ex.Message,warning:true);
         }
+    }
+
+    /// <summary>
+    /// Adds a custom picture to the selected logo element. A team logo still wins when one is
+    /// configured; this is the fallback for a standalone crest or wordmark that is not tied to a
+    /// team identity.
+    /// </summary>
+    void LogoImage_Click(object sender,RoutedEventArgs e)
+    {
+        if(Selected is not {Kind:ScorebugElementKind.Logo} item)return;
+        var dialog=new Microsoft.Win32.OpenFileDialog
+        {
+            Title="Choose a logo image",
+            Filter="Images (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp|All files (*.*)|*.*"
+        };
+        if(dialog.ShowDialog(this)!=true)return;
+        var path=dialog.FileName;
+        try
+        {
+            var folder=AppPaths.Combine("Images");
+            Directory.CreateDirectory(folder);
+            var name=System.IO.Path.GetFileNameWithoutExtension(dialog.FileName);
+            var extension=System.IO.Path.GetExtension(dialog.FileName);
+            var target=System.IO.Path.Combine(folder,$"logo-{name}-{DateTime.Now:yyyyMMdd-HHmmss}{extension}");
+            File.Copy(dialog.FileName,target,true);
+            path=target;
+        }
+        catch
+        {
+            // A read-only source still draws from where it is; the design keeps a usable path.
+        }
+        _catalog.Update(layout=>
+        {
+            var target=layout.Elements.FirstOrDefault(z=>z.Id==item.Id);
+            if(target is null)return;
+            target.LogoSide=ScorebugLogoSide.None;
+            target.ImagePath=path;
+        });
+        Render(); LoadProperties();
+    }
+
+    void LogoImageClear_Click(object sender,RoutedEventArgs e)
+    {
+        if(Selected is not {Kind:ScorebugElementKind.Logo} item)return;
+        _catalog.Update(layout=>
+        {
+            var target=layout.Elements.FirstOrDefault(z=>z.Id==item.Id);
+            if(target is not null)target.ImagePath=null;
+        });
+        Render(); LoadProperties();
     }
 
     // ---------- displays ----------

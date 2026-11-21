@@ -1133,6 +1133,33 @@ internal static class Program
             "Clear video removes the hand-over and hides its controls");
         handoverStudio.Close();
 
+        // A logo element can stand on a custom image instead of a team logo.
+        var logoCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var logoStudio = new ScorebugEditorWindow(logoCatalog, engine);
+        logoStudio.Show();
+        logoStudio.UpdateLayout();
+        Click(ButtonByContent(logoStudio, "LOGO +"));
+        logoStudio.UpdateLayout();
+        ((ListBox)logoStudio.FindName("Layers")!).SelectedIndex = 0;
+        logoStudio.UpdateLayout();
+        var logoItem = logoCatalog.Layout.Elements[^1];
+        Check(logoItem.Kind == ScorebugElementKind.Logo, "the logo button adds a logo element");
+        logoCatalog.Update(layout =>
+        {
+            var target = layout.Elements.First(element => element.Id == logoItem.Id);
+            target.LogoSide = ScorebugLogoSide.None;
+            target.ImagePath = "/tmp/crest.png";
+        });
+        logoStudio.UpdateLayout();
+        var logoPathText = (TextBlock)logoStudio.FindName("LogoImagePathText")!;
+        Check(logoPathText.Text == "crest.png", "a custom logo image names its file");
+        Click(ButtonByContent(logoStudio, "Clear"));
+        logoStudio.UpdateLayout();
+        Check(logoCatalog.Layout.Elements.First(element => element.Id == logoItem.Id).ImagePath is null
+              && logoPathText.Text == "No custom image",
+            "Clear removes the custom logo image");
+        logoStudio.Close();
+
         // Canvas presets scale the artwork and persist.
         var firstX = catalog.Layout.Elements[0].X;
         ((ComboBox)studio.FindName("CanvasPreset")!).SelectedIndex = 1; // Full HD
