@@ -30,6 +30,7 @@ public sealed class PathPromptWindow : Window
         _overwrite = overwrite;
 
         Title = title;
+        ScreenFit.FitDialog(this);
         Width = 560;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

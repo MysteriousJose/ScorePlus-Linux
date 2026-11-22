@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Microsoft.Win32;
 using Scoreboard.Core;
@@ -25,19 +26,49 @@ public partial class RosterPanel : UserControl
     string _signature = "";
     string _choiceSignature = "";
     string _search = "";
+    readonly HashSet<string> _collapsed = new(StringComparer.OrdinalIgnoreCase);
+    int _shownCount;
     // The theme this desk is painted with, so its own dialogs match it.
     string _theme = "Dark";
+    // Below this width the roster and the player editor stack instead of sharing one line, which
+    // is what made the two 240/280 px columns overlap in a rail-narrow tab.
+    const double StackedBelowWidth = 760;
+    bool _stacked;
 
-    sealed class PlayerRow(RosterPlayer player, bool onAir, Brush background, Brush foreground)
+    /// <summary>A player row, or a squad-group header that can fold the rows beneath it.</summary>
+    sealed class PlayerRow
     {
-        public RosterPlayer Player { get; } = player;
-        public bool OnAir { get; } = onAir;
-        public string NumberLabel => Player.Number > 0 ? Player.Number.ToString() : "";
-        public string Title => string.IsNullOrWhiteSpace(Player.Name) ? "(no name)" : Player.Name;
-        public string Position => Player.Position;
-        public string Badge => OnAir ? "● ON AIR" : "";
-        public Brush RowBackground { get; } = background;
-        public Brush RowForeground { get; } = foreground;
+        public PlayerRow(RosterPlayer player, bool onAir, Brush background, Brush foreground)
+        {
+            Player = player;
+            OnAir = onAir;
+            RowBackground = background;
+            RowForeground = foreground;
+        }
+
+        public PlayerRow(string group, int count, bool open, Brush background, Brush foreground)
+        {
+            HeaderGroup = group;
+            HeaderCount = count;
+            HeaderOpen = open;
+            RowBackground = background;
+            RowForeground = foreground;
+        }
+
+        public RosterPlayer? Player { get; }
+        public string? HeaderGroup { get; }
+        public int HeaderCount { get; }
+        public bool HeaderOpen { get; }
+        public bool IsHeader => HeaderGroup is not null;
+        public bool OnAir { get; }
+        public string NumberLabel => IsHeader ? "" : Player!.Number > 0 ? Player.Number.ToString() : "";
+        public string Title => IsHeader
+            ? $"{(HeaderOpen ? "▾" : "▸")}  {HeaderGroup!.ToUpperInvariant()}  ·  {HeaderCount}"
+            : string.IsNullOrWhiteSpace(Player!.Name) ? "(no name)" : Player.Name;
+        public string Position => IsHeader ? "" : Player!.Position;
+        public string Badge => IsHeader ? "" : OnAir ? "● ON AIR" : "";
+        public Brush RowBackground { get; }
+        public Brush RowForeground { get; }
     }
 
     public RosterPanel()
@@ -46,7 +77,46 @@ public partial class RosterPanel : UserControl
         // A panel can be used on its own (an export box, the checks) before any window applies a
         // theme, so it paints itself with the saved theme's palette straight away.
         RosterPalette.Apply(PreferencesStore.Load().Theme, Resources);
+        SizeChanged += (_, e) => ApplyColumnLayout(e.NewSize.Width);
         Loaded += (_, _) => Refresh(force: true);
+    }
+
+    /// <summary>
+    /// Folds the desk to one column when it is too narrow to hold the roster list and the player
+    /// editor side by side. The whole page then scrolls, which is the same fallback the other
+    /// desks use on a small panel.
+    /// </summary>
+    void ApplyColumnLayout(double width)
+    {
+        if (!double.IsFinite(width) || width <= 0) return;
+        var stacked = width < StackedBelowWidth;
+        if (stacked == _stacked) return;
+        _stacked = stacked;
+        if (stacked)
+        {
+            RosterColumns.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            RosterColumns.ColumnDefinitions[0].MinWidth = 0;
+            RosterColumns.ColumnDefinitions[1].Width = new GridLength(0);
+            RosterColumns.ColumnDefinitions[2].Width = new GridLength(0);
+            RosterColumns.ColumnDefinitions[2].MinWidth = 0;
+            RosterColumns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetColumn(PlayerEditorPanel, 0);
+            Grid.SetRow(PlayerEditorPanel, 1);
+            PlayerEditorPanel.Margin = new Thickness(0, 12, 0, 0);
+            RosterScroller.VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+            return;
+        }
+
+        RosterColumns.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        RosterColumns.ColumnDefinitions[0].MinWidth = 240;
+        RosterColumns.ColumnDefinitions[1].Width = new GridLength(12);
+        RosterColumns.ColumnDefinitions[2].Width = new GridLength(1.15, GridUnitType.Star);
+        RosterColumns.ColumnDefinitions[2].MinWidth = 280;
+        RosterColumns.RowDefinitions.Clear();
+        Grid.SetColumn(PlayerEditorPanel, 2);
+        Grid.SetRow(PlayerEditorPanel, 0);
+        PlayerEditorPanel.Margin = default;
+        RosterScroller.VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
     }
 
     /// <summary>True for the home side's desk, false for the visitors'.</summary>
@@ -107,7 +177,7 @@ public partial class RosterPanel : UserControl
         var signature = string.Join('|',
             RosterStore.Version, rosterId, _roster?.Name, _player?.Id, _search,
             selected?.PlayerId, RosterStore.All().Count,
-            string.Join(",", _roster?.Players.Select(p => $"{p.Id}:{p.Number}:{p.Name}:{p.Position}:{p.Stats.Count}") ?? []));
+            string.Join(",", _roster?.Players.Select(p => $"{p.Id}:{p.Number}:{p.Name}:{p.Position}:{p.Group}:{p.PhotoPath}:{p.Stats.Count}") ?? []));
         if (signature == _signature)
         {
             UpdateOnAir(selected);
@@ -152,6 +222,10 @@ public partial class RosterPanel : UserControl
         RemovePlayerButton.IsEnabled = hasRoster && _player is not null;
         var hasPlayer = hasRoster && _player is not null;
         NumberInput.IsEnabled = NameInput.IsEnabled = PositionInput.IsEnabled = hasPlayer;
+        GroupInput.IsEnabled = hasPlayer;
+        GroupPlayerButton.IsEnabled = hasPlayer;
+        ChoosePhotoButton.IsEnabled = hasPlayer;
+        RemovePhotoButton.IsEnabled = hasPlayer && !string.IsNullOrWhiteSpace(_player?.PhotoPath);
         AddStatButton.IsEnabled = StatPresetBox.IsEnabled = hasPlayer;
     }
 
@@ -173,7 +247,7 @@ public partial class RosterPanel : UserControl
     void UpdateCount(SelectedPlayer? selected)
     {
         var total = _roster?.Players.Count ?? 0;
-        var shown = PlayerList.Items.Count;
+        var shown = _shownCount;
         CountText.Text = shown == total
             ? $"{total} player{(total == 1 ? "" : "s")}"
             : $"{shown} of {total} players";
@@ -200,20 +274,42 @@ public partial class RosterPanel : UserControl
         var keep = _player?.Id;
         var (background, foreground) = RosterPalette.Highlight(
             _home ? _engine?.State.HomePrimaryColor : _engine?.State.AwayPrimaryColor, Resources);
-        var rows = (_roster?.Players ?? [])
-            .Where(Matches)
-            .Select(p => new PlayerRow(p, selected is not null && selected.PlayerId == p.Id,
-                selected is not null && selected.PlayerId == p.Id ? background : Brushes.Transparent,
-                selected is not null && selected.PlayerId == p.Id ? foreground : (Brush)(Resources["RosterTextBrush"] ?? Brushes.White)))
+        var rows = (_roster?.Players ?? []).Where(Matches).ToList();
+        var headerBackground = Resources["RosterSurfaceAltBrush"] as Brush ?? Brushes.Transparent;
+        var headerForeground = Resources["RosterTextBrush"] as Brush ?? Brushes.White;
+        // Players read in sections: one foldable header per group, the ungrouped players last. A
+        // roster nobody has grouped still gets the UNGROUPED section, so typing a group in the
+        // editor has an obvious home.
+        var groups = rows
+            .GroupBy(player => (player.Group ?? "").Trim(), StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key.Length == 0 ? 1 : 0)
+            .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        PlayerList.ItemsSource = rows;
-        PlayerList.SelectedItem = rows.FirstOrDefault(row => row.Player.Id == keep);
+        var display = new List<PlayerRow>();
+        _shownCount = 0;
+        foreach (var group in groups)
+        {
+            var open = group.Key.Length == 0 || !_collapsed.Contains(group.Key);
+            display.Add(new PlayerRow(group.Key.Length == 0 ? "UNGROUPED" : group.Key,
+                group.Count(), open, headerBackground, headerForeground));
+            if (!open) continue;
+            foreach (var player in group)
+            {
+                var onAir = selected is not null && selected.PlayerId == player.Id;
+                display.Add(new PlayerRow(player, onAir,
+                    onAir ? background : Brushes.Transparent,
+                    onAir ? foreground : headerForeground));
+                _shownCount++;
+            }
+        }
+        PlayerList.ItemsSource = display;
+        PlayerList.SelectedItem = display.FirstOrDefault(row => row.Player?.Id == keep);
         if (PlayerList.SelectedItem is null && rows.Count > 0) PlayerList.SelectedIndex = 0;
         PlayerList.ToolTip = _roster is null
             ? "Choose a roster above, or create one with New roster…"
             : _roster.Players.Count == 0
                 ? "No players in this roster yet — press Add player"
-                : "Click a player to edit them; Select player puts them on the graphic";
+                : "Click a player to edit them; click a group header to fold it";
     }
 
     bool Matches(RosterPlayer player)
@@ -221,6 +317,7 @@ public partial class RosterPanel : UserControl
         if (_search.Length == 0) return true;
         return player.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)
             || player.Position.Contains(_search, StringComparison.OrdinalIgnoreCase)
+            || (player.Group ?? "").Contains(_search, StringComparison.OrdinalIgnoreCase)
             || player.Number.ToString().Contains(_search, StringComparison.Ordinal);
     }
 
@@ -229,9 +326,66 @@ public partial class RosterPanel : UserControl
         if (!NumberInput.IsKeyboardFocused) NumberInput.Text = _player?.Number.ToString() ?? "";
         if (!NameInput.IsKeyboardFocused) NameInput.Text = _player?.Name ?? "";
         if (!PositionInput.IsKeyboardFocused) PositionInput.Text = _player?.Position ?? "";
+        if (!GroupInput.IsKeyboardFocused) GroupInput.Text = _player?.Group ?? "";
         PlayerInfoText.Text = _player is null
             ? "highlight a player on the left"
             : $"{_player.Record} · {(_player.Position.Length == 0 ? "no position" : _player.Position)}";
+        ShowPlayerPhoto();
+    }
+
+    /// <summary>Draws the uploaded portrait, or the empty frame when this player has none.</summary>
+    void ShowPlayerPhoto()
+    {
+        PlayerPhotoImage.Source = null;
+        var path = _player?.PhotoPath ?? "";
+        if (path.Length > 0 && File.Exists(path))
+        {
+            try
+            {
+                var image = new BitmapImage();
+                image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad;
+                image.UriSource = new Uri(path); image.EndInit();
+                PlayerPhotoImage.Source = image;
+                PlayerPhotoEmpty.IsVisible = false;
+                PlayerPhotoNameText.Text = Path.GetFileName(path);
+                return;
+            }
+            catch { }
+        }
+        PlayerPhotoEmpty.IsVisible = true;
+        PlayerPhotoNameText.Text = path.Length == 0 ? "No portrait uploaded" : "Portrait file is missing";
+    }
+
+    void ChoosePhoto_Click(object sender, RoutedEventArgs e)
+    {
+        if (_engine is null || _player is null) return;
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose a player photo",
+            Filter = "Images (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp|All files (*.*)|*.*",
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
+        try
+        {
+            var folder = AppPaths.Combine("PlayerPhotos");
+            Directory.CreateDirectory(folder);
+            var target = Path.Combine(folder, $"{_player.Id}-{DateTime.Now:yyyyMMdd-HHmmss}{Path.GetExtension(dialog.FileName)}");
+            File.Copy(dialog.FileName, target, true);
+            _player.PhotoPath = target;
+            SaveAndReload();
+        }
+        catch (Exception ex)
+        {
+            NoticeWindow.Tell(Window.GetWindow(this), "That photo could not be imported", ex.Message, warning: true);
+        }
+    }
+
+    void RemovePhoto_Click(object sender, RoutedEventArgs e)
+    {
+        if (_player is null || string.IsNullOrWhiteSpace(_player.PhotoPath)) return;
+        _player.PhotoPath = "";
+        SaveAndReload();
     }
 
     /// <summary>One row per stat column: right-aligned name, a dark value well, and a remove box.</summary>
@@ -623,7 +777,15 @@ public partial class RosterPanel : UserControl
     {
         if (_syncing) return;
         if (PlayerList.SelectedItem is not PlayerRow row) return;
-        if (_player?.Id == row.Player.Id) return;
+        if (row.IsHeader)
+        {
+            if (row.HeaderGroup is not { Length: > 0 } group) return;
+            if (!_collapsed.Add(group)) _collapsed.Remove(group);
+            _signature = "";
+            Refresh(force: true);
+            return;
+        }
+        if (_player?.Id == row.Player!.Id) return;
         _player = row.Player;
         _signature = "";
         Refresh();
@@ -647,6 +809,18 @@ public partial class RosterPanel : UserControl
         _player = _roster.Players.FirstOrDefault();
         if (wasSelected) _engine.SelectPlayer(_home, _player?.Id);
         SaveAndReload();
+    }
+
+    void GroupPlayer_Click(object sender, RoutedEventArgs e)
+    {
+        if (_engine is null || _player is null) return;
+        var group = TextPromptWindow.Ask(Window.GetWindow(this), "Player group", "Group name", _player.Group ?? "");
+        if (group is null) return;
+        _player.Group = group.Trim();
+        RosterStore.Save();
+        _engine.ReloadSelectedPlayer(_home);
+        _signature = "";
+        Refresh(force: true);
     }
 
     void Select_Click(object sender, RoutedEventArgs e)
@@ -688,6 +862,8 @@ public partial class RosterPanel : UserControl
         if (name != _player.Name) { _player.Name = name; changed = true; }
         var position = PositionInput.Text?.Trim() ?? "";
         if (position != _player.Position) { _player.Position = position; changed = true; }
+        var group = GroupInput.Text?.Trim() ?? "";
+        if (group != (_player.Group ?? "")) { _player.Group = group; changed = true; }
         if (!changed) return;
         RosterStore.Save();
         _engine.ReloadSelectedPlayer(_home);

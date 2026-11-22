@@ -157,6 +157,7 @@ public sealed class MultiviewWindow : Window
         Title = "ScorePlus — Multiview";
         Width = 1320;
         Height = 820;
+        ScreenFit.FitDialog(this);
         Focusable = true;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         _showLabels = preferences.MultiviewShowLabels;

@@ -31,7 +31,7 @@ public sealed class AdLogWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
         FontFamily = new FontFamily("Segoe UI");
-        ScreenFit.Track(this);
+        ScreenFit.FitDialog(this);
 
         var root = new DockPanel { Margin = new Thickness(20, 18, 20, 16) };
 

@@ -35,6 +35,7 @@ public sealed class TeamIdentityWindow : Window
         var state = engine.State;
         Title = home ? "Home team details" : "Visitors team details";
         Width = 560; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.FromRgb(23, 28, 37));
         Foreground = Brushes.White;

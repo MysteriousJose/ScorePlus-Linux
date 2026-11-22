@@ -1,7 +1,8 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Scoreboard.Desktop"
-             x:Class="Scoreboard.Desktop.App">
+             x:Class="Scoreboard.Desktop.App"
+             RequestedThemeVariant="Dark">
 
   <!-- One flat, high-contrast look for the whole operator console: dark chrome, one accent,
        roomy click targets, and no gradient bevels anywhere. The console can be driven entirely
@@ -10,7 +11,13 @@
        The Operator* keys are the ones ThemeManager rewrites per window when a .sport file names a
        theme, so every style below reads them through DynamicResource: switching sports repaints a
        live console instead of leaving the startup shades behind. The values here are the fallback
-       for surfaces ThemeManager never touches (a dialog that was never themed). -->
+       for surfaces ThemeManager never touches (a dialog that was never themed).
+
+       The dark variant is pinned at application level for the same reason. Surfaces outside
+       ThemeManager — the launcher, tooltips and other popups — would otherwise follow the
+       desktop's light/dark preference, and on a light Linux desktop Fluent's own
+       ButtonForegroundPointerOver is near-black: white button labels would turn black on hover.
+       A window whose theme asks for Light still overrides this through ThemeManager. -->
   <Application.Resources>
     <SolidColorBrush x:Key="OperatorPanelBrush"   Color="#080808"/>
     <SolidColorBrush x:Key="OperatorSurfaceBrush" Color="#141414"/>

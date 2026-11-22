@@ -15,6 +15,10 @@ public partial class RosterDock : UserControl
 {
     GameEngine? _engine;
     bool _showingHome = true;
+    // Below this width the library actions get their own header line instead of squeezing the
+    // title and side tabs.
+    const double WrappedBelowWidth = 900;
+    bool _headerWrapped;
 
     public RosterDock()
     {
@@ -23,7 +27,25 @@ public partial class RosterDock : UserControl
         // theme pass must not flatten those shades into one colour.
         ThemeManager.SetSkipTheme(this, true);
         ApplyTheme("Dark");
+        SizeChanged += (_, e) => ApplyHeaderLayout(e.NewSize.Width);
         Loaded += (_, _) => RefreshSummary();
+    }
+
+    /// <summary>
+    /// Wraps the Import/Export/New roster cluster onto its own line in a narrow tab, so the title
+    /// and the side tabs keep their width instead of being pushed off the header.
+    /// </summary>
+    void ApplyHeaderLayout(double width)
+    {
+        if (!double.IsFinite(width) || width <= 0) return;
+        var wrapped = width < WrappedBelowWidth;
+        if (wrapped == _headerWrapped) return;
+        _headerWrapped = wrapped;
+        DockPanel.SetDock(HeaderActions, wrapped ? Dock.Bottom : Dock.Right);
+        HeaderActions.HorizontalAlignment = wrapped
+            ? Avalonia.Layout.HorizontalAlignment.Left
+            : Avalonia.Layout.HorizontalAlignment.Right;
+        HeaderActions.Margin = wrapped ? new Thickness(0, 8, 0, 0) : default;
     }
 
     /// <summary>Points the tab at the game. Every window has its own dock but one engine and library.</summary>

@@ -2,7 +2,7 @@
         xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Scoreboard.Desktop"
-        Title="ScorePlus" Width="700" Height="580" MinWidth="640" MinHeight="520"
+        Title="ScorePlus" Width="700" Height="580" MinWidth="520" MinHeight="440"
         WindowStartupLocation="CenterScreen" Background="#050607" Foreground="#F4F7FB"
         FontFamily="Segoe UI" ShowInTaskbar="True">
   <Window.Styles>
@@ -11,7 +11,7 @@
       <Setter Property="Height" Value="70"/>
       <Setter Property="FontSize" Value="17"/>
       <Setter Property="FontWeight" Value="Bold"/>
-      <Setter Property="Margin" Value="0,0,14,0"/>
+      <Setter Property="Margin" Value="0,0,14,10"/>
       <Setter Property="Background" Value="#0B6B50"/>
       <Setter Property="BorderBrush" Value="#14A67C"/>
       <Setter Property="Foreground" Value="White"/>
@@ -19,7 +19,7 @@
     <Style Selector="Button.launch-primary.launch-secondary">
       <Setter Property="Background" Value="#161C24"/>
       <Setter Property="BorderBrush" Value="#2E3B4A"/>
-      <Setter Property="Margin" Value="0"/>
+      <Setter Property="Margin" Value="0,0,0,10"/>
     </Style>
     <Style Selector="Button.load-button">
       <Setter Property="Padding" Value="18,9"/>
@@ -54,10 +54,12 @@
         <TextBlock Text="Powerful, dependable scorekeeping — every score, clock and stat under one roof." Foreground="#93A0B2" FontSize="13" Margin="2,8,0,0"/>
         <TextBlock Text="Start a fresh game, open a saved one, or pick up an autosave." Foreground="#5C6B7E" FontSize="12" Margin="2,3,0,0"/>
 
-        <StackPanel Orientation="Horizontal" Margin="0,26,0,0">
+        <!-- A 236 px primary button cannot sit beside another one on a narrow screen; the wrap
+             panel drops Open Game onto its own line instead of clipping it. -->
+        <WrapPanel Margin="0,26,0,0">
           <Button x:Name="NewGameButton" Classes="launch-primary" Content="New Game" Click="NewGame_Click" IsDefault="True"/>
           <Button x:Name="OpenGameButton" Classes="launch-primary launch-secondary" Content="Open Game" Click="OpenGame_Click"/>
-        </StackPanel>
+        </WrapPanel>
       </StackPanel>
 
       <Border DockPanel.Dock="Bottom" Background="#0B0F14" BorderBrush="#151B23" BorderThickness="1"

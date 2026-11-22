@@ -44,6 +44,15 @@ public static class SoundLevelMeter
     /// <summary>False when there is no PulseAudio monitor to listen to; the meter then stays dark.</summary>
     public static bool Available { get; }
 
+    /// <summary>
+    /// A window may mute every speaker bus and still leave the monitor running. The gate lets the
+    /// media session say nobody can hear the output, so the meter reads silence instead of a mix
+    /// the room never receives.
+    /// </summary>
+    public static Func<bool>? AudibleGate { get; set; }
+
+    public static bool Suppressed => AudibleGate?.Invoke() == false;
+
     static void ReadLoop(Process process)
     {
         try
@@ -74,6 +83,7 @@ public static class SoundLevelMeter
     /// </summary>
     public static double Read()
     {
+        if (Suppressed) return 0;
         lock (Gate)
         {
             var now = DateTime.UtcNow;

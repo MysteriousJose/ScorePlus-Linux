@@ -241,6 +241,7 @@ internal sealed class QuickLayoutPickerWindow : Window
         _catalog = catalog;
         _theme = theme;
         Title = "Quick layout";
+        ScreenFit.FitDialog(this);
         Width = 420;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

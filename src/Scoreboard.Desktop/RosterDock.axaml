@@ -31,8 +31,10 @@
   <DockPanel>
     <!-- Title bar: the desk's identity, the side switch, and the library action. -->
     <Border DockPanel.Dock="Top" Background="{DynamicResource RosterHeaderBrush}" Padding="14,10" CornerRadius="9,9,0,0">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+      <DockPanel x:Name="HeaderRow">
+        <!-- Below the wide tier this cluster docks below the title instead of squeezing it and the
+             side tabs off the edge of the header. -->
+        <StackPanel x:Name="HeaderActions" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock x:Name="LibraryText" Text="" FontSize="11" Foreground="{DynamicResource RosterHeaderTextBrush}"
                      Opacity="0.8" VerticalAlignment="Center" Margin="0,0,4,0"/>
           <Button Classes="header-pill" Content="Import…" Click="Import_Click"

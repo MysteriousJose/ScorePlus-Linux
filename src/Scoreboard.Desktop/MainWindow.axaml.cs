@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
@@ -44,6 +46,19 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     // Every audience window ever opened this session. Opening the output again adds another one
     // instead of focusing the old window, so a show can spread the graphic over several displays.
     readonly List<OutputWindow> _outputs = [];
+    // One ink board per display, shared by every audience window showing it.
+    readonly Dictionary<string, AnnotationBoard> _annotationBoards = new(StringComparer.OrdinalIgnoreCase);
+    // What /watch is showing, one frame per display, and a counter the page watches so a wall
+    // screen only fetches a picture when the graphic changed.
+    readonly Dictionary<string, (string Signature, byte[]? Png, long Version)> _watchFrames = new(StringComparer.Ordinal);
+    long _watchVersion;
+    // Automatic horn edge detection: arm only while a clock was actually running, so loading a
+    // game at 0:00 or typing 0 into a stopped clock stays silent.
+    int _lastGameClock = -1;
+    int _lastPlayClock = -1;
+    bool _lastGameClockRunning;
+    bool _lastPlayClockRunning;
+    bool _autoHornReady;
     EventLogWindow? _log;
     RemoteControlServer? _remote;
     ScorebugCanvasView? _preview;
@@ -71,6 +86,20 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     string? _savedDesignJson;
     bool _closingAfterPrompt;
     GameControlWindow.ConsoleTab _tab = GameControlWindow.ConsoleTab.Control;
+    // How the shell is laid out right now: full, compact (narrow headers, slim rail) or the
+    // overlay tier where the rail hides behind a header toggle instead of squeezing the console.
+    enum RailTier { Wide, Compact, Overlay }
+    RailTier _railTier;
+    bool _narrow;
+    bool _railOverlayOpen;
+    // The rail width the operator last had at full size, restored when the window grows back.
+    double _railPreferredWidth = 336;
+    /// <summary>Below this content width the headers compact and the rail narrows.</summary>
+    const double NarrowWidth = 980;
+    /// <summary>Below this content width the rail would squeeze the console, so it becomes an overlay.</summary>
+    const double RailOverlayWidth = 860;
+    /// <summary>Below this content height the workspace scrolls instead of clipping its bottom.</summary>
+    const double ScrollBelowHeight = 900;
 
     /// <summary>
     /// The exit prompt is on for operators. The UI checks turn it off because they create and close
@@ -98,6 +127,10 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         // Follow the window onto portrait monitors and laptops at 150% scaling instead of hanging
         // the console off the screen; the console itself is reflowable down to its minimum width.
         ScreenFit.Track(this);
+        // Reflow the shell as the window changes size. The handlers are names-only; only the
+        // widths of the header strips and the rail column change, never which control a button
+        // is or what it does.
+        SizeChanged += (_, e) => ApplyShellLayout(e.NewSize.Width, e.NewSize.Height);
         _session = new MediaSession(_preferences);
         _booth = new ReplayBoothController(_session, _engine, _preferences);
         _hardware = new HardwareService(_engine);
@@ -119,6 +152,9 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         SportSelector.SelectedValuePath = "Id";
         RefreshSports();
         SportSelector.SelectedValue = _engine.State.SportId;
+        // Arm the rules the console reads before the first down is pressed.
+        GameEngine.DownPreviewEnabled = _preferences.NextDownPreview;
+        GameEngine.NewSeriesLiveEnabled = _preferences.NewSeriesLive;
 
         _engine.Changed += Refresh;
         _engine.Changed += EngineChanged;
@@ -206,6 +242,7 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         ApplyHintVisibility();
 
         Refresh();
+        RefreshEndGameButton();
         _initializing = false;
 
         if (waitForLaunch)
@@ -263,6 +300,115 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         StartHardware();
         _leagueCloud?.Start();
         _ = CheckForUpdatesAsync();
+    }
+
+    /// <summary>
+    /// Fits the shell to the window: the two header strips wrap and compact, the rail narrows and
+    /// then becomes an overlay, and a window too short for the console scrolls the workspace.
+    /// Idempotent, so it can run on every resize without disturbing the operator's splitter width.
+    /// </summary>
+    void ApplyShellLayout(double width, double height)
+    {
+        if (!double.IsFinite(width) || width <= 0) return;
+
+        var narrow = width < NarrowWidth;
+        if (narrow != _narrow)
+        {
+            _narrow = narrow;
+            Root.Classes.Set("narrow", narrow);
+            // Give the action rows back the room the fields were holding, so the buttons wrap
+            // less instead of growing the header downward.
+            GameNameBox.Width = narrow ? 110 : 150;
+            SportSelector.MaxWidth = narrow ? 160 : 220;
+            // At the compact tier the header hints are the first thing to give up their room.
+            ApplyHintVisibility();
+        }
+
+        // A narrow window trims the media desk's own chrome too, so its columns keep the room.
+        MediaControl.SetCompact(narrow);
+
+        SetRailTier(width < RailOverlayWidth ? RailTier.Overlay
+            : narrow ? RailTier.Compact
+            : RailTier.Wide);
+        // The overlay is a panel over the console, so it is never taller than the visible
+        // workspace; its own scroller takes over when the rail's cards do not fit.
+        if (_railTier == RailTier.Overlay) RailHost.MaxHeight = Math.Max(220, WorkspaceViewportHeight());
+
+        // A scroller measures its content with unlimited height, which turns the console's star
+        // rows into auto rows. Only switch it on when the window is too short to hold the console;
+        // at normal heights the rows must keep filling the window as they always have.
+        var scrolling = double.IsFinite(height) && height > 0 && height < ScrollBelowHeight;
+        var mode = scrolling
+            ? Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
+            : Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+        if (WorkspaceScroller.VerticalScrollBarVisibility != mode)
+            WorkspaceScroller.VerticalScrollBarVisibility = mode;
+    }
+
+    /// <summary>
+    /// Moves the rail between its three tiers. The operator's own splitter width is remembered at
+    /// full size and put back when the window grows again; the compact and overlay tiers force
+    /// their widths so the console keeps working.
+    /// </summary>
+    void SetRailTier(RailTier tier)
+    {
+        if (tier == _railTier) return;
+        var column = Workspace.ColumnDefinitions[0];
+        if (_railTier == RailTier.Wide && double.IsFinite(column.Width.Value) && column.Width.Value > 0)
+            _railPreferredWidth = Math.Max(240, column.Width.Value);
+        _railTier = tier;
+        switch (tier)
+        {
+            case RailTier.Wide:
+                column.MinWidth = 260;
+                column.Width = new GridLength(_railPreferredWidth);
+                break;
+            case RailTier.Compact:
+                column.MinWidth = 240;
+                column.Width = new GridLength(240);
+                break;
+            default:
+                column.MinWidth = 0;
+                column.Width = new GridLength(0);
+                break;
+        }
+
+        var overlay = tier == RailTier.Overlay;
+        if (overlay) _railOverlayOpen = false;
+        RailToggleButton.IsVisible = overlay;
+        RailSplitter.IsVisible = !overlay;
+        RailHost.IsVisible = !overlay || _railOverlayOpen;
+        // An overlay rail spans every column and sits above the console, so nothing is removed
+        // from the operator's reach; the toggle in the header brings it back and puts it away.
+        Grid.SetColumnSpan(RailHost, overlay ? 3 : 1);
+        RailHost.HorizontalAlignment = overlay ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+        RailHost.Width = overlay ? RailWidthForWindow() : double.NaN;
+        RailHost.Margin = overlay ? new Thickness(0) : new Thickness(0, 0, 6, 0);
+        RailHost.ZIndex = overlay ? 10 : 0;
+        RailHost.MaxHeight = overlay ? Math.Max(220, WorkspaceViewportHeight()) : double.PositiveInfinity;
+    }
+
+    double WorkspaceViewportHeight()
+    {
+        var viewport = WorkspaceScroller.Bounds.Height;
+        if (!double.IsFinite(viewport) || viewport <= 0) viewport = Math.Max(0, Bounds.Height - 150);
+        return viewport;
+    }
+
+    double RailWidthForWindow()
+    {
+        var available = Root.Bounds.Width - 24;
+        return double.IsFinite(available) && available > 0 ? Math.Clamp(available, 220, 320) : 320;
+    }
+
+    void RailToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_railTier != RailTier.Overlay) return;
+        _railOverlayOpen = !_railOverlayOpen;
+        RailHost.IsVisible = _railOverlayOpen;
+        RailHost.Width = RailWidthForWindow();
+        RailHost.MaxHeight = Math.Max(220, WorkspaceViewportHeight());
+        RailToggleButton.Content = _railOverlayOpen ? "◨" : "◧";
     }
 
     /// <summary>Locks or unlocks everything inside the window while the launch box is up.</summary>
@@ -567,7 +713,8 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
 
     void ApplyHintVisibility()
     {
-        var visibility = _preferences.ShowHeadingHints ? Visibility.Visible : Visibility.Collapsed;
+        // Hints are the first thing the compact tier gives up, whatever the preference says.
+        var visibility = _preferences.ShowHeadingHints && !_narrow ? Visibility.Visible : Visibility.Collapsed;
         SportHint.Visibility = PreviewAudienceHint.Visibility = visibility;
         MediaControl.SetHintVisibility(_preferences.ShowHeadingHints);
         RosterControl.SetHintVisibility(_preferences.ShowHeadingHints);
@@ -790,6 +937,206 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         _leagueCloud?.ApplySettings();
     }
 
+    /// <summary>The library as the phone's Media tab lists it.</summary>
+    string MediaSnapshotJson()
+    {
+        var live = new List<string>();
+        var paused = new List<string>();
+        void Add(List<string> list, string? label)
+        {
+            if (!string.IsNullOrWhiteSpace(label) && !live.Contains(label) && !paused.Contains(label)) list.Add(label);
+        }
+        if (_session.IsCurrentPlaying) Add(live, _session.Current?.Label);
+        else Add(paused, _session.Current?.Label);
+        if (_session.IsBackgroundPlaying) Add(live, _session.BackgroundAudio?.Label);
+        else Add(paused, _session.BackgroundAudio?.Label);
+        if (_session.Playback.IsPlaying)
+            foreach (var file in _session.Playback.ActiveFiles) Add(live, file.Label);
+        else
+            foreach (var file in _session.Playback.ActiveFiles) Add(paused, file.Label);
+        foreach (var camera in _session.LiveCameras)
+            if (!Same(_session.Current, camera)) Add(live, camera.Label);
+        foreach (var microphone in _session.LiveMicrophones)
+            if (!Same(_session.Current, microphone)) Add(live, microphone.Label);
+        var speakers = _session.LiveSpeakers.Select(speaker => speaker.Label).ToList();
+        static bool Same(MediaEntry? left, MediaEntry right) =>
+            left is not null && string.Equals(left.Path, right.Path, StringComparison.OrdinalIgnoreCase);
+        return JsonSerializer.Serialize(new
+        {
+            current = string.Join(" + ", live.Count > 0 ? live : paused),
+            live,
+            paused,
+            speakers,
+            clips = _session.Library.Select(entry => new
+            {
+                id = entry.Path,
+                label = entry.Label,
+                kind = entry.KindLabel,
+                onAir = _session.IsOnAir(entry)
+            }).ToList()
+        });
+    }
+
+    /// <summary>The three media buttons a phone can reach: on air, play/pause, and back off air.</summary>
+    bool MediaAction(string action, string id)
+    {
+        var entry = _session.Library.FirstOrDefault(item => string.Equals(item.Path, id, StringComparison.OrdinalIgnoreCase));
+        switch (action)
+        {
+            case "toggle": _session.TogglePlayPause(); return true;
+            case "play" when entry is not null: _session.Play(entry); return true;
+            case "onair" when entry is not null: _session.ToggleOnAir(entry); return true;
+            default: return false;
+        }
+    }
+
+    /// <summary>Both rosters, their players and the library, as the phone's Roster tab lists them.</summary>
+    string RosterSnapshotJson()
+    {
+        var s = _engine.State;
+        object Side(bool home)
+        {
+            var rosterId = home ? s.HomeRosterId : s.AwayRosterId;
+            var roster = RosterStore.Book.Find(rosterId);
+            var selected = (home ? s.HomePlayer : s.AwayPlayer)?.PlayerId;
+            return new
+            {
+                name = home ? s.HomeTeam : s.AwayTeam,
+                rosterId,
+                rosterName = roster?.Name ?? string.Empty,
+                players = (roster?.Players ?? []).Select(player => new
+                {
+                    id = player.Id,
+                    name = player.Name,
+                    number = player.Number,
+                    position = player.Position,
+                    group = player.Group,
+                    stats = player.Stats.Select(stat => new { name = stat.Name, value = stat.Value, display = stat.Display }).ToList(),
+                    selected = string.Equals(player.Id, selected, StringComparison.OrdinalIgnoreCase)
+                }).ToList()
+            };
+        }
+        return JsonSerializer.Serialize(new
+        {
+            home = Side(true),
+            away = Side(false),
+            rosters = RosterStore.All().Select(roster => new { id = roster.Id, name = roster.Name }).ToList()
+        });
+    }
+
+    /// <summary>Assigns a roster or puts one player on the graphic, from the phone.</summary>
+    bool RosterAction(string action, string side, string id, string stat, string value)
+    {
+        var home = !string.Equals(side, "away", StringComparison.OrdinalIgnoreCase);
+        switch (action)
+        {
+            case "roster": _engine.AssignRoster(home, string.IsNullOrWhiteSpace(id) ? null : id); return true;
+            case "player":
+                if (string.IsNullOrWhiteSpace(id)) _engine.ClearSelectedPlayer(home);
+                else _engine.SelectPlayer(home, id);
+                return true;
+            case "clear": _engine.ClearSelectedPlayer(home); return true;
+            case "stat":
+            {
+                if (string.IsNullOrWhiteSpace(stat) || !int.TryParse(value, out var number)) return false;
+                var roster = RosterStore.Book.Find(home ? _engine.State.HomeRosterId : _engine.State.AwayRosterId);
+                var player = roster?.Find(id);
+                if (player is null) return false;
+                player.SetStat(stat, number);
+                RosterStore.Save();
+                _engine.ReloadSelectedPlayer(home);
+                return true;
+            }
+            default: return false;
+        }
+    }
+
+    /// <summary>The phone's flag card: choosing the type or team leaves the flag as it is.</summary>
+    bool PenaltyAction(string action, string type, string side)
+    {
+        var home = !string.Equals(side, "away", StringComparison.OrdinalIgnoreCase);
+        var chosen = string.IsNullOrWhiteSpace(type) ? _engine.State.PenaltyType : type;
+        switch (action)
+        {
+            case "flag": _engine.SetPenalty(!_engine.State.PenaltyActive, chosen, home); return true;
+            case "clear": _engine.SetPenalty(false, chosen, home); return true;
+            case "type":
+            case "team": _engine.SetPenalty(_engine.State.PenaltyActive, chosen, home); return true;
+            default: return false;
+        }
+    }
+
+    /// <summary>What a browser watching /watch should see: the program layout and published game.</summary>
+    (ScorebugLayout Layout, GameState State)? WatchSnapshot() =>
+        (_automation.Effective(_program.DisplayId, _scorebug.PublishedCompositeOf(_program.DisplayId)), _publishedEngine.State);
+
+    /// <summary>Resolves /watch?display=2, a display id, or a display name; no key means this window's display.</summary>
+    ScorebugDisplay? ResolveWatchDisplay(string? key)
+    {
+        if (_scorebug.Displays.Count == 0) return null;
+        var fallback = _scorebug.FindDisplay(_program.DisplayId) ?? _scorebug.Displays[0];
+        if (string.IsNullOrWhiteSpace(key)) return fallback;
+        string clean;
+        try { clean = Uri.UnescapeDataString(key).Trim(); }
+        catch { clean = key.Trim(); }
+        if (int.TryParse(clean, out var number) && number >= 1 && number <= _scorebug.Displays.Count)
+            return _scorebug.Displays[number - 1];
+        return _scorebug.FindDisplay(clean)
+            ?? _scorebug.Displays.FirstOrDefault(display => string.Equals(display.Name, clean, StringComparison.OrdinalIgnoreCase))
+            ?? fallback;
+    }
+
+    /// <summary>One off-screen render of the program layout, encoded as PNG for the browser.</summary>
+    byte[]? RenderProgramPng(ScorebugLayout layout)
+    {
+        ScorebugCanvasView? view = null;
+        try
+        {
+            var scale = Math.Clamp((int)Math.Ceiling(1920.0 / Math.Max(1, layout.Width)), 1, 3);
+            if (layout.Width * scale > 3840) scale = 1;
+            var width = Math.Max(1, layout.Width) * scale;
+            var height = Math.Max(1, layout.Height) * scale;
+            view = new ScorebugCanvasView(_scorebug, _engine,
+                stateProvider: () => _publishedEngine.State, playback: null, layoutProvider: () => layout)
+            {
+                Width = width,
+                Height = height
+            };
+            view.Measure(new Size(width, height));
+            view.Arrange(new Rect(0, 0, width, height));
+            var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(new PixelSize(width, height), new Vector(96, 96));
+            bitmap.Render(view);
+            using var buffer = new MemoryStream();
+            bitmap.Save(buffer);
+            return buffer.ToArray();
+        }
+        catch { return null; }
+        finally { view?.Dispose(); }
+    }
+
+    /// <summary>The program graphic as a PNG, drawn by the same view the audience window draws.</summary>
+    (byte[] Png, long Version)? WatchImageSnapshot(string? displayKey, string? layoutKey = null)
+    {
+        var display = ResolveWatchDisplay(displayKey);
+        if (display is null) return null;
+        var chosen = !string.IsNullOrWhiteSpace(layoutKey) ? _scorebug.FindLayout(layoutKey) : null;
+        var layout = chosen is not null
+            ? _automation.Effective(display.Id, chosen)
+            : _automation.Effective(display.Id, _scorebug.PublishedCompositeOf(display.Id));
+        var cacheKey = display.Id + "|" + (layoutKey ?? "");
+        var state = _publishedEngine.State;
+        var signature = JsonSerializer.Serialize(layout) + "|" + GameEngine.StagedSignature(state);
+        if (!_watchFrames.TryGetValue(cacheKey, out var cached) || !string.Equals(cached.Signature, signature, StringComparison.Ordinal))
+        {
+            _watchVersion++;
+            cached = (signature, null, _watchVersion);
+        }
+        cached.Png ??= RenderProgramPng(layout);
+        if (cached.Png is null) return null;
+        _watchFrames[cacheKey] = cached;
+        return (cached.Png, cached.Version);
+    }
+
     /// <summary>
     /// Starts (or restarts) the phone remote from the saved preferences. It is off unless enabled and
     /// protected by a password, so an unattended install never exposes a control surface.
@@ -798,8 +1145,36 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     {
         _remote?.Dispose();
         _remote = null;
+        RemoteControlServer.WatchSource = null;
+        RemoteControlServer.WatchImage = null;
+        RemoteControlServer.WatchLayoutImage = null;
+        RemoteControlServer.MediaJson = null;
+        RemoteControlServer.MediaAction = null;
+        RemoteControlServer.RosterJson = null;
+        RemoteControlServer.RosterAction = null;
+        RemoteControlServer.PenaltyAction = null;
+        RemoteControlServer.LockState = () => _operatorLocked;
+        RemoteControlServer.MediaJson = MediaSnapshotJson;
+        RemoteControlServer.MediaAction = MediaAction;
+        RemoteControlServer.RosterJson = RosterSnapshotJson;
+        RemoteControlServer.RosterAction = RosterAction;
+        RemoteControlServer.PenaltyAction = PenaltyAction;
         if (!_preferences.RemoteEnabled || string.IsNullOrWhiteSpace(_preferences.RemotePassword)) return;
         var server = new RemoteControlServer(_engine, this, id => { _panel.Execute(id); return true; }, Avalonia.Threading.Dispatcher.UIThread, _preferences.RemotePort, _preferences.RemotePassword);
+        // The audience feed draws the published program, on the UI thread: the program selection and
+        // the published game belong to this window, and the server asks from a background thread.
+        RemoteControlServer.WatchImage = display =>
+        {
+            (byte[] Png, long Version)? result = null;
+            Dispatcher.Invoke(() => result = WatchImageSnapshot(display));
+            return result;
+        };
+        RemoteControlServer.WatchLayoutImage = (display, layout) =>
+        {
+            (byte[] Png, long Version)? result = null;
+            Dispatcher.Invoke(() => result = WatchImageSnapshot(display, layout));
+            return result;
+        };
         server.Status += message => Dispatcher.BeginInvoke(new Action(() => StatusText.Text = message));
         server.Start();
         _remote = server;
@@ -919,6 +1294,7 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     /// </summary>
     public void StartNewGame(string sportId, bool announce = true)
     {
+        _autoHornReady = false;
         _engine.NewGame(sportId);
         _projectPath = null;
         _startNewAutosavePoint = true;
@@ -961,10 +1337,12 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     {
         try
         {
+            _autoHornReady = false;
             var design = _engine.Load(path);
             // A file written by an older build has no design; the current scorebug then stays as it
             // is rather than being replaced by a factory layout.
             if (design is not null) _scorebug.ApplyDocument(design);
+            ApplySavedQuickButtons();
             _projectPath = path;
             _startNewAutosavePoint = true;
             // Point the picker at the loaded sport without letting that look like a sport change,
@@ -999,11 +1377,26 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     // ---------- output ----------
     void Output_Click(object sender, RoutedEventArgs e) => OpenOutputWindow();
 
+    void Annotate_Click(object sender, RoutedEventArgs e) => OpenOutputWindow(annotations: true);
+
+    /// <summary>The shared ink board for a display, with the operator's saved fade time.</summary>
+    AnnotationBoard BoardFor(string displayId)
+    {
+        if (_annotationBoards.TryGetValue(displayId, out var existing)) return existing;
+        var seconds = PreferencesStore.Load().AnnotationFadeSeconds;
+        var hold = seconds <= 0 ? TimeSpan.Zero : TimeSpan.FromSeconds(Math.Clamp(seconds, 0.5, 10));
+        var board = new AnnotationBoard(hold);
+        _annotationBoards[displayId] = board;
+        return board;
+    }
+
     /// <summary>
     /// Asks which display this audience window is for, then opens a brand-new window for it. With
-    /// only one display there is nothing to ask, so the question is skipped.
+    /// only one display there is nothing to ask, so the question is skipped. Annotation reuses an
+    /// audience window already open for that display, and mirrors its strokes to every other output
+    /// on the same display, so the pen is genuinely on the audience picture.
     /// </summary>
-    public OutputWindow? OpenOutputWindow(string? displayId = null)
+    public OutputWindow? OpenOutputWindow(string? displayId = null, bool annotations = false)
     {
         if (displayId is null)
         {
@@ -1014,13 +1407,41 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
                 if (displayId is null) return null;
             }
         }
-        var output = new OutputWindow(_publishedEngine, _scorebug, _preferences.Theme, _playback, displayId)
+        var board = BoardFor(displayId);
+        if (annotations)
+        {
+            var existing = _outputs.FirstOrDefault(output => output.IsVisible
+                && string.Equals(output.DisplayId, displayId, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                board.Open();
+                foreach (var other in _outputs.Where(output => output.IsVisible
+                    && string.Equals(output.DisplayId, displayId, StringComparison.OrdinalIgnoreCase)))
+                    other.ShowAudienceInk();
+                existing.OpenAnnotationTools();
+                existing.Activate();
+                return existing;
+            }
+        }
+        var output = new OutputWindow(_publishedEngine, _scorebug, _preferences.Theme, _playback, displayId, annotations, board)
         {
             Title = $"ScorePlus — {_scorebug.FindDisplay(displayId)?.Name ?? "Program"} Audience Output"
         };
         _outputs.Add(output);
         output.Closed += (_, _) => _outputs.Remove(output);
         output.Show();
+        if (string.Equals(displayId, _program.DisplayId, StringComparison.OrdinalIgnoreCase))
+            output.PrepareTransition(_program.Layout);
+        if (annotations)
+        {
+            foreach (var other in _outputs.Where(candidate => !ReferenceEquals(candidate, output) && candidate.IsVisible
+                && string.Equals(candidate.DisplayId, displayId, StringComparison.OrdinalIgnoreCase)))
+                other.ShowAudienceInk();
+        }
+        else if (board.IsOpen)
+        {
+            output.ShowAudienceInk();
+        }
         // Cascade each new window instead of stacking it exactly on top of the last one, so every
         // output opened this session stays visibly on screen. Position is only known after Show.
         var step = 32 * (_outputs.Count - 1);
@@ -1047,7 +1468,100 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
     void EngineChanged()
     {
         ReplayBoothHistory.Sample(_engine.State);
+        CheckAutoHorns();
+        RefreshEndGameButton();
+        // New series can ask to go on air by itself; publish the whole staged state in that case.
+        var publishRequested = _engine.TakePublishRequest();
+        if (_engine.MacroOutputHold) return;
+        if (publishRequested) { PublishGameState(); return; }
         if (_liveScoreClock) PublishLiveValues();
+    }
+
+    /// <summary>
+    /// Sounds the selected horn when a running game or play clock reaches zero. The edge is what
+    /// matters: a clock loaded at zero or stopped by hand must not fire.
+    /// </summary>
+    void CheckAutoHorns()
+    {
+        var state = _engine.State;
+        if (!_autoHornReady)
+        {
+            _autoHornReady = true;
+            _lastGameClock = state.ClockSeconds;
+            _lastPlayClock = state.PlayClockSeconds;
+            _lastGameClockRunning = state.ClockRunning;
+            _lastPlayClockRunning = state.PlayClockRunning;
+            return;
+        }
+        var gameExpired = _preferences.HornOnGameClockZero
+            && !state.ClockCountsUp
+            && state.ClockSeconds == 0
+            && _lastGameClock > 0
+            && _lastGameClockRunning
+            && !state.ClockRunning;
+        var playExpired = _preferences.HornOnPlayClockZero
+            && state.PlayClockSeconds == 0
+            && _lastPlayClock > 0
+            && _lastPlayClockRunning
+            && !state.PlayClockRunning;
+        if (gameExpired || playExpired)
+            HornPlayer.Play(_preferences.HornSound, _preferences.HornCustomPath);
+        _lastGameClock = state.ClockSeconds;
+        _lastPlayClock = state.PlayClockSeconds;
+        _lastGameClockRunning = state.ClockRunning;
+        _lastPlayClockRunning = state.PlayClockRunning;
+    }
+
+    /// <summary>The header button follows the game: End Game until the final, then Restart Game.</summary>
+    void RefreshEndGameButton()
+    {
+        if (EndGameButton is null) return;
+        var final = _engine.State.GameEnded && _engine.State.RecordSettled;
+        var content = final ? "Restart Game" : "End Game";
+        if (!Equals(EndGameButton.Content, content)) EndGameButton.Content = content;
+        EndGameButton.ToolTip = final
+            ? "Start the same game over: the score, clocks and game stats reset; the teams, records and design stay"
+            : _engine.State.GameEnded
+                ? "Add this final result to each team's record"
+                : "Stop every clock, mark the game final and add the result to each team's record";
+    }
+
+    /// <summary>
+    /// Ends the game on command, for a game called before the clock expires. A settled final
+    /// restarts the same fixture instead of ending it a second time.
+    /// </summary>
+    void EndGame_Click(object sender, RoutedEventArgs e)
+    {
+        if (_engine.State.GameEnded && _engine.State.RecordSettled)
+        {
+            if (!ConfirmWindow.Ask(this, _preferences.Theme, "RESTART GAME",
+                "Start the same game over? The score, clocks, period and stats reset while the teams and design stay.",
+                "Start fresh")) return;
+            if (_engine.RestartGame())
+            {
+                _publishedEngine.LoadFromState(_engine.CloneState());
+                _program.Sync();
+                ResetOutputToCurrentGame();
+                _savedStateJson = _engine.ExportJson();
+                StatusText.Text = "GAME RESTARTED · same teams, fresh score and clock";
+                AutoSave();
+            }
+            return;
+        }
+        var homeRecord = _engine.State.HomeRecord;
+        var awayRecord = _engine.State.AwayRecord;
+        var settledBefore = _engine.State.RecordSettled;
+        if (!_engine.EndGame())
+        {
+            StatusText.Text = "GAME ENDED · start a New Game to play again";
+            return;
+        }
+        StatusText.Text = _engine.State.ClockMessage == GameClockMessage.EndOfRegulation
+            ? "TIED · END OF REG. · advance to overtime or choose a tie rule in Preferences"
+            : homeRecord != _engine.State.HomeRecord || awayRecord != _engine.State.AwayRecord
+                ? "GAME ENDED · team records updated"
+                : settledBefore ? "GAME ENDED · records were already updated" : "GAME ENDED · no team records were set";
+        AutoSave();
     }
 
     void PublishLiveValues()
@@ -1075,6 +1589,51 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         SaveGameTo(dialog.FileName);
     }
 
+    /// <summary>Copies the live quick buttons into the game state so they travel with the save.</summary>
+    void CaptureQuickButtons()
+    {
+        _macroDock?.CommitPendingEdits();
+        var preferences = PreferencesStore.Load();
+        _engine.State.QuickLayouts = (preferences.QuickLayouts ?? []).Select(binding => new SavedQuickLayout
+        {
+            Label = binding.Label,
+            DisplayId = binding.DisplayId,
+            LayoutId = binding.LayoutId
+        }).ToList();
+        _engine.State.QuickMedia = (preferences.QuickMedia ?? []).Select(binding => new SavedQuickMedia
+        {
+            Label = binding.Label,
+            Path = binding.Path
+        }).ToList();
+        _engine.State.QuickButtonsSaved = true;
+    }
+
+    /// <summary>Restores the quick buttons a loaded game carried, and refreshes both bars.</summary>
+    void ApplySavedQuickButtons()
+    {
+        var layouts = _engine.State.QuickLayouts ?? [];
+        var media = _engine.State.QuickMedia ?? [];
+        // A save from before this feature carries neither list; keep the operator's current buttons.
+        if (!_engine.State.QuickButtonsSaved && layouts.Count == 0 && media.Count == 0) return;
+        var preferences = PreferencesStore.Load();
+        preferences.QuickLayouts = layouts.Select(binding => new QuickLayoutBinding
+        {
+            Label = binding.Label,
+            DisplayId = binding.DisplayId,
+            LayoutId = binding.LayoutId
+        }).ToList();
+        preferences.QuickMedia = media.Select(binding => new QuickMediaBinding
+        {
+            Label = binding.Label,
+            Path = binding.Path
+        }).ToList();
+        PreferencesStore.Save(preferences);
+        _preferences.QuickLayouts = preferences.QuickLayouts;
+        _preferences.QuickMedia = preferences.QuickMedia;
+        _quickLayouts?.Refresh();
+        _quickMedia?.Refresh();
+    }
+
     /// <summary>Writes the game and remembers that this is now the saved state.</summary>
     bool SaveGameTo(string path)
     {
@@ -1082,6 +1641,7 @@ public partial class MainWindow : Window, IControlPanelHost, IRemoteDisplayHost
         {
             // A macro being typed is part of the game too; commit it before writing the file.
             _macroDock?.CommitPendingEdits();
+            CaptureQuickButtons();
             // The game travels with its screens: every display, every layout and what each one has
             // on air, so opening the file puts the show back exactly where it was left.
             _engine.Save(path, _scorebug.ExportDocument());

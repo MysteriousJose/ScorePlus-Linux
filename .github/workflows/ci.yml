@@ -38,6 +38,16 @@ jobs:
       - name: every upstream source file is present or deliberately deferred
         run: python3 scripts/check-port-ledger.py
 
+  display-studio:
+    name: display studio surface
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # The headless UI suite drives the real window; this static pass also pins the text it cannot
+      # reach (README headings, the live-layout picker) and keeps the old Scorebug Studio name out.
+      - name: names, Motions grouping and button labels are current
+        run: python3 scripts/check-display-studio.py
+
   suites:
     name: suites (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -74,8 +84,9 @@ jobs:
 
   packages:
     name: build, package, boot
-    # A package is only worth building when every OS passed the same three suites.
-    needs: suites
+    # A package is only worth building when every OS passed the same three suites and the studio
+    # surface still carries its current names and Motions grouping.
+    needs: [suites, display-studio]
     runs-on: ubuntu-24.04
     env:
       # Ubuntu 24.04 runners ship libfuse3, and the AppImage runtime wants libfuse2. Extract-and-run

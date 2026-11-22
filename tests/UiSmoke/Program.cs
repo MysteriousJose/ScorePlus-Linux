@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
 using Avalonia.Headless;
@@ -57,6 +58,8 @@ internal static class Program
             MainWindow.WarnOnSportSwitch = false;
 
             ExitPromptChecks();
+            ScreenFitChecks();
+            ResponsiveLayoutChecks(temps);
             PaintTextureChecks(temps);
             ShellChecks();
             ControlPanelChecks();
@@ -64,6 +67,7 @@ internal static class Program
             LeagueCloudChecks();
             MacroChecks(temps);
             StudioChecks(temps);
+            StudioFeatureChecks(temps);
             WindowCatalogChecks(temps);
             MediaBackendChecks(temps);
             PortedFeatureChecks(temps);
@@ -136,6 +140,387 @@ internal static class Program
         picker.Close();
         Console.WriteLine("PASS: dialogs are the app's own themed windows");
     }
+
+    static void ScreenFitChecks()
+    {
+        // The pure fit arithmetic at every size in the support matrix. The design window is the
+        // main console: 1520×980 requested, 900×600 minimum.
+        static void Fits(double width, double height, double expectedWidth, double expectedHeight,
+            double expectedMinWidth, double expectedMinHeight)
+        {
+            var fit = ScreenFit.ComputeFit(new Size(width, height), new Size(900, 600), new Size(1520, 980));
+            Check(fit.MaxWidth == width && fit.MaxHeight == height
+                && fit.Width == expectedWidth && fit.Height == expectedHeight
+                && fit.MinWidth == expectedMinWidth && fit.MinHeight == expectedMinHeight,
+                $"a {width:0}×{height:0} work area fits the console to {expectedWidth:0}×{expectedHeight:0}");
+        }
+
+        Fits(1920, 1080, 1520, 980, 900, 600);
+        Fits(1600, 900, 1520, 900, 900, 600);
+        Fits(1366, 768, 1366, 768, 900, 600);
+        Fits(2560, 1080, 1520, 980, 900, 600);
+        // 150% scaling is the common laptop case: 1920×1080 and 1280×720 arrive here as the
+        // logical sizes 1280×720 and 853×480.
+        Fits(1280, 720, 1280, 720, 900, 600);
+        Fits(1024, 600, 1024, 600, 900, 600);
+        Fits(853, 480, 853, 480, 853, 480);
+        Fits(1080, 1920, 1080, 980, 900, 600);
+
+        var auto = ScreenFit.ComputeFit(new Size(853, 480), new Size(900, 600), new Size(double.NaN, double.NaN));
+        Check(double.IsNaN(auto.Width) && double.IsNaN(auto.Height) && auto.MaxWidth == 853 && auto.MaxHeight == 480,
+            "an auto-sized window keeps its auto size and is capped by the maximum bounds");
+
+        // The checkpoint: a real main window on a simulated 853×480 work area must be able to
+        // shrink into it rather than staying at its 900 px design minimum.
+        var main = new MainWindow(LaunchMode.New) { Width = 1520, Height = 980 };
+        ScreenFit.ApplyTo(main, new Size(853, 480), maximized: false);
+        Check(main.MinWidth <= 853 && main.MinHeight <= 480,
+            "the main window's minimums clamp down into an 853×480 work area");
+        Check(main.Width <= 853 && main.Height <= 480,
+            "the main window's size is capped to an 853×480 work area");
+        main.Close();
+        Console.WriteLine("PASS: windows fit small, portrait and scaled work areas");
+    }
+
+    /// <summary>
+    /// The support matrix as a live layout contract: at every size the windows are opened at, no
+    /// window outgrows its work area, header actions wrap instead of covering the brand or each
+    /// other, the publish bar stays pinned, and every visible control is either on screen or inside
+    /// a scroll region that can reach it. Checks are scoped to named containers so intentional
+    /// overlays and hidden tabs never count as failures.
+    /// </summary>
+    static void ResponsiveLayoutChecks(List<string> temps)
+    {
+        (double Width, double Height)[] sizes =
+        [
+            (1920, 1080), (1600, 900), (1366, 768), (1280, 720),
+            (1024, 600), (2560, 1080), (1080, 1920)
+        ];
+
+        var prefs = new UserPreferences { Theme = "Dark" };
+        var engine = new GameEngine();
+        engine.NewGame("football");
+        // The launcher only shows its autosave list when it has a recovery point to list.
+        AutosaveStore.Save(engine);
+        var main = new MainWindow(LaunchMode.New) { Width = 1520, Height = 980 };
+        // The real detached panel, with a program: a bare test host hides the preview strip
+        // entirely, which would leave the short-window fold untested.
+        var catalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var session = new MediaSession(prefs);
+        var panel = new GameControlWindow(engine, engine, catalog,
+            () => { }, () => false, _ => { }, () => true, session, "Dark") { Width = 1360, Height = 985 };
+        var launcher = new LauncherWindow();
+        var settings = new SettingsWindow(prefs);
+        foreach (var window in new Window[] { main, panel, launcher, settings })
+        {
+            window.Show();
+            window.UpdateLayout();
+        }
+
+        foreach (var (width, height) in sizes)
+        {
+            var label = $"{width:0}×{height:0}";
+
+            FitWindow(main, new Size(width, height), new Size(width, height));
+            CheckWindowFits(main, new Size(width, height), $"the main window at {label}");
+            CheckMainShell(main, width, height, label);
+
+            FitWindow(panel, new Size(width, height), new Size(width, height));
+            CheckWindowFits(panel, new Size(width, height), $"the detached panel at {label}");
+            CheckDetachedPanel(panel, width, height, label);
+
+            FitWindow(launcher, new Size(700, 580), DialogArea(width, height));
+            CheckWindowFits(launcher, DialogArea(width, height), $"the launcher at {label}");
+            CheckLauncher(launcher, label);
+
+            FitWindow(settings, new Size(560, 900), DialogArea(width, height));
+            CheckWindowFits(settings, DialogArea(width, height), $"preferences at {label}");
+            CheckPreferences(settings, label);
+        }
+
+        // The scroll-friendly floor, and the 150%-on-720p case where the work area is smaller than
+        // the window's own design minimum. This is where the rail goes compact and then overlay.
+        foreach (var (width, height) in new[] { (900.0, 600.0), (853.0, 480.0) })
+        {
+            var label = $"{width:0}×{height:0}";
+            FitWindow(main, new Size(width, height), new Size(width, height));
+            CheckWindowFits(main, new Size(width, height), $"the main window at the {label} floor");
+            CheckMainShell(main, width, height, label + " floor");
+        }
+
+        // Every console tab still reaches its controls at the compact floor.
+        FitWindow(main, new Size(1024, 600), new Size(1024, 600));
+        foreach (var (tab, host) in new[]
+                 {
+                     ("MediaTab", "MediaControl"), ("RosterTab", "RosterControl"),
+                     ("MacrosTab", "MacroHost"), ("ControlTab", "ControlHost")
+                 })
+        {
+            Click(main.FindName(tab) as Button);
+            main.UpdateLayout();
+            var surface = main.FindName(host) as Control
+                ?? throw new Exception($"FAIL: the {tab} has no host");
+            Check(surface.IsVisible, $"the {tab} is the visible console tab at 1024×600");
+            CheckVisibleControlsUsable(surface, main, $"{tab} at 1024×600");
+        }
+
+        settings.Close();
+        launcher.Close();
+        panel.Close();
+        session.Dispose();
+        main.Close();
+        Console.WriteLine("PASS: every operator window fits and stays usable across the support matrix");
+    }
+
+    /// <summary>Sizes a window through the same arithmetic a monitor change uses, then lays it out.</summary>
+    static void FitWindow(Window window, Size desired, Size workArea)
+    {
+        window.Width = desired.Width;
+        window.Height = desired.Height;
+        ScreenFit.ApplyTo(window, workArea, maximized: false);
+        window.UpdateLayout();
+        Pump(TimeSpan.FromMilliseconds(10));
+        window.UpdateLayout();
+    }
+
+    /// <summary>The work area a fixed-size dialog is fitted into, leaving ScreenFit's own margin.</summary>
+    static Size DialogArea(double width, double height)
+        => new(Math.Max(320, width - 2 * ScreenFit.DialogMargin),
+               Math.Max(240, height - 2 * ScreenFit.DialogMargin));
+
+    static void CheckWindowFits(Window window, Size workArea, string message)
+    {
+        Check(window.Width <= workArea.Width + Slack && window.Height <= workArea.Height + Slack
+              && window.Bounds.Width <= workArea.Width + 2 && window.Bounds.Height <= workArea.Height + 2,
+            message + " never opens wider or taller than the work area");
+        Check(window.MinWidth <= workArea.Width + Slack && window.MinHeight <= workArea.Height + Slack,
+            message + " can shrink into the work area");
+        CheckVisibleControlsUsable(window, window, message);
+    }
+
+    /// <summary>
+    /// Every visible button, picker and field has a real hit area, and anything outside the window
+    /// is inside a scroller that can actually reach it. Controls inside a scroll bar itself are
+    /// skipped: those are chrome, not operator actions.
+    /// </summary>
+    static void CheckVisibleControlsUsable(Visual root, Window viewport, string label)
+    {
+        var width = viewport.Bounds.Width;
+        var height = viewport.Bounds.Height;
+        var problems = new List<string>();
+        foreach (var control in VisibleInteractive(root))
+        {
+            var name = Describe(control);
+            // The media desk's scrub bar uses transparent RepeatButtons as pointer targets; they
+            // may legitimately be empty when nothing is on air, so they are not operator actions.
+            if (control is not RepeatButton && (control.Bounds.Width <= 0 || control.Bounds.Height <= 0))
+                problems.Add($"{name} has no hit area");
+            var rect = RectIn(control, viewport);
+            if ((rect.Top < -Slack || rect.Bottom > height + Slack) && !HasScroller(control, vertical: true))
+                problems.Add($"{name} is off screen without a vertical scroller");
+            if ((rect.Left < -Slack || rect.Right > width + Slack) && !HasScroller(control, vertical: false))
+                problems.Add($"{name} is off screen without a horizontal scroller");
+        }
+        CheckNoProblems(problems, $"{label}: every visible control is on screen or in a scroller");
+    }
+
+    static void CheckMainShell(MainWindow main, double width, double height, string label)
+    {
+        var top = Named<Border>(main, "TopBar");
+        var topGrid = (Grid)top.Child!;
+        var brand = topGrid.Children[0];
+        var actions = (Panel)topGrid.Children[1];
+        CheckNoOverlap(brand, actions, top, $"{label}: top-bar actions never cover the brand");
+        CheckButtonsInside(actions, top, $"{label}: top-bar actions stay inside their bar");
+        CheckButtonOverlaps(actions, $"{label}: top-bar buttons wrap instead of overlapping");
+
+        var second = Named<Border>(main, "SecondBar");
+        var secondGrid = (Grid)second.Child!;
+        CheckNoOverlap(secondGrid.Children[0], secondGrid.Children[1], second,
+            $"{label}: setup actions never cover the game fields");
+        var setup = (Panel)secondGrid.Children[1];
+        CheckButtonsInside(setup, second, $"{label}: setup actions stay inside their bar");
+        CheckButtonOverlaps(setup, $"{label}: setup buttons wrap instead of overlapping");
+
+        // A short window scrolls the whole workspace; a tall one lets the star rows fill it.
+        var scrolling = Named<ScrollViewer>(main, "WorkspaceScroller").VerticalScrollBarVisibility
+                        != Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+        Check(scrolling == (height < 900),
+            $"{label}: the workspace {(height < 900 ? "scrolls in a short window" : "fills a tall window")}");
+
+        // The rail narrows before it overlaps the console, and folds into a header toggle on the
+        // smallest work areas rather than disappearing from reach.
+        var rail = Named<Border>(main, "RailHost");
+        var toggle = Named<Button>(main, "RailToggleButton");
+        var railColumn = Named<Grid>(main, "Workspace").ColumnDefinitions[0];
+        if (width < 860)
+            Check(toggle.IsVisible && !rail.IsVisible && railColumn.Width.Value == 0,
+                $"{label}: the rail folds behind its header toggle below 860 px");
+        else if (width < 980)
+            Check(!toggle.IsVisible && Math.Abs(railColumn.Width.Value - 240) < 0.5,
+                $"{label}: the rail narrows to 240 px at the compact tier");
+        else
+            Check(!toggle.IsVisible && rail.IsVisible, $"{label}: the rail stays beside the console");
+
+        CheckPublishBar(main.Panel, $"{label}: main console");
+    }
+
+    static void CheckDetachedPanel(GameControlWindow panel, double width, double height, string label)
+    {
+        // A narrow panel drops the duplicate audience column; a short one folds the preview behind
+        // one toggle so the console and its tabs keep the room.
+        Check(Named<Control>(panel, "AudiencePanel").IsVisible == (width >= 1050),
+            $"{label}: the detached panel shows its audience column only on a wide window");
+        Check(Named<Button>(panel, "PreviewToggle").IsVisible == (height < 760),
+            $"{label}: the detached panel folds its preview on a short window");
+        CheckPublishBar(panel.Panel, $"{label}: detached console");
+    }
+
+    static void CheckLauncher(LauncherWindow launcher, string label)
+    {
+        var problems = new List<string>();
+        foreach (var name in new[] { "NewGameButton", "OpenGameButton", "AutosaveList" })
+        {
+            var control = Named<Control>(launcher, name);
+            if (!control.IsEffectivelyVisible) problems.Add($"{name} is hidden");
+            var rect = RectIn(control, launcher);
+            if (rect.Left < -Slack || rect.Top < -Slack
+                || rect.Right > launcher.Bounds.Width + Slack || rect.Bottom > launcher.Bounds.Height + Slack)
+                problems.Add($"{name} is cropped by the window");
+        }
+        CheckNoProblems(problems, $"{label}: the launcher keeps its way in and its autosaves reachable");
+    }
+
+    static void CheckPreferences(SettingsWindow settings, string label)
+    {
+        var problems = new List<string>();
+        foreach (var text in new[] { "Save", "Cancel" })
+        {
+            var button = ButtonByContent(settings, text)
+                ?? throw new Exception($"FAIL: preferences has no {text} button");
+            if (!button.IsEffectivelyVisible) problems.Add($"{text} is hidden");
+            var rect = RectIn(button, settings);
+            if (rect.Left < -Slack || rect.Top < -Slack
+                || rect.Right > settings.Bounds.Width + Slack || rect.Bottom > settings.Bounds.Height + Slack)
+                problems.Add($"{text} is cropped by the window");
+        }
+        CheckNoProblems(problems, $"{label}: preferences keeps its Save and Cancel actions reachable");
+
+        // A 900 px page cannot be shown uncropped on a short screen; its scroller has to carry it.
+        if (settings.Height < 900)
+        {
+            var scroller = All<ScrollViewer>(settings).First();
+            Check(scroller.Extent.Height > scroller.Viewport.Height,
+                $"{label}: preferences scroll instead of clipping a short window");
+        }
+    }
+
+    static void CheckPublishBar(ControlPanelView panel, string label)
+    {
+        var problems = new List<string>();
+        foreach (var name in new[]
+                 {
+                     "HornButton", "StagedText", "LayoutPrevButton", "LayoutNextButton",
+                     "LiveOutputToggle", "UpdateButton"
+                 })
+        {
+            var control = panel.FindName(name) as Control
+                ?? throw new Exception($"FAIL: the console has no {name}");
+            if (!control.IsEffectivelyVisible) problems.Add($"{name} is hidden");
+            var rect = RectIn(control, panel);
+            if (rect.Left < -Slack || rect.Top < -Slack
+                || rect.Right > panel.Bounds.Width + Slack || rect.Bottom > panel.Bounds.Height + Slack)
+                problems.Add($"{name} leaves the console");
+        }
+        CheckNoProblems(problems, $"{label}: Live and Update Output stay pinned at every size");
+    }
+
+    static void CheckNoProblems(List<string> problems, string message)
+        => Check(problems.Count == 0, problems.Count == 0 ? message : $"{message}: {string.Join("; ", problems.Take(3))}");
+
+    static void CheckNoOverlap(Visual left, Visual actions, Visual space, string message)
+    {
+        var leftRect = RectIn(left, space);
+        foreach (var button in All<Button>(actions).Where(button => button.IsEffectivelyVisible))
+            Check(!Overlaps(leftRect, RectIn(button, space)), message);
+    }
+
+    static void CheckButtonsInside(Panel actions, Visual bar, string message)
+    {
+        foreach (var button in All<Button>(actions).Where(button => button.IsEffectivelyVisible))
+            CheckInside(button, bar, message);
+    }
+
+    static void CheckButtonOverlaps(Panel actions, string message)
+    {
+        var rects = actions.Children.OfType<Button>()
+            .Where(button => button.IsEffectivelyVisible)
+            .Select(button => RectIn(button, actions))
+            .ToArray();
+        for (var first = 0; first < rects.Length; first++)
+            for (var second = first + 1; second < rects.Length; second++)
+                Check(!Overlaps(rects[first], rects[second]), message);
+    }
+
+    static void CheckInside(Visual control, Visual container, string message)
+    {
+        var rect = RectIn(control, container);
+        Check(rect.Left >= -Slack && rect.Top >= -Slack
+              && rect.Right <= container.Bounds.Width + Slack
+              && rect.Bottom <= container.Bounds.Height + Slack, message);
+    }
+
+    static Rect RectIn(Visual child, Visual ancestor)
+    {
+        var origin = child.TranslatePoint(default, ancestor)
+            ?? throw new Exception("FAIL: a visible control has no position in its container");
+        return new Rect(origin, child.Bounds.Size);
+    }
+
+    static bool Overlaps(Rect first, Rect second)
+    {
+        var overlapX = Math.Min(first.Right, second.Right) - Math.Max(first.Left, second.Left);
+        var overlapY = Math.Min(first.Bottom, second.Bottom) - Math.Max(first.Top, second.Top);
+        return overlapX > 0.5 && overlapY > 0.5;
+    }
+
+    static IEnumerable<Control> VisibleInteractive(Visual root)
+        => root.GetVisualDescendants().OfType<Control>()
+            .Where(control => control.IsEffectivelyVisible)
+            .Where(control => control is Button or ComboBox or TextBox or ListBox or Slider)
+            .Where(control => !HasAncestor<ScrollBar>(control));
+
+    static bool HasScroller(Visual control, bool vertical)
+    {
+        for (var parent = control.GetVisualParent(); parent is not null; parent = parent.GetVisualParent())
+        {
+            if (parent is not ScrollViewer scroller) continue;
+            var mode = vertical
+                ? scroller.VerticalScrollBarVisibility
+                : scroller.HorizontalScrollBarVisibility;
+            if (mode != Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled) return true;
+        }
+        return false;
+    }
+
+    static bool HasAncestor<T>(Visual visual) where T : Visual
+    {
+        for (var parent = visual.GetVisualParent(); parent is not null; parent = parent.GetVisualParent())
+            if (parent is T) return true;
+        return false;
+    }
+
+    static T Named<T>(Control root, string name) where T : Control
+        => root.FindName(name) as T ?? throw new Exception($"FAIL: {name} is missing");
+
+    static string Describe(Control control)
+    {
+        var text = control is Button button ? button.Content as string : null;
+        var name = string.IsNullOrEmpty(control.Name) ? control.GetType().Name : control.Name;
+        return string.IsNullOrEmpty(text) ? name : $"{name} ('{text}')";
+    }
+
+    const double Slack = 1.5;
 
     static void DialogChecks()
     {
@@ -474,6 +859,15 @@ internal static class Program
         var studio = new ScorebugEditorWindow(catalog, engine) { Width = 1500, Height = 900 };
         studio.Show();
         studio.UpdateLayout();
+        Check(studio.Title == "ScorePlus — Display Studio"
+              && All<TextBlock>(studio).Any(text => (text.Text ?? "").Contains("DISPLAY STUDIO", StringComparison.Ordinal)),
+            "the studio window and its header call it Display Studio");
+        Check((((Button)studio.FindName("LayerFrontButton")!).Content as string) == "▲ To front"
+              && (((Button)studio.FindName("LayerBackButton")!).Content as string) == "▼ To back"
+              && (((Button)studio.FindName("CopyTextSizeButton")!).Content as string) == "Copy"
+              && (((Button)studio.FindName("PasteTextSizeButton")!).Content as string) == "Paste"
+              && All<Button>(studio).Any(button => (button.Content as string) == "Transition builder…"),
+            "the layer, text-size and transition buttons use the current Display Studio names");
 
         var layers = (ListBox)studio.FindName("Layers")!;
         var nameInput = (TextBox)studio.FindName("NameInput")!;
@@ -573,6 +967,220 @@ internal static class Program
         Check(ButtonByContent(studio, "Move to…") is not null && ButtonByContent(studio, "Copy to…") is not null,
             "the studio can move or copy a layout to another display");
 
+        // Typography and format switches write straight through to the selected element.
+        var alignBox = (ComboBox)studio.FindName("TextAlignInput")!;
+        alignBox.SelectedItem = ScorebugTextAlign.Right;
+        studio.UpdateLayout();
+        Check(catalog.Layout.Elements[textIndex].TextAlign == ScorebugTextAlign.Right,
+            "text alignment is stored on the element");
+        var downCaps = (CheckBox)studio.FindName("DownCapsInput")!;
+        downCaps.IsChecked = true;
+        var playClockColon = (CheckBox)studio.FindName("PlayClockColonInput")!;
+        playClockColon.IsChecked = true;
+        var clockLeadingZero = (CheckBox)studio.FindName("GameClockLeadingZeroInput")!;
+        clockLeadingZero.IsChecked = false;
+        studio.UpdateLayout();
+        Check(catalog.Layout.Elements[textIndex].DownCaps
+              && catalog.Layout.Elements[textIndex].PlayClockColon
+              && !catalog.Layout.Elements[textIndex].GameClockLeadingZero,
+            "the down, play-clock and game-clock formats are stored per element");
+        var tickerSwitch = (CheckBox)studio.FindName("TickerInput")!;
+        var tickerOptions = (Control)studio.FindName("TickerOptionsPanel")!;
+        tickerSwitch.IsChecked = true;
+        studio.UpdateLayout();
+        Check(tickerOptions.IsVisible && catalog.Layout.Elements[textIndex].Ticker,
+            "turning on the ticker reveals its speed and direction");
+        var tickerSpeed = (TextBox)studio.FindName("TickerSpeedInput")!;
+        tickerSpeed.Text = "140";
+        Press(tickerSpeed, Key.Enter);
+        studio.UpdateLayout();
+        Check(Math.Abs(catalog.Layout.Elements[textIndex].TickerSpeed - 140) < 0.01,
+            "the ticker speed is stored on the element");
+        var shadowSwitch = (CheckBox)studio.FindName("TextShadowInput")!;
+        shadowSwitch.IsChecked = true;
+        var shadowColor = (TextBox)studio.FindName("TextShadowColorInput")!;
+        shadowColor.Text = "#FF102030";
+        var shadowOffset = (TextBox)studio.FindName("TextShadowOffsetInput")!;
+        shadowOffset.Text = "7";
+        Press(shadowOffset, Key.Enter);
+        studio.UpdateLayout();
+        var shadowed = catalog.Layout.Elements[textIndex];
+        Check(shadowed.TextShadow && shadowed.TextShadowColor == "#FF102030"
+              && Math.Abs(shadowed.TextShadowOffset - 7) < 0.01,
+            "a text shadow stores its switch, colour and offset");
+
+        // Icon artwork carries its own fill, border, colours, scale and value binding.
+        var iconPicker = (ComboBox)studio.FindName("IconInput")!;
+        var iconLook = (Control)studio.FindName("IconLookPanel")!;
+        var iconScale = (Control)studio.FindName("IconScalePanel")!;
+        var madeIconPicker = (ComboBox)studio.FindName("IconCustomInput")!;
+        iconPicker.SelectedItem = ScorebugIcon.TimeoutBars;
+        studio.UpdateLayout();
+        Check(iconLook.IsVisible && iconScale.IsVisible && !madeIconPicker.IsVisible,
+            "a timeout icon reveals its fill, border and size controls, not the made-icon picker");
+        ((TextBox)studio.FindName("IconBorderWidthInput")!).Text = "3";
+        ((TextBox)studio.FindName("IconBorderColorInput")!).Text = "#FF112233";
+        ((TextBox)studio.FindName("IconUsedColorInput")!).Text = "#FF445566";
+        ((TextBox)studio.FindName("IconTokenInput")!).Text = "{{PERIOD}}";
+        var iconOffset = (TextBox)studio.FindName("IconOffsetXInput")!;
+        iconOffset.Text = "12";
+        Press(iconOffset, Key.Enter);
+        studio.UpdateLayout();
+        var iconItem = catalog.Layout.Elements[textIndex];
+        Check(Math.Abs(iconItem.IconBorderThickness - 3) < 0.01
+              && iconItem.IconBorderColor == "#FF112233"
+              && iconItem.IconUsedColor == "#FF445566"
+              && iconItem.IconToken == "{{PERIOD}}"
+              && Math.Abs(iconItem.IconOffsetX - 12) < 0.01,
+            "icon border, used-timeout colour, token and offset are stored on the element");
+        ((Slider)studio.FindName("IconOpacitySlider")!).Value = 40;
+        studio.UpdateLayout();
+        Check(Math.Abs(catalog.Layout.Elements[textIndex].IconOpacity - 0.4) < 0.01,
+            "icon opacity is stored on the element");
+        iconPicker.SelectedItem = ScorebugIcon.Custom;
+        studio.UpdateLayout();
+        Check(madeIconPicker.IsVisible, "choosing a made icon reveals the icon picker");
+        iconPicker.SelectedItem = ScorebugIcon.PossessionArrow;
+        studio.UpdateLayout();
+        var arrowDown = (CheckBox)studio.FindName("IconArrowDownInput")!;
+        Check(arrowDown.IsVisible, "a possession arrow offers the downward direction");
+        arrowDown.IsChecked = true;
+        studio.UpdateLayout();
+        Check(catalog.Layout.Elements[textIndex].IconArrowDown,
+            "a possession arrow can be pointed down");
+
+        // A falling value can use its own crossing, and the special crossings expose their tuning.
+        var downSwitch = (CheckBox)studio.FindName("DownTransitionInput")!;
+        downSwitch.IsChecked = true;
+        ((ComboBox)studio.FindName("TransitionDownInput")!).SelectedItem = ScorebugTransition.SlideUp;
+        var downSpeed = (TextBox)studio.FindName("TransitionDownSpeedInput")!;
+        downSpeed.Text = "1.2";
+        Press(downSpeed, Key.Enter);
+        studio.UpdateLayout();
+        Check(catalog.Layout.Elements[textIndex].TransitionDown == ScorebugTransition.SlideUp
+              && Math.Abs((catalog.Layout.Elements[textIndex].TransitionDownSeconds ?? -1) - 1.2) < 0.01,
+            "a separate down transition and speed are stored on the element");
+        var transitionPicker = (ComboBox)studio.FindName("TransitionInput")!;
+        var shrinkPanel = (Control)studio.FindName("ShrinkAnimationPanel")!;
+        var jumpPanel = (Control)studio.FindName("JumpAnimationPanel")!;
+        transitionPicker.SelectedItem = ScorebugTransition.ShrinkWheel;
+        studio.UpdateLayout();
+        Check(shrinkPanel.IsVisible && !jumpPanel.IsVisible,
+            "Shrink Wheel reveals only its shrink amount");
+        var shrinkBox = (TextBox)studio.FindName("TransitionShrinkInput")!;
+        shrinkBox.Text = "0.6";
+        Press(shrinkBox, Key.Enter);
+        Check(Math.Abs(catalog.Layout.Elements[textIndex].TransitionShrink - 0.6) < 0.01,
+            "the shrink amount is stored on the element");
+        transitionPicker.SelectedItem = ScorebugTransition.JumpFlip;
+        studio.UpdateLayout();
+        Check(jumpPanel.IsVisible && !shrinkPanel.IsVisible,
+            "Jump Flip reveals only its jump tuning");
+        var jumpHeight = (TextBox)studio.FindName("TransitionJumpHeightInput")!;
+        jumpHeight.Text = "55";
+        ((ComboBox)studio.FindName("TransitionJumpDirectionInput")!).SelectedIndex = 2;
+        Press(jumpHeight, Key.Enter);
+        studio.UpdateLayout();
+        Check(Math.Abs(catalog.Layout.Elements[textIndex].TransitionJumpHeight - 55) < 0.01
+              && catalog.Layout.Elements[textIndex].TransitionJumpDirection == ScorebugJumpDirection.DownToUp,
+            "jump height and direction are stored on the element");
+        var onlyChanges = (CheckBox)studio.FindName("OnlyChangesInput")!;
+        onlyChanges.IsChecked = false;
+        studio.UpdateLayout();
+        Check(!catalog.Layout.OnlyAnimateChanges,
+            "Only animate changes writes the layout preference");
+
+        // Layer order can move one step at a time, not just all the way front or back.
+        var stepCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var stepStudio = new ScorebugEditorWindow(stepCatalog, engine);
+        stepStudio.Show();
+        stepStudio.UpdateLayout();
+        var stepLayers = (ListBox)stepStudio.FindName("Layers")!;
+        var stepBefore = stepCatalog.Layout.Elements.Select(element => element.Id).ToArray();
+        stepLayers.SelectedIndex = 1;
+        stepStudio.UpdateLayout();
+        var stepped = stepCatalog.Layout.Elements[^2];
+        Click((Button)stepStudio.FindName("LayerForwardButton")!);
+        stepStudio.UpdateLayout();
+        Check(stepCatalog.Layout.Elements[^1].Id == stepped.Id,
+            "Forward moves the selected element one step towards the front");
+        Click((Button)stepStudio.FindName("LayerBackwardButton")!);
+        stepStudio.UpdateLayout();
+        Check(stepCatalog.Layout.Elements.Select(element => element.Id).SequenceEqual(stepBefore),
+            "Backward returns the element one step");
+        stepStudio.Close();
+
+        // A layout can arrive on a video hand-over, with its own cut beat and key.
+        var handoverCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var handoverStudio = new ScorebugEditorWindow(handoverCatalog, engine);
+        handoverStudio.Show();
+        handoverStudio.UpdateLayout();
+        var clearVideo = (Button)handoverStudio.FindName("TransitionVideoClearButton")!;
+        var cutInput = (TextBox)handoverStudio.FindName("TransitionVideoCutInput")!;
+        var keyButton = (Button)handoverStudio.FindName("TransitionKeyButton")!;
+        handoverCatalog.Update(layout => layout.TransitionVideoPath = "/tmp/handover.mp4");
+        handoverStudio.UpdateLayout();
+        Check(clearVideo.IsVisible && cutInput.IsVisible && keyButton.IsVisible,
+            "a hand-over video reveals its cut time and key controls");
+        cutInput.Text = "1.5";
+        Press(cutInput, Key.Enter);
+        handoverStudio.UpdateLayout();
+        Check(Math.Abs(handoverCatalog.Layout.TransitionVideoCutSeconds - 1.5) < 0.01,
+            "the hand-over cut time is stored on the layout");
+        Click(clearVideo);
+        handoverStudio.UpdateLayout();
+        Check(string.IsNullOrEmpty(handoverCatalog.Layout.TransitionVideoPath) && !cutInput.IsVisible,
+            "Clear video removes the hand-over and hides its controls");
+        handoverStudio.Close();
+
+        // A logo element can stand on a custom image instead of a team logo.
+        var logoCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var logoStudio = new ScorebugEditorWindow(logoCatalog, engine);
+        logoStudio.Show();
+        logoStudio.UpdateLayout();
+        Click(ButtonByContent(logoStudio, "LOGO +"));
+        logoStudio.UpdateLayout();
+        ((ListBox)logoStudio.FindName("Layers")!).SelectedIndex = 0;
+        logoStudio.UpdateLayout();
+        var logoItem = logoCatalog.Layout.Elements[^1];
+        Check(logoItem.Kind == ScorebugElementKind.Logo, "the logo button adds a logo element");
+        logoCatalog.Update(layout =>
+        {
+            var target = layout.Elements.First(element => element.Id == logoItem.Id);
+            target.LogoSide = ScorebugLogoSide.None;
+            target.ImagePath = "/tmp/crest.png";
+        });
+        logoStudio.UpdateLayout();
+        var logoPathText = (TextBlock)logoStudio.FindName("LogoImagePathText")!;
+        Check(logoPathText.Text == "crest.png", "a custom logo image names its file");
+        Click(ButtonByContent(logoStudio, "Clear"));
+        logoStudio.UpdateLayout();
+        Check(logoCatalog.Layout.Elements.First(element => element.Id == logoItem.Id).ImagePath is null
+              && logoPathText.Text == "No custom image",
+            "Clear removes the custom logo image");
+        logoStudio.Close();
+
+        // A video element's chroma key has a swatch of the colour actually removed.
+        var chromaCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        chromaCatalog.Update(layout =>
+        {
+            layout.Elements.Clear();
+            layout.Elements.Add(new ScorebugElement
+            {
+                Name = "Clip", Kind = ScorebugElementKind.Video, X = 10, Y = 10,
+                Width = 300, Height = 170, ChromaKeyColor = "#FF00B140"
+            });
+        });
+        var chromaStudio = new ScorebugEditorWindow(chromaCatalog, engine);
+        chromaStudio.Show();
+        chromaStudio.UpdateLayout();
+        ((ListBox)chromaStudio.FindName("Layers")!).SelectedIndex = 0;
+        chromaStudio.UpdateLayout();
+        var chromaSwatch = (Border)chromaStudio.FindName("ChromaKeySwatch")!;
+        Check((chromaSwatch.Background as ISolidColorBrush)?.Color == Color.FromRgb(0, 177, 64),
+            "the chroma-key swatch paints the key colour");
+        chromaStudio.Close();
+
         // Canvas presets scale the artwork and persist.
         var firstX = catalog.Layout.Elements[0].X;
         ((ComboBox)studio.FindName("CanvasPreset")!).SelectedIndex = 1; // Full HD
@@ -646,6 +1254,175 @@ internal static class Program
             "underline and strike reach the studio canvas text");
         styleStudio.Close();
         Console.WriteLine("PASS: studio layers, multi-select, layouts, canvas presets and typography all behave");
+    }
+
+    static void StudioFeatureChecks(List<string> temps)
+    {
+        var engine = new GameEngine();
+        engine.NewGame("football");
+
+        // Undo and redo are real history, not a visual only button.
+        var historyCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var historyStudio = new ScorebugEditorWindow(historyCatalog, engine) { Width = 1500, Height = 900 };
+        historyStudio.Show();
+        historyStudio.UpdateLayout();
+        var layers = (ListBox)historyStudio.FindName("Layers")!;
+        var nameInput = (TextBox)historyStudio.FindName("NameInput")!;
+        var undo = (Button)historyStudio.FindName("UndoButton")!;
+        var redo = (Button)historyStudio.FindName("RedoButton")!;
+        layers.SelectedIndex = 0;
+        historyStudio.UpdateLayout();
+        // The layer list is front-to-back, so row zero is the last element in the layout.
+        var historyTarget = historyCatalog.Layout.Elements[^1];
+        var historyId = historyTarget.Id;
+        var originalName = historyTarget.Name;
+        nameInput.Text = "Undo probe";
+        Press(nameInput, Key.Enter);
+        historyStudio.UpdateLayout();
+        Check(undo.IsEnabled && historyTarget.Name == "Undo probe",
+            "a studio edit becomes an enabled undo step");
+        Click(undo);
+        historyStudio.UpdateLayout();
+        // Undo replaces the element list with a fresh snapshot, so follow the id rather than the
+        // instance the test held before the restore.
+        var afterUndo = historyCatalog.Layout.Elements.First(item => item.Id == historyId);
+        Check(afterUndo.Name == originalName && redo.IsEnabled,
+            "Undo restores the previous layout and enables redo");
+        Click(redo);
+        historyStudio.UpdateLayout();
+        var afterRedo = historyCatalog.Layout.Elements.First(item => item.Id == historyId);
+        Check(afterRedo.Name == "Undo probe",
+            "Redo reapplies the undone studio edit");
+
+        // The grid is a guide and Ctrl+wheel zooms the artwork without changing its size.
+        var grid = (CheckBox)historyStudio.FindName("CanvasGridInput")!;
+        var gridCanvas = (Canvas)historyStudio.FindName("GridCanvas")!;
+        grid.IsChecked = true;
+        historyStudio.UpdateLayout();
+        Check(gridCanvas.IsVisible && gridCanvas.Children.Count > 0,
+            "the studio grid draws guide lines when enabled");
+        grid.IsChecked = false;
+        historyStudio.UpdateLayout();
+        Check(!gridCanvas.IsVisible, "the studio grid disappears when disabled");
+        var frame = (Border)historyStudio.FindName("CanvasFrame")!;
+        var viewbox = (Viewbox)historyStudio.FindName("ArtworkViewbox")!;
+        var zoomText = (TextBlock)historyStudio.FindName("CanvasZoomText")!;
+        var beforeZoom = viewbox.Width;
+        var canvasPoint = frame.TranslatePoint(new Point(frame.Bounds.Width / 2, frame.Bounds.Height / 2), historyStudio)
+            ?? new Point(600, 400);
+        historyStudio.MouseWheel(canvasPoint, new Vector(0, 1), RawInputModifiers.Control);
+        historyStudio.UpdateLayout();
+        Check(viewbox.Width > beforeZoom && zoomText.Text == "110%",
+            "Ctrl+wheel zooms the studio artwork and updates its readout");
+        historyStudio.Close();
+
+        // Ticker and player-photo buttons create the ready-made parts they advertise.
+        var partsCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        var partsStudio = new ScorebugEditorWindow(partsCatalog, engine) { Width = 1500, Height = 900 };
+        partsStudio.Show();
+        partsStudio.UpdateLayout();
+        Click(ButtonByContent(partsStudio, "TICKER +"));
+        partsStudio.UpdateLayout();
+        Check(partsCatalog.Layout.Elements[^1] is { Ticker: true, Kind: ScorebugElementKind.Text },
+            "TICKER + adds an enabled scrolling ribbon");
+        Click(ButtonByContent(partsStudio, "PLAYER PHOTO +"));
+        partsStudio.UpdateLayout();
+        var photo = partsCatalog.Layout.Elements[^1];
+        Check(photo.Kind == ScorebugElementKind.Image && photo.PlayerPhotoSide == ScorebugPlayerPhotoSide.Home,
+            "PLAYER PHOTO + adds a portrait bound to the home player");
+        var photoSection = (Control)partsStudio.FindName("PlayerPhotoSection")!;
+        var photoSide = (ComboBox)partsStudio.FindName("PlayerPhotoSideInput")!;
+        Check(photoSection.IsVisible && (ScorebugPlayerPhotoSide?)photoSide.SelectedItem == ScorebugPlayerPhotoSide.Home,
+            "the player-photo properties show and carry the chosen side");
+        partsStudio.Close();
+
+        // A live-layout element exposes its source picker, rejects the current layout and persists a change.
+        var feedCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        feedCatalog.AddLayout("Source feed");
+        var sourceLayout = feedCatalog.Layouts[1];
+        feedCatalog.SelectLayout(0);
+        feedCatalog.Update(layout =>
+        {
+            layout.Elements.Clear();
+            layout.Elements.Add(new ScorebugElement
+            {
+                Name = "Live feed", Kind = ScorebugElementKind.Layout, NestedLayoutId = sourceLayout.Id,
+                X = 20, Y = 20, Width = 400, Height = 225, Content = ""
+            });
+        });
+        var feedStudio = new ScorebugEditorWindow(feedCatalog, engine) { Width = 1500, Height = 900 };
+        feedStudio.Show();
+        feedStudio.UpdateLayout();
+        ((ListBox)feedStudio.FindName("Layers")!).SelectedIndex = 0;
+        feedStudio.UpdateLayout();
+        var feedSection = (Control)feedStudio.FindName("LayoutSection")!;
+        var sourcePicker = (ComboBox)feedStudio.FindName("NestedLayoutInput")!;
+        Check(feedSection.IsVisible, "a live-layout element shows the live-layout properties");
+        Check(ButtonByContent(feedStudio, "LAYOUT +") is not null && sourcePicker.ItemCount == 2,
+            "the studio offers LAYOUT + and only legal live-layout sources");
+        sourcePicker.SelectedIndex = 0;
+        feedStudio.UpdateLayout();
+        Check(feedCatalog.Layout.Elements[0].NestedLayoutId is null,
+            "choosing no source removes the live-layout feed");
+        sourcePicker.SelectedIndex = 1;
+        feedStudio.UpdateLayout();
+        Check(feedCatalog.Layout.Elements[0].NestedLayoutId == sourceLayout.Id,
+            "choosing a source stores the live-layout feed");
+        var shapeLock = (CheckBox)feedStudio.FindName("NestedAspectInput")!;
+        Check(shapeLock.IsChecked == true, "a live layout keeps its source shape by default");
+        shapeLock.IsChecked = false;
+        feedStudio.UpdateLayout();
+        Check(!feedCatalog.Layout.Elements[0].NestedPreserveAspect,
+            "the live-layout shape lock is stored on the element");
+        feedStudio.Close();
+
+        // Score-video rows are rendered from the layout and their remove button edits it.
+        var videoCatalog = new ScorebugCatalog(TempFile(temps, ".json"));
+        videoCatalog.Update(layout => layout.ScoreVideos.Add(new ScoreVideoRule
+        {
+            Amount = 6,
+            Video = new ScoreVideo { Path = "/tmp/touchdown.mp4", ChromaKeyColor = "#FF00B140", ChromaKeyTolerance = 0.2 }
+        }));
+        var videoStudio = new ScorebugEditorWindow(videoCatalog, engine) { Width = 1500, Height = 900 };
+        videoStudio.Show();
+        videoStudio.UpdateLayout();
+        var videoRows = (StackPanel)videoStudio.FindName("ScoreVideoRows")!;
+        var videoEmpty = (Control)videoStudio.FindName("ScoreVideoEmptyText")!;
+        Check(videoRows.Children.Count == 1 && videoCatalog.Layout.ScoreVideos.Count == 1,
+            "a saved score video produces one studio row");
+        Check(All<TextBlock>(videoRows).Any(text => (text.Text ?? "").Contains("+6", StringComparison.Ordinal)
+                && (text.Text ?? "").Contains("touchdown.mp4", StringComparison.Ordinal)),
+            "the score-video row names its score change and clip");
+        Check(All<Button>(videoRows).Any(button => (button.Content as string) == "Clear key")
+              && All<Button>(videoRows).Any(button => (button.Content as string) == "Video…"),
+            "a keyed score video offers clear-key and clip-replacement buttons");
+
+        // Transitions and score celebrations are one Motions popout on the display panel.
+        var motionRows = (StackPanel)videoStudio.FindName("MotionRows")!;
+        var transitionBox = (ComboBox)videoStudio.FindName("TransitionBox")!;
+        Check(!motionRows.IsVisible,
+            "transitions and score celebrations stay out of the studio bar until Motions opens");
+        Click(ButtonByContent(videoStudio, "Motions…"));
+        videoStudio.UpdateLayout();
+        var motionWindow = videoStudio.MotionWindow
+            ?? throw new Exception("FAIL: Motions did not open its own window");
+        motionWindow.UpdateLayout();
+        Check(motionWindow.Title == "Transitions & score celebrations"
+              && motionWindow.Content is ScrollViewer { Content: StackPanel hosted } && ReferenceEquals(hosted, motionRows)
+              && motionRows.IsVisible && All<ComboBox>(motionRows).Any(box => ReferenceEquals(box, transitionBox)),
+            "the Motions window rehosts the live transition and score-celebration rows");
+        motionWindow.Close();
+        videoStudio.UpdateLayout();
+        Check(videoStudio.MotionWindow is null && !motionRows.IsVisible && motionRows.Parent is StackPanel,
+            "closing Motions puts the rows back on the display panel and hides them");
+
+        Click(ButtonByContent(videoRows, "Remove"));
+        videoStudio.UpdateLayout();
+        Check(videoCatalog.Layout.ScoreVideos.Count == 0 && videoRows.Children.Count == 0 && videoEmpty.IsVisible,
+            "removing a score-video row deletes the rule and restores the empty hint");
+        videoStudio.Close();
+
+        Console.WriteLine("PASS: studio undo, zoom, grid, ticker, player photo, live layout and score videos behave");
     }
 
     static void WindowCatalogChecks(List<string> temps)
@@ -843,6 +1620,28 @@ internal static class Program
 
     static void ThemeChecks()
     {
+        // The launcher sits outside ThemeManager and is always dark. Fluent's default variant has
+        // to be dark too: on a light desktop its light-theme hover foreground is near-black, so
+        // the launcher's white button labels would turn black while the pointer is over them.
+        var launcher = new LauncherWindow();
+        launcher.Show();
+        launcher.UpdateLayout();
+        var newGame = ButtonByContent(launcher, "New Game")!;
+        var label = newGame.GetVisualDescendants().OfType<ContentPresenter>()
+            .FirstOrDefault(presenter => presenter.Name == "PART_ContentPresenter")
+            ?? throw new Exception("FAIL: the launcher's primary button has no template label");
+        var point = newGame.TranslatePoint(new Point(newGame.Bounds.Width / 2, newGame.Bounds.Height / 2), launcher)
+            ?? throw new Exception("FAIL: the launcher's primary button has no position");
+        launcher.MouseMove(point);
+        Pump(TimeSpan.FromMilliseconds(50));
+        Check(newGame.IsPointerOver, "the launcher's primary button reports the pointer over it");
+        var hovered = label.Foreground as ISolidColorBrush;
+        Check(hovered is not null && hovered.Color.R > 0xC0 && hovered.Color.G > 0xC0 && hovered.Color.B > 0xC0,
+            "hovering the launcher's white button label keeps it light instead of turning it black");
+        launcher.Close();
+        Check(Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark,
+            "the app pins Fluent to the dark variant for its unthemed dark surfaces");
+
         Check(ThemeManager.Resolve("System") is "Dark" or "Light", "the System theme resolves to a real theme");
         var fresh = new UserPreferences();
         Check(fresh.Theme == "System" && !fresh.ShowHeadingHints, "preferences default to System with heading tips off");

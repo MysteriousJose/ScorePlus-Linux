@@ -77,6 +77,10 @@ public partial class MediaDock : UserControl
 
     // A dock used as a full-width tab gets console-sized controls; the rail version stays compact.
     bool _large;
+    // The dock trims its own padding when it is hosted in a narrow rail.
+    bool _compact;
+    // Below this height the dock body scrolls as a whole instead of clipping its lower rows.
+    const double ShortDockHeight = 560;
     double _tileWidth = 108, _tileHeight = 116, _thumbHeight = 70;
 
     /// <summary>A capture device in the LIVE picker; <see cref="ToString"/> is what the combo shows.</summary>
@@ -108,6 +112,7 @@ public partial class MediaDock : UserControl
         // Avalonia has no IsVisibleChanged event; the visibility property change is the same moment
         // for the operator, and the dock is restyled as soon as a tab reveals it.
         PropertyChanged += (_, change) => { if (change.Property == IsVisibleProperty && IsVisible) ApplyControlSize(this); };
+        SizeChanged += (_, e) => ApplyDockHeight(e.NewSize.Height);
     }
 
     /// <summary>Matches the dock to the operator theme (Dark is near-black, Light is white).</summary>
@@ -152,7 +157,33 @@ public partial class MediaDock : UserControl
     public void SetHintVisibility(bool show)
     {
         _showHints = show;
-        HintText.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        HintText.Visibility = show && !_compact ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Trims the dock's own chrome when it is hosted in a narrow rail: less padding around the body
+    /// and no hint text, so the columns keep the room instead of the surroundings.
+    /// </summary>
+    public void SetCompact(bool compact)
+    {
+        if (_compact == compact) return;
+        _compact = compact;
+        Chrome.Padding = compact ? new Thickness(8, 6) : new Thickness(11, 9);
+        HintText.Visibility = _showHints && !compact ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Switches the dock's outer scroller on only when the window is shorter than its rows need, so
+    /// the star row keeps filling a tall dock while every row stays reachable in a short one.
+    /// </summary>
+    void ApplyDockHeight(double height)
+    {
+        if (!double.IsFinite(height) || height <= 0) return;
+        var mode = height < ShortDockHeight
+            ? Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
+            : Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+        if (DockScroller.VerticalScrollBarVisibility != mode)
+            DockScroller.VerticalScrollBarVisibility = mode;
     }
 
     /// <summary>Returns every dock to the unfiltered library, used when a new game starts blank.</summary>

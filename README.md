@@ -24,7 +24,7 @@ Linux builds are maintained in their own repository, [MysteriousJose/ScorePlus-L
 - [Tutorial: The Phone Remote](#tutorial-the-phone-remote)
 - [Tutorial: Sport Profiles](#tutorial-sport-profiles)
 - [Reference: The Control Panel](#reference-the-control-panel)
-- [Reference: The Scorebug Studio](#reference-the-scorebug-studio)
+- [Reference: The Display Studio](#reference-the-display-studio)
 - [Reference: Data Tokens](#reference-data-tokens)
 - [Reference: Preferences](#reference-preferences)
 - [Reference: File Types](#reference-file-types)
@@ -64,29 +64,6 @@ It was built around four ideas:
 
 ---
 
-## Install and Run
-
-There are two ways to get ScorePlus running, and they behave differently on purpose.
-
-### The Installer (Recommended)
-
-Download **`ScorePlusSetup.exe`** from the releases page and run it. You do not need administrator rights: it installs for the current user into
-
-```
-%LOCALAPPDATA%\Programs\ScorePlus
-```
-
-and adds a Start Menu shortcut, an optional desktop shortcut and an entry in Windows' installed-apps list. `Uninstall.exe` in that folder removes it cleanly.
-
-An installed copy is the only kind that **checks for updates** and can replace itself.
-
-The setup also accepts `/SILENT`, `/DIR=<path>`, `/NOICONS` and `/NOREG` for scripted or unattended installs.
-
-### The Portable Build
-
-Download **`ScorePlusPortable.exe`** and run it from anywhere — a USB stick, a desktop folder, a network share. It needs nothing else: one file, no loose DLLs, no runtime install.
-
-A portable copy never checks for updates and never touches the registry, so it is the safe choice for testing a new alpha beside the version that runs your show.
 
 ### Linux Builds
 
@@ -157,6 +134,16 @@ An installed copy — from the `.deb` or the tarball — carries an `install.jso
 
 Prefer to build it yourself? One command and the .NET 10 SDK — see [Building and Releasing](#building-and-releasing).
 
+### FAQ's / Issues
+- **[]** as button icons, this means you are missing one or more of the following fonts. Installation is different for each distro. 
+
+```
+fonts-noto-core (Noto Sans) or fonts-dejavu-core
+fonts-noto-core (Noto Sans Symbols + Symbols 2), plus DejaVu Sans
+fonts-noto-color-emoji (Noto Color Emoji)
+DejaVu Sans Mono / Liberation Mono
+```
+
 ### First Launch
 
 Two windows open together: the compact **launch box** with the ScorePlus mark and version, and the **main window** behind it, dimmed and locked. The console is visible so you know where the game will land, but nothing on it can be changed until you create or open a game.
@@ -194,9 +181,9 @@ That's a working show. Everything from here is refinement.
 
 ---
 
-## Tutorial: Design a Scorebug
+## Tutorial: Design a Studio Display
 
-Open **Scorebug Studio** from the second row of the console. The studio opens maximized and fills the desktop: toolbar on top, layers on the left, property panel on the right, and the scorebug canvas in the middle framed with a border marking exactly where the artwork ends.
+Open **Display Studio** from the second row of the console. The studio opens maximized and fills the desktop: toolbar on top, layers on the left, property panel on the right, and the scorebug canvas in the middle framed with a border marking exactly where the artwork ends.
 
 ### Add Your First Three Elements
 
@@ -303,7 +290,7 @@ Every layout on the chosen display appears as a strip of **thumbnails with the l
 
 ### Switching Transitions
 
-When a display switches layouts, the hand-over belongs to the layout **arriving**. Each layout carries its own **TRANSITION IN** — `Cut`, `Fade`, `Slide Left`, `Slide Right`, `Slide Up`, `Slide Down` or `Zoom` — over anything from **0 to 5 seconds**. Set it on the layout bar. One scorebug can snap on while the next dissolves in slowly, and the choice saves in the game, the `.spl` file and the `.spd` file.
+When a display switches layouts, the hand-over belongs to the layout **arriving**. Each layout carries its own **TRANSITION IN** — `Cut`, `Fade`, `Slide Left`, `Slide Right`, `Slide Up`, `Slide Down` or `Zoom` — over anything from **0 to 5 seconds**. Set it in the display panel's **Motions…** window. One scorebug can snap on while the next dissolves in slowly, and the choice saves in the game, the `.spl` file and the `.spd` file.
 
 ### Building the Hand-Over (Transition Maker)
 
@@ -550,7 +537,7 @@ The main window is one page, top to bottom.
 | **☰ Event log** | The game's event history in its own movable window |
 | **▦ Game report** | Export a printable HTML summary of the game |
 | **Save Game** / **Open Game** | `.spg` save and load |
-| **Scorebug Studio** | Design the on-air graphic |
+| **Display Studio** | Design the on-air graphic |
 | **Sport Profiles** | Edit how the sport behaves |
 | **New Game** | Start a blank slate |
 
@@ -576,7 +563,7 @@ Every notice and confirmation in ScorePlus is the app's own themed window — cl
 
 ---
 
-## Reference: The Scorebug Studio
+## Reference: The Display Studio
 
 Layout: toolbar across the top, layers down the left, canvas in the middle, properties on the right, and the display/layout bars above the canvas.
 
@@ -588,10 +575,10 @@ Every button is a capitalised label with a plus: **TEXT +**, **LOGO +**, **IMAGE
 
 | Type | What it draws | Notable properties |
 | --- | --- | --- |
-| **Text** | Any bound or typed string | Font, size, bold/italic/underline/strike, rotation, color or text gradient, texture, value transition, icon, quarter style |
-| **Logo** | One team's logo | Which side (Home/Away); the artwork itself comes from the console |
+| **Text** | Any bound or typed string | Font, size, alignment, bold/italic/underline/strike, rotation, colour or text gradient, texture, text shadow, ticker speed/direction, clock and down formats, value transition, icon, quarter style |
+| **Logo** | One team's logo or a custom picture | Which side (Home/Away), or **Choose image…** for a standalone crest |
 | **Image** | A still picture imported with **IMAGE +** | The file is copied into the app, so the design survives the original being moved |
-| **Shape** | Rectangle, circle or triangle | Shape type, fill or gradient, border, opacity |
+| **Shape** | Rectangle, circle or triangle | Shape type, corner radius (rectangles), fill or gradient, border, opacity |
 | **Video** | Live clip from one tag | Media tag (or **ANY**), preserve aspect ratio, audio output, border, radius |
 | **HTML** | A live web widget | Free HTML/CSS/JS, `data-token` bindings |
 
@@ -606,7 +593,12 @@ Every button is a capitalised label with a plus: **TEXT +**, **LOGO +**, **IMAGE
 - **Opacity** is four sliders, not one: the whole element, the printed value, the background plate and the outline each fade on their own. A score can dissolve away while its plate stays solid, or a border can fade without touching the text.
 - **Motion** has two routes: the built-in `None / Pulse / Drift` presets, or a clip from the animation maker that replaces them.
 - **Rotation** is in degrees; negative angles are fine.
-- **Transition** and its **duration** (0–5s) live with the element, next to the font controls.
+- **Transition** and its **duration** (0–5s) live with the element, next to the font controls. A value can have its own **down** crossing and speed, and `Shrink Wheel`/`Jump Flip` expose a shrink amount, jump height and direction.
+- **Text shadow**, **text alignment** and **ticker** options are per element, so a ribbon and a label can read differently on the same layout.
+- **Clock and down formats** — game-clock leading zero, play-clock colon and full-caps down words — are switches on the element that prints the value, not global settings.
+- **Icons** have their own appearance: a made icon from the Icon Creator, a value binding, offsets, colour, border, background, used-timeout colour, opacity, bar size and stacking, and a downward possession arrow.
+- **Live layouts** can keep the source's shape or stretch to the box.
+- **Layer order** moves one step with **▲ Forward / ▼ Backward**, or all the way with **▲ To front / ▼ To back**.
 
 ### Keyboard and Mouse
 
@@ -627,7 +619,7 @@ Every button is a capitalised label with a plus: **TEXT +**, **LOGO +**, **IMAGE
 ### Display and Layout Bars
 
 - **DISPLAY** — which screen you're editing; also where displays are added, renamed and removed.
-- **TRANSITION IN** — the arriving layout's hand-over and its duration.
+- **Motions…** — the **TRANSITION IN** hand-over and its duration (including a video hand-over with its cut beat and key), plus score celebrations, in their own window.
 - **LINK THIS LAYOUT TO** — the layout on another display that moves with this one, with a both-ways checkbox.
 - **LAYOUT** — the display's layouts as thumbnails with their names underneath, plus **Import .spl… / Export .spl…** and **Import .spd… / Export .spd…**, **Copy to… / Move to…** and **PARTS +**.
 - **CANVAS BACKGROUND** — green screen, navy reset, black, custom color.

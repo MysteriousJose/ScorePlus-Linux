@@ -30,6 +30,7 @@ public partial class SportProfileWindow : Window
     public SportProfileWindow(SportCatalog catalog)
     {
         InitializeComponent();
+        ScreenFit.FitDialog(this);
         // Enter in a field settles that field instead of firing the window's default Save button;
         // Avalonia has no PreviewKeyDown event, so KeyDown's tunnel route is that same moment.
         AddHandler(Avalonia.Input.InputElement.KeyDownEvent, new EventHandler<Avalonia.Input.KeyEventArgs>(InterceptEnterKey), Avalonia.Interactivity.RoutingStrategies.Tunnel);

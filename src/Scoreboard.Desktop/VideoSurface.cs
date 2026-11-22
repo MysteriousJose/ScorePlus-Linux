@@ -2,6 +2,7 @@ using System.IO;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Scoreboard.Core;
 using Avalonia.Layout;
 using Avalonia.Interactivity;
@@ -22,8 +23,20 @@ public sealed class VideoSurface : Grid
     readonly MediaElement _element;
     readonly TextBlock? _placeholder = null;
     readonly RectangleGeometry _clip = new();
-    // Live camera frames are drawn on this image instead of the MediaElement.
+    // The picture layers move together for a crop: the surface stays the element's box, while the
+    // larger picture behind it is shifted so only the chosen fraction of the source shows.
+    readonly Grid _picture = new() { ClipToBounds = true };
+    // Live camera and replay frames are drawn on these images instead of the MediaElement.
     readonly Image _live = new() { Stretch = Stretch.UniformToFill, IsVisible = false };
+    readonly Image _replay = new() { Stretch = Stretch.UniformToFill, IsVisible = false };
+    ReplayFeed? _replayFeed;
+    BitmapSource? _liveFrame;
+    BitmapSource? _replayFrame;
+    // Identifies the cue currently on this surface, so a cut to another clip can snap the outgoing
+    // picture and animate it away.
+    string? _cueKey;
+    Control? _switchOverlay;
+    int _switchToken;
     readonly bool _mute;
     // True for a surface that is showing what the audience gets, even when it is muted. The
     // audience-view monitor is one: silent, but it must never show a replay the audience cannot.
@@ -60,7 +73,7 @@ public sealed class VideoSurface : Grid
         // MediaElement's video texture can paint past its layout slot when the aspect ratios differ,
         // so the picture is clipped to the element box explicitly instead of relying on layout only.
         Clip = _clip;
-        SizeChanged += (_, _) => SyncClip();
+        SizeChanged += (_, _) => { SyncClip(); ApplyCrop(); };
         _element = new MediaElement
         {
             LoadedBehavior = MediaState.Manual,
@@ -131,8 +144,11 @@ public sealed class VideoSurface : Grid
         // A decoder that fails mid-seek raises MediaFailed; unhandled, it takes the whole process
         // down. Catch it and blank the element instead, so the show keeps running.
         _element.MediaFailed += (_, _) => Fail();
-        Children.Add(_element);
-        Children.Add(_live);
+        _picture.Children.Add(_element);
+        _picture.Children.Add(_live);
+        _picture.Children.Add(_replay);
+        Children.Add(_picture);
+        ApplyCrop();
 
         if (showPlaceholder)
         {
@@ -150,6 +166,7 @@ public sealed class VideoSurface : Grid
             Children.Add(_placeholder);
         }
 
+        UpdateChromaKey();
         if (_playback is not null) _playback.Changed += Apply;
         Apply();
     }
@@ -162,30 +179,108 @@ public sealed class VideoSurface : Grid
     public void SetElement(ScorebugElement item)
     {
         _item = item;
-        // Chroma key runs in the decoder: ffmpeg removes the key colour before the frame reaches
-        // the screen, so the scorebug underneath shows through instead of a green rectangle.
-        var key = (item.ChromaKeyColor ?? "").Trim();
-        var wanted = string.IsNullOrWhiteSpace(key) ? null : new ChromaKeyEffect
-        {
-            KeyColor = Paint.ColorOf(key, Colors.White),
-            Tolerance = item.ChromaKeyTolerance
-        };
-        if (!string.Equals(wanted?.Filter, _element.ChromaKey?.Filter, StringComparison.Ordinal))
-        {
-            _element.ChromaKey = wanted;
-            // The filter is part of the decoder's command line, so an existing clip reopens once.
-            if (_loadedPath is not null) { try { _element.Close(); } catch { } _loadedPath = null; }
-        }
-        // Preserving the aspect ratio letterboxes the picture inside its box instead of cropping it.
-        var stretch = item.PreserveVideoAspect ? Stretch.Uniform : Stretch.UniformToFill;
-        _element.Stretch = stretch;
-        _live.Stretch = stretch;
+        ApplyCrop();
+        ApplyStretch();
+        UpdateChromaKey();
         if (_placeholder is not null)
             _placeholder.Text = string.IsNullOrWhiteSpace(item.MediaTag) ? "VIDEO" : $"VIDEO · {item.MediaTag.ToUpperInvariant()}";
         Apply();
     }
 
+    /// <summary>
+    /// Points the decoder at the element's chroma key, or clears the effect when the key is off.
+    /// Linux has no WPF pixel shader: the key is a filter on the decoder's command line, so an
+    /// already-open clip reopens once when the colour or tolerance changes.
+    /// </summary>
+    void UpdateChromaKey()
+    {
+        var key = (_item.ChromaKeyColor ?? "").Trim();
+        var wanted = string.IsNullOrWhiteSpace(key) ? null : new ChromaKeyEffect
+        {
+            KeyColor = Paint.ColorOf(key, Colors.White),
+            Tolerance = _item.ChromaKeyTolerance
+        };
+        if (string.Equals(wanted?.Filter, _element.ChromaKey?.Filter, StringComparison.Ordinal)) return;
+        _element.ChromaKey = wanted;
+        if (_loadedPath is not null) { try { _element.Close(); } catch { } _loadedPath = null; }
+    }
+
     void SyncClip() => _clip.Rect = new Rect(0, 0, Math.Max(0, Bounds.Width), Math.Max(0, Bounds.Height));
+
+    /// <summary>The source rectangle selected by the element's four crop percentages.</summary>
+    Rect CropRect()
+    {
+        var left = Math.Clamp(_item.VideoCropLeft, 0, 0.49);
+        var top = Math.Clamp(_item.VideoCropTop, 0, 0.49);
+        var right = Math.Clamp(_item.VideoCropRight, 0, 0.49);
+        var bottom = Math.Clamp(_item.VideoCropBottom, 0, 0.49);
+        if (left + right > 0.9) right = Math.Max(0, 0.9 - left);
+        if (top + bottom > 0.9) bottom = Math.Max(0, 0.9 - top);
+        return new Rect(left, top, Math.Max(0.02, 1 - left - right), Math.Max(0.02, 1 - top - bottom));
+    }
+
+    bool IsCropped()
+    {
+        var crop = CropRect();
+        return Math.Abs(crop.X) > 0.0001 || Math.Abs(crop.Y) > 0.0001
+            || Math.Abs(crop.Width - 1) > 0.0001 || Math.Abs(crop.Height - 1) > 0.0001;
+    }
+
+    /// <summary>
+    /// A cropped picture fills its box without distorting the remaining pixels. Cropping is a
+    /// source cut, so the selected region is scaled proportionally until it covers the whole box;
+    /// any small overflow is hidden by the element's clip. With no crop, Preserve still means
+    /// uniform letterboxing.
+    /// </summary>
+    void ApplyStretch()
+    {
+        var stretch = IsCropped()
+            ? Stretch.UniformToFill
+            : _item.PreserveVideoAspect ? Stretch.Uniform : Stretch.UniformToFill;
+        _element.Stretch = stretch;
+        _live.Stretch = stretch;
+        _replay.Stretch = stretch;
+    }
+
+    /// <summary>
+    /// Shows only the selected fraction of the decoded picture. Every layer lives in the inner
+    /// picture grid, so the file, the camera and the replay are cropped by the same transform.
+    /// </summary>
+    void ApplyCrop()
+    {
+        if (Bounds.Width < 1 || Bounds.Height < 1) return;
+        var crop = CropRect();
+        if (!IsCropped())
+        {
+            _picture.Width = double.NaN;
+            _picture.Height = double.NaN;
+            _picture.HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Stretch;
+            _picture.VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Stretch;
+            _picture.RenderTransform = null;
+            return;
+        }
+        _picture.HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Left;
+        _picture.VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Top;
+        _picture.Width = Bounds.Width / crop.Width;
+        _picture.Height = Bounds.Height / crop.Height;
+        _picture.RenderTransform = new TranslateTransform(-crop.X * _picture.Width, -crop.Y * _picture.Height);
+    }
+
+    /// <summary>Crops a live or replay bitmap to the chosen source region.</summary>
+    ImageSource CropFrame(ImageSource source)
+    {
+        var crop = CropRect();
+        if (!IsCropped() || source is not BitmapSource bitmap) return source;
+        try
+        {
+            var x = Math.Clamp((int)Math.Round(bitmap.PixelWidth * crop.X), 0, bitmap.PixelWidth - 1);
+            var y = Math.Clamp((int)Math.Round(bitmap.PixelHeight * crop.Y), 0, bitmap.PixelHeight - 1);
+            var width = Math.Clamp((int)Math.Round(bitmap.PixelWidth * crop.Width), 1, bitmap.PixelWidth - x);
+            var height = Math.Clamp((int)Math.Round(bitmap.PixelHeight * crop.Height), 1, bitmap.PixelHeight - y);
+            return new CroppedBitmap(bitmap, new Int32Rect(x, y, width, height));
+        }
+        catch { return source; }
+    }
 
     /// <summary>
     /// The clip this surface should be showing. A muted surface is a preview (studio, program
@@ -221,14 +316,32 @@ public sealed class VideoSurface : Grid
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(Apply); return; }
         SyncClip();
+        ApplyCrop();
         var entry = Cue();
+        // A cut to another clip or camera can carry its own transition. Snapshot the outgoing
+        // picture before any layer is switched, then let it leave over the incoming source.
+        var cueKey = entry is null ? ""
+            : entry.IsCamera ? $"camera:{entry.CameraIndex}"
+            : $"file:{entry.Path}";
+        if (_cueKey is not null && !string.Equals(_cueKey, cueKey, StringComparison.OrdinalIgnoreCase))
+            BeginSwitchAnimation(entry);
+        _cueKey = cueKey;
+
+        // A replay is decoded to frames by the session, not opened as a media file: the recorded
+        // clips are MJPG AVI, which a decoder may show as one still frame.
+        if (ShowReplayFrames(entry)) return;
 
         // A live camera has no file to open: its frames replace the MediaElement until the
         // operator cuts to an instant replay or another clip.
         if (entry is { IsCamera: true })
         {
-            // A live feed has no file for the router to open.
+            // A live feed has no file for the router to open, and a file must never keep playing
+            // underneath the camera when the same index was already selected.
             StopRouting();
+            try { _element.Stop(); _element.Close(); _element.Source = null; } catch { }
+            _loadedPath = null;
+            _opened = false;
+            _playing = false;
             ShowLiveCamera(entry.CameraIndex);
             if (_placeholder is not null) _placeholder.IsVisible = false;
             return;
@@ -409,6 +522,7 @@ public sealed class VideoSurface : Grid
         // The last frame stays in the image: cutting back from a replay shows the camera instantly
         // instead of a blank box until the next frame arrives a fraction of a second later.
         _live.IsVisible = true;
+        _replay.IsVisible = false;
         _element.IsVisible = false;
     }
 
@@ -418,16 +532,134 @@ public sealed class VideoSurface : Grid
         if (_feed is not null) _feed.FrameReady -= OnCameraFrame;
         _feed = null;
         _cameraIndex = -1;
+        _liveFrame = null;
         _live.IsVisible = false;
         _element.IsVisible = true;
     }
 
-    void OnCameraFrame(ImageSource frame) => _live.Source = frame;
+    void OnCameraFrame(ImageSource frame)
+    {
+        _liveFrame = frame as BitmapSource;
+        _live.Source = frame;
+    }
 
     void HideLiveCamera()
     {
         if (_cameraIndex < 0) return;
         UnsubscribeLive();
+    }
+
+    /// <summary>
+    /// Draws a replay's decoded frames and reports false for every other cue, which also releases
+    /// the subscription so a surface never keeps a picture from a clip it no longer shows.
+    /// </summary>
+    bool ShowReplayFrames(MediaEntry? entry)
+    {
+        var feed = _playback?.ReplayFramesFor(_mute && !_onAir);
+        if (entry is null || feed is null || !feed.Contains(entry.Path))
+        {
+            StopReplayFrames();
+            return false;
+        }
+        HideLiveCamera();
+        StopRouting();
+        if (!ReferenceEquals(_replayFeed, feed))
+        {
+            StopReplayFrames();
+            _replayFeed = feed;
+            feed.FrameReady += OnReplayFrame;
+        }
+        if (_loadedPath is not null)
+        {
+            // The file is never opened here, so nothing stays on the player underneath.
+            try { _element.Stop(); _element.Close(); _element.Source = null; } catch { }
+            _loadedPath = null;
+            _opened = false;
+        }
+        _playing = false;
+        _element.IsVisible = false;
+        if (_placeholder is not null) _placeholder.IsVisible = false;
+        if (feed.Frame is { } picture)
+        {
+            _replayFrame = picture;
+            _replay.Source = picture;
+        }
+        _replay.IsVisible = true;
+        return true;
+    }
+
+    void StopReplayFrames()
+    {
+        if (_replayFeed is not null) _replayFeed.FrameReady -= OnReplayFrame;
+        _replayFeed = null;
+        if (_replay.IsVisible) _replay.IsVisible = false;
+        _replay.Source = null;
+        _replayFrame = null;
+    }
+
+    void OnReplayFrame(BitmapSource frame)
+    {
+        _replayFrame = frame;
+        if (_replay.IsVisible) _replay.Source = frame;
+    }
+
+    /// <summary>
+    /// Holds a still of the outgoing picture over the new source and animates it away. The still
+    /// is important for camera cuts: the old frame is already visible while the next camera opens,
+    /// so a fade, slide or zoom reads as a deliberate switch rather than a flash of black.
+    /// </summary>
+    void BeginSwitchAnimation(MediaEntry? incoming)
+    {
+        var transition = MediaLibrary.NormalizeTransition(incoming?.Transition);
+        var seconds = MediaLibrary.NormalizeTransitionSeconds(incoming?.TransitionSeconds ?? MediaLibrary.DefaultTransitionSeconds);
+        // A new cut always replaces an animation that has not finished yet.
+        if (_switchOverlay is not null)
+        {
+            Children.Remove(_switchOverlay);
+            _switchOverlay = null;
+            _switchToken++;
+        }
+        if (transition == "Cut" || seconds <= 0.02 || !IsVisible) return;
+        var width = (int)Math.Round(Bounds.Width);
+        var height = (int)Math.Round(Bounds.Height);
+        if (width < 2 || height < 2) return;
+        RenderTargetBitmap snapshot;
+        try
+        {
+            snapshot = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+            snapshot.Render(this);
+        }
+        catch { return; }
+        var overlay = new Image
+        {
+            Source = snapshot,
+            Width = Bounds.Width,
+            Height = Bounds.Height,
+            Stretch = Stretch.Fill,
+            IsHitTestVisible = false
+        };
+        Children.Add(overlay);
+        _switchOverlay = overlay;
+        var token = ++_switchToken;
+        var started = DateTimeOffset.UtcNow;
+        var duration = TimeSpan.FromSeconds(seconds);
+        if (transition == "Zoom")
+            overlay.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
+        var timer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        timer.Tick += (_, _) =>
+        {
+            var progress = Math.Clamp((DateTimeOffset.UtcNow - started).TotalMilliseconds / duration.TotalMilliseconds, 0, 1);
+            var eased = progress * progress * (3 - 2 * progress);
+            overlay.Opacity = 1 - eased;
+            if (transition == "Slide") overlay.RenderTransform = new TranslateTransform(width * eased, 0);
+            else if (transition == "Zoom") overlay.RenderTransform = new ScaleTransform(1 + 0.14 * eased, 1 + 0.14 * eased);
+            if (progress < 1) return;
+            timer.Stop();
+            if (token != _switchToken || !ReferenceEquals(_switchOverlay, overlay)) return;
+            Children.Remove(overlay);
+            _switchOverlay = null;
+        };
+        timer.Start();
     }
 
     /// <summary>Blanks the element after a decode failure instead of letting it crash the app.</summary>
@@ -446,6 +678,9 @@ public sealed class VideoSurface : Grid
     public void Dispose()
     {
         if (_playback is not null) _playback.Changed -= Apply;
+        StopReplayFrames();
+        _switchToken++;
+        if (_switchOverlay is not null) { Children.Remove(_switchOverlay); _switchOverlay = null; }
         StopRouting();
         _router?.Dispose();
         _router = null;

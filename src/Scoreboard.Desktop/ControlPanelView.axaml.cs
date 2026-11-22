@@ -59,12 +59,55 @@ public partial class ControlPanelView : UserControl
     bool _loadingNames;
     bool _showHints;
     KeybindSettings _keybinds = KeybindStore.Load();
+    bool _loadingPenalty;
+    bool _loadingHorn;
+    bool _loadingClockMessage;
+
+    sealed record HornOption(HornSound Kind, string Label) { public override string ToString() => Label; }
+    sealed record FootballModeOption(FootballDownMode Mode, string Label) { public override string ToString() => Label; }
+    sealed record ClockMessageOption(GameClockMessage Message, string Label) { public override string ToString() => Label; }
+
+    static readonly HornOption[] HornOptions =
+    [
+        new(HornSound.Buzzer, "Buzzer"),
+        new(HornSound.AirHorn, "Air horn"),
+        new(HornSound.Siren, "Siren"),
+        new(HornSound.Custom, "Custom…")
+    ];
+
+    static readonly FootballModeOption[] FootballModes =
+    [
+        new(FootballDownMode.Normal, "Yards"),
+        new(FootballDownMode.Goal, "Goal to go"),
+        new(FootballDownMode.Pat, "PAT"),
+        new(FootballDownMode.TwoPoint, "2-pt try"),
+        new(FootballDownMode.Inches, "Inches"),
+        new(FootballDownMode.None, "No down line")
+    ];
+
+    static readonly ClockMessageOption[] ClockMessages =
+    [
+        new(GameClockMessage.Clock, "Game time"),
+        new(GameClockMessage.Final, "FINAL"),
+        new(GameClockMessage.EndOfRegulation, "END OF REG.")
+    ];
 
     public ControlPanelView(GameEngine engine, IControlPanelHost host)
     {
         InitializeComponent();
         _engine = engine;
         _host = host;
+
+        // A ScrollViewer measures its child with unlimited height, which would turn the card grid's
+        // star rows into auto rows and leave a band of dead space under them on a tall window.
+        // Pinning the grid's minimum to the viewport keeps the rows filling the panel exactly as
+        // they did before the scroller was added, and the scroller still takes over on short ones.
+        CardsScroller.SizeChanged += (_, e) =>
+        {
+            var viewport = e.NewSize.Height;
+            if (double.IsFinite(viewport) && viewport > 0 && Math.Abs(CardsGrid.MinHeight - viewport) > 0.5)
+                CardsGrid.MinHeight = viewport;
+        };
 
         _awayScore = BuildScoreStepper(false);
         _homeScore = BuildScoreStepper(true);
@@ -106,7 +149,7 @@ public partial class ControlPanelView : UserControl
         BallOnHost.Content = ballColumn;
 
         // How the quarter prints (Quarter 1 / Q1 / 1) belongs to the graphic, not the console:
-        // it is a property of the element in Scorebug Studio.
+        // it is a property of the element in Display Studio.
         QuarterHost.Content = BuildQuarterControl();
 
         _awayTimeouts = BuildTimeoutStepper(false);
@@ -125,6 +168,10 @@ public partial class ControlPanelView : UserControl
         // operator's secondary interface colour is what the main action actually wears.
         ThemeManager.SetSkipTheme(UpdateButton, true);
 
+        HornType.ItemsSource = HornOptions;
+        PenaltyTeamBox.ItemsSource = new[] { "Home", "Visitors" };
+        ClockMessageBox.ItemsSource = ClockMessages;
+        SyncHorn();
         _engine.Changed += Refresh;
         Loaded += (_, _) => { ApplyKeybindHints(); Refresh(); };
         Refresh();
@@ -274,6 +321,11 @@ public partial class ControlPanelView : UserControl
         PlayClockRow.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
         // Football has a play clock; showing a shot clock there as well only crowded the page.
         ShotClockRow.Visibility = _engine.Sport.HasShotClock && !football ? Visibility.Visible : Visibility.Collapsed;
+        PenaltyStrip.Visibility = football ? Visibility.Visible : Visibility.Collapsed;
+        FootballModePrevButton.IsEnabled = FootballModeNextButton.IsEnabled = football;
+        UpdateFootballMode(s);
+        SyncPenalty(s);
+        SyncClockMessage(s);
         BuildSportControls(s);
 
         var staged = _host.HasStagedChanges;
@@ -441,7 +493,7 @@ public partial class ControlPanelView : UserControl
         var value = new TextBox
         {
             Text = "0",
-            Width = 40,
+            MinWidth = 40,
             Height = 32,
             FontSize = 15,
             FontWeight = FontWeights.Bold,
@@ -700,6 +752,138 @@ public partial class ControlPanelView : UserControl
     void PlayClock40_Click(object sender, object e) => _engine.ResetPlayClock(40);
     void PlayClock25_Click(object sender, object e) => _engine.ResetPlayClock(25);
 
+    // ---------- horn ----------
+
+    /// <summary>Reads the saved horn into the picker without treating it as a fresh choice.</summary>
+    void SyncHorn()
+    {
+        if (HornType is null) return;
+        var preferences = PreferencesStore.Load();
+        _loadingHorn = true;
+        try
+        {
+            var kind = HornPlayer.Parse(preferences.HornSound);
+            HornType.SelectedItem = HornOptions.FirstOrDefault(option => option.Kind == kind) ?? HornOptions[0];
+            HornPickButton.ToolTip = string.IsNullOrWhiteSpace(preferences.HornCustomPath)
+                ? "Choose a custom horn audio file"
+                : preferences.HornCustomPath;
+        }
+        finally { _loadingHorn = false; }
+    }
+
+    void HornType_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingHorn || HornType.SelectedItem is not HornOption option) return;
+        var preferences = PreferencesStore.Load();
+        preferences.HornSound = option.Kind.ToString();
+        PreferencesStore.Save(preferences);
+        if (option.Kind == HornSound.Custom) PickHorn();
+    }
+
+    void Horn_Click(object sender, RoutedEventArgs e) => PlayHorn();
+
+    void HornPick_Click(object sender, RoutedEventArgs e) => PickHorn();
+
+    void PlayHorn()
+    {
+        var preferences = PreferencesStore.Load();
+        HornPlayer.Play(preferences.HornSound, preferences.HornCustomPath);
+    }
+
+    void PickHorn()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose a horn sound",
+            Filter = "Audio (*.mp3;*.wav;*.ogg;*.flac;*.m4a)|*.mp3;*.wav;*.ogg;*.flac;*.m4a|All files (*.*)|*.*"
+        };
+        if (dialog.ShowDialog() != true) return;
+        var preferences = PreferencesStore.Load();
+        preferences.HornSound = nameof(HornSound.Custom);
+        preferences.HornCustomPath = dialog.FileName;
+        PreferencesStore.Save(preferences);
+        SyncHorn();
+    }
+
+    // ---------- football down line ----------
+
+    void UpdateFootballMode(GameState state)
+    {
+        var option = FootballModes.FirstOrDefault(candidate => candidate.Mode == state.FootballDownMode) ?? FootballModes[0];
+        FootballModeLabel.Text = option.Label;
+    }
+
+    void FootballModePrev_Click(object sender, RoutedEventArgs e) => ShiftFootballMode(-1);
+
+    void FootballModeNext_Click(object sender, RoutedEventArgs e) => ShiftFootballMode(1);
+
+    void ShiftFootballMode(int delta)
+    {
+        var current = Array.FindIndex(FootballModes, option => option.Mode == _engine.State.FootballDownMode);
+        if (current < 0) current = 0;
+        var next = (current + delta + FootballModes.Length) % FootballModes.Length;
+        _engine.SetFootballDownMode(FootballModes[next].Mode);
+    }
+
+    // ---------- penalty flag ----------
+
+    void SyncPenalty(GameState state)
+    {
+        if (PenaltyActiveToggle is null) return;
+        _loadingPenalty = true;
+        try
+        {
+            PenaltyActiveToggle.IsChecked = state.PenaltyActive;
+            PenaltyActiveToggle.Content = state.PenaltyActive ? "FLAG DOWN" : "NO FLAG";
+            var types = GameEngine.PenaltyTypesFor(state.SportId);
+            if (!types.SequenceEqual(PenaltyTypeBox.Items.Cast<string>()))
+                PenaltyTypeBox.ItemsSource = types;
+            PenaltyTypeBox.SelectedItem = types.FirstOrDefault(type => string.Equals(type, state.PenaltyType, StringComparison.OrdinalIgnoreCase)) ?? types.FirstOrDefault();
+            PenaltyTeamBox.SelectedIndex = state.PenaltyHome ? 0 : 1;
+        }
+        finally { _loadingPenalty = false; }
+    }
+
+    void Penalty_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingPenalty) return;
+        var active = PenaltyActiveToggle.IsChecked == true;
+        PenaltyActiveToggle.Content = active ? "FLAG DOWN" : "NO FLAG";
+        CommitPenalty();
+    }
+
+    void Penalty_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingPenalty) return;
+        CommitPenalty();
+    }
+
+    void CommitPenalty()
+    {
+        if (_loadingPenalty || PenaltyTypeBox.SelectedItem is not string type) return;
+        var home = PenaltyTeamBox.SelectedIndex != 1;
+        _engine.SetPenalty(PenaltyActiveToggle.IsChecked == true, type, home);
+    }
+
+    // ---------- clock message ----------
+
+    void SyncClockMessage(GameState state)
+    {
+        if (ClockMessageBox is null) return;
+        _loadingClockMessage = true;
+        try
+        {
+            ClockMessageBox.SelectedItem = ClockMessages.FirstOrDefault(option => option.Message == state.ClockMessage) ?? ClockMessages[0];
+        }
+        finally { _loadingClockMessage = false; }
+    }
+
+    void ClockMessage_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingClockMessage || ClockMessageBox.SelectedItem is not ClockMessageOption option) return;
+        _engine.SetClockMessage(option.Message);
+    }
+
     void AddStat_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new AddStatDialog(_engine.State.Stats.Select(s => s.Name).ToArray()) { Owner = Window.GetWindow(this) };
@@ -784,6 +968,7 @@ public partial class ControlPanelView : UserControl
             case "soccer.corner.home": _engine.AddSoccerCorner(true); break;
             case "soccer.corner.away": _engine.AddSoccerCorner(false); break;
             case "global.undo": _engine.Undo(); break;
+            case "horn.play": PlayHorn(); break;
             default:
                 if (TrySportAction(actionId)) break;
                 if (TryScoreAction(actionId, out var home, out var amount)) _engine.Score(home, amount);

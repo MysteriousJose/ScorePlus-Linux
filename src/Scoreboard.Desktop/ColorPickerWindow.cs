@@ -25,6 +25,7 @@ public sealed class ColorPickerWindow : Window
     {
         Title = "Choose color";
         Width = 480; SizeToContent = SizeToContent.Height; MinWidth = 440;
+        ScreenFit.FitDialog(this);
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.FromRgb(23, 28, 37));
@@ -226,6 +227,7 @@ internal sealed class ScreenColorPickerWindow : Window
 
     public ScreenColorPickerWindow()
     {
+        // Deliberately not ScreenFit: this picker overlays the whole screen to sample a colour.
         SystemDecorations = SystemDecorations.None;
         TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
         Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));

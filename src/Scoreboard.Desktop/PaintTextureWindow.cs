@@ -49,6 +49,7 @@ public sealed class PaintTextureWindow : Window
         Height = 780;
         MinWidth = 760;
         MinHeight = 600;
+        ScreenFit.FitDialog(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         FontFamily = new FontFamily("Segoe UI");
 

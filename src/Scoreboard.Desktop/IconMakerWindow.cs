@@ -96,7 +96,7 @@ public sealed class IconMakerWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
         FontFamily = new FontFamily("Segoe UI");
-        ScreenFit.Track(this);
+        ScreenFit.FitDialog(this);
 
         var previewContent = new Grid();
         previewContent.Children.Add(_previewGlyph);

@@ -17,6 +17,7 @@ public partial class EventLogWindow : Window
     public EventLogWindow(GameEngine engine, string theme, bool showHints)
     {
         InitializeComponent();
+        ScreenFit.FitDialog(this);
         _engine = engine;
         LogHint.Visibility = showHints ? Visibility.Visible : Visibility.Collapsed;
         ThemeManager.Apply(this, theme);
